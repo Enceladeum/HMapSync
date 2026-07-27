@@ -296,6 +296,9 @@ public unsafe class ZoneLoadService : IDisposable
         { 784,  new Vector3(300.0f, 0.0f, 300.0f) },      // HoH floor (shares 773's template spot)
         { 774,  new Vector3(244.0f, 0.0f, -181.0f) },     // HoH floor
         { 783,  new Vector3(-300.0f, 0.100f, -300.0f) },  // HoH floor
+        // v1.0.0 post-release curates (coords supplied X,Y,Z):
+        { 1279, new Vector3(0.0f, 0.0f, 100.0f) },        // curated spawn
+        { 389,  new Vector3(476.0f, 16.4f, 449.2f) },     // curated spawn
     };
 
     public ZoneLoadService(
