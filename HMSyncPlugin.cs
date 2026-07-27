@@ -286,13 +286,14 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             mapSettings.MarkStateSet();
             if (zoneLoad.IsZoneLoaded)
             {
-                // v0.7.429 — belt-and-suspenders: a fixed host never broadcasts 0 or an illegal id (PushMapState
-                // gates both), but a stale/mixed-version host might. Weather 0 on a synthetic map renders the
-                // invalid "none/atmospheric" void — so resolve the zone's native default instead. Deterministic
-                // sheet resolution both sides (Eorzea time is global), so no host/peer drift from this fallback.
-                var effW = td.MapWeatherId;
-                if (effW == 0) effW = mapSettings.GetDefaultWeather(zoneLoad.CurrentLoadedZone);
-                if (effW != 0) mapSettings.ApplyWeather(effW);   // idempotent write, safe to repeat
+                // v0.7.475 — MIRROR VERBATIM, INCLUDING 0. The v0.7.429 version substituted the zone's native
+                // default whenever the host sent 0, on the reasoning that 0 renders an invalid "void" sky. That
+                // reasoning was right about the render and wrong about the intent: the invalid void IS the
+                // feature ("None - Atmospheric", the cinematic blank), and it is also where most debug weathers
+                // legitimately land. Since the host now ships the sky it is actually rendering (PushMapState
+                // reads live EnvManager), there is nothing here left to resolve — re-deriving would reintroduce
+                // exactly the host/peer divergence both guards were written to prevent.
+                mapSettings.ApplyWeather(td.MapWeatherId);   // idempotent write, safe to repeat; 0 is meaningful
                 // Single time path: freeze at the host's time when held, release to the real clock when not.
                 if (td.MapTimeForced) mapSettings.ApplyTime(td.MapEorzeaHour, td.MapEorzeaMinute);
                 else mapSettings.DisableTimeOverride();
@@ -1610,10 +1611,12 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // This is why "I just visited the Correction Chamber" now shows up in Recent instead of the donor zone.
         config.PushRecentPlace(territoryId, stageBg);
 
-        // v0.7.429 (supersedes S326u): reset the WEATHER pick per load, exactly like BGM below. S326u's
-        // "don't write 0 here" rationale predates S328ac single-authority — back then the broadcast carried
-        // the RAW pick, so 0 made peers render atmospheric. Now PushMapState broadcasts the RESOLVED
-        // effective weather (pick if legal, else the zone's native default), so pick=0 is safe and correct:
+        // v0.7.475 (was v0.7.429, supersedes S326u): reset the WEATHER pick per load, exactly like BGM below.
+        // The reset is still right but the REASON changed and the old wording is now false — PushMapState no
+        // longer resolves a pick, it broadcasts the LIVE sky. Which is what makes the reset safe: on a fresh
+        // load the live sky IS the new zone's native weather, so clearing the pick and reading reality agree.
+        // (Under the old resolver the justification was "pick if legal, else native"; that ladder is gone.)
+        // pick=0 is safe and correct:
         // it means "follow the new zone's own sky". Without this reset, a pick from map A (e.g. Snow) rode
         // into map B's broadcast; the host legality-gated it locally in Reassert (fell back to native — sunny),
         // but peers mirrored the illegal id verbatim → invalid render → the "peers stuck on none/atmospheric
@@ -3021,24 +3024,62 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     // ── S326: map-state handlers (host-only). Each sets the persisted config, mirrors into the capture holder so the
     // value rides the outbound stream (broadcast to peers), bumps the shared epoch (so peers apply once per change),
     // applies locally on the host so the host sees it immediately, and saves. Peers apply on receipt (StateApplyService).
-    private void PushMapState()
+    /// <param name="weatherOverride">The weather the host JUST picked, passed verbatim. See the note below on why
+    /// an explicit pick must not be read back from the engine.</param>
+    private void PushMapState(byte? weatherOverride = null)
     {
         // Mirror config → capture holder and bump the epoch. Called by every map* handler after it updates config.
-        // SINGLE-AUTHORITY WEATHER (S328ac, hardened v0.7.429): broadcast the RESOLVED effective weather, never a
-        // bare 0 — AND never an id that is illegal on the CURRENT map. The un-gated version shipped the host's pick
-        // verbatim; the host's own Reassert legality-gates locally (falls back to native), but peers mirrored the
-        // illegal id → invalid render → "peers stuck on none/atmospheric while the host sees sunny". Resolution
-        // order: explicit pick if legal here → zone's native default → Fair Skies as a last resort (sheet gap), so
-        // the wire NEVER carries 0 or an illegal id. Note: the host's own live apply in DoMapWeather stays raw
-        // (experimental freedom); the gate protects what PEERS mirror.
-        byte effectiveWeather = config.MapWeatherId;
-        if (effectiveWeather != 0
-            && !mapSettings.GetLegalWeather(zoneLoad.CurrentLoadedZone).Exists(x => x.id == effectiveWeather))
-            effectiveWeather = 0;   // pick is illegal on this map — fall through to native
-        if (effectiveWeather == 0)
-            effectiveWeather = mapSettings.GetDefaultWeather(zoneLoad.CurrentLoadedZone);
-        if (effectiveWeather == 0)
-            effectiveWeather = 2;   // Fair Skies — sheet-gap last resort; peers must never receive 0
+        // SINGLE-AUTHORITY WEATHER — v0.7.475: BROADCAST REALITY, NOT INTENT.
+        //
+        // History, because this reversed twice. Originally the host's raw pick went on the wire; the host's own
+        // Reassert legality-gated locally (falling back to native) while peers applied the raw id, so host and peer
+        // diverged — "peers stuck on none/atmospheric while the host sees sunny". v0.7.429 fixed that by resolving
+        // the wire value to a legal, non-zero id. That killed two real features, because it cannot tell
+        // `MapWeatherId == 0` = "host picked nothing" from `== 0` = "host explicitly picked None - Atmospheric",
+        // and it discards any id not in the map's legal set — which is precisely the debug-weather case (Fog on
+        // 1345, and the cinematic blank the invalid ones fall through to).
+        //
+        // The real defect was never the wire value: it was host and peer resolving INDEPENDENTLY. So resolve once,
+        // on the host, by reading what the engine is actually rendering (EnvManager displayed weather) and shipping
+        // that. Live weather is post-fallback truth — it is whatever the host can SEE:
+        //   • host never picked        → live = the map's native sky   → peers match the host
+        //   • host picked None (0)     → live = 0                      → peers render the same cinematic blank
+        //   • host picked Fog on 1345  → live = that id                → peers render the same stunning sky
+        //   • host picked a dud        → live = whatever it fell to    → peers fall to the same place
+        // In every case peers mirror the host because there is nothing left to re-derive. Same principle the BGM
+        // path already states: mirror VERBATIM, never resolve independently on both sides.
+        //
+        // ⚠ 0 IS NOW A LEGITIMATE WIRE VALUE. The old "peers must never receive 0" invariant is deleted, not
+        // relaxed — and the receiver's matching 0-substitution in ApplyMapState had to go with it. Changing one
+        // end alone is a no-op; that is why this looked like a wire bug and was a pair of independent guards.
+        // ⚠ v0.7.476 — REALITY LAGS THE WRITE. GetActiveWeather reads EnvManager+0x26, the DISPLAYED weather: the
+        // value the engine is rendering, which does not update until at least the next frame. So reading it
+        // immediately after ApplyWeather returns the PREVIOUS sky, and every pick reached peers one weather late —
+        // cycling the dropdown left peers permanently one behind, and a second click on the same entry "fixed" it
+        // only because by then the engine had caught up. Live-read is the right source for a SETTLED state and the
+        // wrong one for a state we just changed.
+        //
+        // So: an explicit pick is passed in and shipped VERBATIM (including 0 = None - Atmospheric, including any
+        // debug id) — we already know the intent, there is nothing to read back. Every other caller (map load,
+        // time, BGM, host succession) pushes state that has been settled for many frames, where the live read is
+        // both accurate and the thing that keeps host and peer from resolving independently.
+        byte effectiveWeather;
+        if (weatherOverride.HasValue)
+        {
+            effectiveWeather = weatherOverride.Value;
+        }
+        else if (zoneLoad.IsZoneLoaded)
+        {
+            effectiveWeather = mapSettings.GetActiveWeather();
+        }
+        else
+        {
+            // No synthetic map loaded, so live weather is the open world's and irrelevant to peers. Fall back to
+            // the stored pick, resolved to the zone's native only when nothing is stored.
+            effectiveWeather = config.MapWeatherId;
+            if (effectiveWeather == 0)
+                effectiveWeather = mapSettings.GetDefaultWeather(zoneLoad.CurrentLoadedZone);
+        }
         stateCapture.MapState.WeatherId = effectiveWeather;
         stateCapture.MapState.TimeForced = config.MapTimeForced;
         stateCapture.MapState.EorzeaHour = config.MapEorzeaHour;
@@ -3079,8 +3120,11 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         if (!relay.HasMapAuthority) { chat.Print("[HMSync] Only the host can set map weather."); return; }
         if (!byte.TryParse(arg?.Trim(), out var wid)) { chat.Print("[HMSync] Usage: /hms mapweather <id> (0 = None/atmospheric)."); return; }
         config.MapWeatherId = wid;
-        PushMapState();
+        // v0.7.475: apply BEFORE PushMapState. PushMapState now broadcasts the LIVE sky, so pushing first would
+        // ship the PREVIOUS weather and every change would land on peers exactly one pick late. (The UI's Pick()
+        // already applied-then-broadcast; this path was the odd one out.)
         if (MapApplyLive) mapSettings.ApplyWeather(wid);   // apply live only in-session on a loaded map
+        PushMapState(wid);   // verbatim: the pick is intent, not something to read back off a lagging engine field
         if (config.ShowDebugCommands) chat.Print("[HMSync] Map weather set to " + mapSettings.WeatherName(wid) + (MapApplyLive ? "." : " (saved, applies on map load)."));
     }
 
