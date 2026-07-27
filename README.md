@@ -4,6 +4,11 @@
 
 Enter any in-game map and explore it with friends. HMS puts you behind a firewall and lets you load any location client-side, including otherwise unavailable cutscenes while the server sees you as afk in your room.
 
+<img width="486" height="612" alt="Screenshot_5" src="https://github.com/user-attachments/assets/47849b11-343a-451b-9418-eb24be90b6e8" />
+
+
+<img width="488" height="669" alt="Screenshot_3" src="https://github.com/user-attachments/assets/47bc33b8-0394-4c97-aca1-a0f4a9064d6e" />
+
 ## Highlights
 
 - Load any zone client-side and roam it freely from your apartment, estate, FC room or even a world map
@@ -19,12 +24,15 @@ Enter any in-game map and explore it with friends. HMS puts you behind a firewal
 - Load any zone client-side with `/hms load` by zone number, name, GUI, (i.e. /hms load Kugane)
 - Carpet mode - spawn floor underfoot to stand or walk in zones that don't have normal collision, such as high ledges, bridges or landmarks
 - Most zone barriers cleaned up for easy travel. If you're stuck, try `/hms carpet` or `/hms noclip` 
-- Curated spawns for all zones: never spawn out of bounds. You can set your own spawn points too
-- Shared weather, BGM and time control - everyone on the map sees the same thing. Never have a friend emote about rain while you see a dry midday on your end.
+- Curated spawns for all zones: never spawn out of bounds. You can set your own spawn points too with `/hms memo`
+- Shared weather, BGM and time view via host session control - everyone on the map sees the same thing. Never have a friend emote about rain while you see a dry midday on your end.
 - Hide NPCs to free up the chair you always wanted to use yourself
 - Removed VFX clutter from maps, such as the purple entrance curtain, some boss zone barriers and red/blue border lines for an immersive experience
-- Better Explorer mode for the Clyteum map - removed invisible walls in the city, allowing you to take any turn you like in a fully immersive freeroam mode
 - Added a hand-curated section with various seaships for the great blue adventure enjoyers, allowing you to spend time at sea with your friends
+- Better Explorer mode for the Clyteum map - removed invisible walls in the city, allowing you to take any turn you like in a fully immersive freeroam mode
+
+<img width="1036" height="594" alt="Screenshot_15" src="https://github.com/user-attachments/assets/abb84289-e262-48e6-813c-ae7acd76875a" />
+
 
 ### Play together (lobbies and sync, requires a beta key)
 - Gather in one location. Joiners should be within rendering range (about 1000 yalms) and in the same apartment / world map
@@ -35,26 +43,41 @@ Enter any in-game map and explore it with friends. HMS puts you behind a firewal
 - You can only join late if your character was present when the lobby was being set up
 - You need a relay key to play together. Relay keys are currently available to closed beta testers only
 
-Scenario A You were with everyone in the room when the lobby was made, but were afk when everyone typed /join. You come back, type `/hms join <pw>` and auto load into the session with everyone. Late join works.
-Scenario B You were on another map or not in-game when everyone gathered and joined. You enter the apartment where everyone is in HMS session and try to `/hms join <pw>`. Your character wouldn't be seen by others because they're behind firewall. Rehost to include the later joiner.
+### Joining a lobby
+- Scenario A: you were with everyone in the room when the lobby was made, but were afk when everyone typed /join. You come back, type `/hms join <pw>` and auto load into the session with everyone. Late join works.
+- Scenario B: you were on another map or not in-game when everyone gathered and joined the lobby. You enter the apartment where everyone is in already in a HMS session and try to `/hms join <pw>`. Your character wouldn't be seen by others because they're behind firewall. Rehost to include the late joiner.
 
 ### Plugin interface
 
-Session - click on "movement", "appearance" or "face control" headers to create hotbars 
-Map control - set weather, BGM or hide NPCS (host-only, map state shared by all peers)
-Zones - maps split by type
-Summons - minions, emotes, fashion accessories and mounts
-Carpet - spawn-your-own floor controls 
-Config - relay settings, appearance and modules
-Packets (debug mode) - similar to Dalamud's `/xldata` network tab
+- Session - click on "movement", "appearance" or "face control" headers to create hotbars 
+- Map control - set weather, BGM or hide NPCS (host-only, map state shared by all peers)
+- Zones - maps split by type
+- Summons - minions, emotes, fashion accessories and mounts
+- Carpet - spawn-your-own floor controls 
+- Config - relay settings, appearance and modules
+- Packets (debug mode) - similar to Dalamud's `/xldata` network tab
+
+<img width="493" height="551" alt="Screenshot_8" src="https://github.com/user-attachments/assets/3b70f621-299d-4ad1-a041-5ce65573de5b" />
+
 
 ### Carpet
 - Spawn floor for your character only in-session. Lets you walk on roofs, far bridges or places that have textures-only surfaces
 - Uphill/Downhill creates a gentle up down slope. Press "flat" to reset
 
+<img width="617" height="236" alt="Screenshot_14" src="https://github.com/user-attachments/assets/86c03eae-6c1b-4eb6-8ecb-10c315808d56" />
+
+
 ### Face control
 - Tilt your head or move your eyes outside of gpose - broadcasted in-HMS for a more expressive roleplaying experience
-- You can now roll your eyes mid-RP and others will see it.
+- Both body posture, gaze tracking and head tilt are broadcast to peers - you can now roll your eyes mid-RP and others will see it
+
+
+<img width="918" height="775" alt="Screenshot_9" src="https://github.com/user-attachments/assets/fb633eae-bf3d-496c-b4dd-345cea22a3c9" />
+
+Face control bar
+
+<img width="378" height="148" alt="Screenshot_10" src="https://github.com/user-attachments/assets/aaba49f2-b557-4965-a48c-e6241a173e55" />
+
 
 ### Mounts
 - Type `/hms mount <id>` to giddy up or use mount picker GUI in the Summons tab
@@ -71,7 +94,7 @@ Packets (debug mode) - similar to Dalamud's `/xldata` network tab
 - Proximity-based `/say` and `/yell`, just like in-game
 - Party, alliance and FC chats will always work behind firewall - no opcode set up required
 
-### HMapSync Relay
+### RMS - Relay MapSync
 
 The relay is a **message forwarder**. It takes what your game client sends and copies it to the other people in your session. It is deliberately stupid: for the things that actually describe you (where you are, what you look like, what you're doing), **it forwards them without ever opening them.**
 
@@ -97,7 +120,7 @@ These live in the server's memory for as long as your session lasts, and vanish 
 
 Your **EntityId** is sent by the plugin and the relay never even reads it. Note that **EntityID** is distinct from **AccountID** which is used by the game for account-level identification for blacklist.
 
-The plugin does not nor will it ever collect AccountID or any other privacy intruding information it doesn't need. Anything that's used is only to allow the relay to function and auto-removed once it's not immediately needed.
+The plugin does not nor will it ever collect AccountID.
 
 ### Session security
 
@@ -157,6 +180,9 @@ Common subcommands:
 - You can also drop `/hms carpet` while mounted, to make a cinematic landing and dismount. The carpet will persist through dismount
 - In face control, look up in the sky and press 'hold coords'. This will make your character continue looking at the fixed point while walking. Helpful for immersion or to roleplay tracking a high up / faraway object
 - Ship cabin zone (o1e1) has an observation deck! Navigate downstairs to the aft side of the ship and enjoy the view
+
+<img width="2166" height="1314" alt="Screenshot_11" src="https://github.com/user-attachments/assets/456d820e-48f2-42ae-90c3-33abc703c7e5" />
+
 
 ## Requirements
 
