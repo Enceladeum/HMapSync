@@ -68,6 +68,41 @@ public unsafe class MapSettingsService
     /// Then the WeatherRate.Weather[] entries for the territory, de-duplicated, names from Weather.Name, integer
     /// prefixes stripped (names only). Returns just the (0) entry if the territory or its rate row is unresolvable.
     /// </summary>
+    // v0.7.471 — TERRITORY-SCOPED WEATHER PROMOTIONS.
+    //
+    // Some territories accept a weather that isn't in their WeatherRate set, so it only ever appeared behind
+    // "Show more presets" (debug-gated). These three want CutScene (59) in the ordinary picker. Verified against
+    // Weather.csv (`59,CutScene,CutScenery,,,,,0`) and TerritoryType/WeatherRate:
+    //
+    //   958  (m5f2)  rate 133 -> native [15, 9, 7, 4, 3, 2, 1]
+    //   1011 (ec029) rate 27  -> native [15]           <- one weather, hence how bare it feels
+    //   1120 (ec048) rate 58  -> native [1]            <- likewise
+    //
+    // 59 is in NONE of those sets, so the promotion is purely additive on all three.
+    //
+    // ⚠ KNOWN BUG, NOT FIXED HERE — "None - Atmospheric" cannot be broadcast. GetLegalWeather is consulted by the
+    // peer-broadcast gate (HMSyncPlugin ~3034) and the held-weather reassert (ReassertHeldState). That gate reads
+    // `config.MapWeatherId == 0` as "host picked nothing" and substitutes the native default — but 0 is ALSO the
+    // id the host sets when explicitly choosing "None - Atmospheric". One sentinel, two meanings, and the guard
+    // can only see the first. Same shape one line earlier for any id not in this list.
+    //
+    // (This comment previously asserted the opposite, on the strength of a field observation that debug weathers
+    // broadcast fine. The code does not support that reading; the retraction was wrong and is retracted in turn.
+    // If debug weathers DO reach peers, there is a second path doing it and it has not been found.)
+    //
+    // WHY NUMERIC IDS. The first cut of this resolved names against the Weather sheet, on the reasoning that an
+    // unverified id fails silently-and-wrongly while a name miss fails visibly. That reasoning was sound and the
+    // premise is now gone: with the CSVs on hand the id is ground truth, so the resolver was pure risk surface
+    // (a sheet enumeration + a string match, either of which could fail quietly inside the enclosing try/catch —
+    // and one of which did). Verified constant beats runtime lookup.
+    private static readonly Dictionary<uint, byte[]> PromotedWeather = new()
+    {
+        [958]  = new byte[] { 59 },   // CutScene
+        [1011] = new byte[] { 59 },   // CutScene
+        [1120] = new byte[] { 59 },   // CutScene
+        [1345] = new byte[] { 4 },    // Fog — m6d2, native set is [15] only; verified Weather.csv `4,Fog,foggy`
+    };
+
     public List<(byte id, string name)> GetLegalWeather(uint territoryId)
     {
         var result = new List<(byte, string)> { (0, "Default / atmospheric") };
@@ -97,6 +132,20 @@ public unsafe class MapSettingsService
                 seen.Add(wid);
                 result.Add((wid, name));
             }
+
+            // v0.7.471: append this territory's promotions AFTER the sheet set, so the native weathers keep their
+            // usual order and the promoted one lands at the bottom of the picker as the odd one out.
+            if (PromotedWeather.TryGetValue(territoryId, out var promos))
+                foreach (var pid in promos)
+                {
+                    if (pid == 0 || seen.Contains(pid) || !weatherSheet.HasRow(pid)) continue;
+                    var pname = weatherSheet.GetRow(pid).Name.ToString();
+                    // Unlike the native loop above, an empty name does NOT skip the entry here: the promotion is
+                    // deliberate and a blank label in some client language shouldn't make it vanish silently.
+                    if (string.IsNullOrWhiteSpace(pname)) pname = "Weather " + pid;
+                    seen.Add(pid);
+                    result.Add((pid, pname));
+                }
         }
         catch (Exception ex)
         {
