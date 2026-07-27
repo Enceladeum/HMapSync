@@ -35,8 +35,8 @@ Enter any in-game map and explore it with friends. HMS puts you behind a firewal
 - You can only join late if your character was present when the lobby was being set up
 - You need a relay key to play together. Relay keys are currently available to closed beta testers only
 
-| Scenario A | You were with everyone in the room when the lobby was made, but were afk when everyone typed /join. You come back, type `/hms join <pw>` and auto load into the session with everyone. Late join works. |
-| Scenario B | You were on another map or not in-game when everyone gathered and joined. You enter the apartment where everyone is in HMS session and try to `/hms join <pw>`. Your character wouldn't be seen by others because they're behind firewall. Rehost to include the later joiner. |
+Scenario A You were with everyone in the room when the lobby was made, but were afk when everyone typed /join. You come back, type `/hms join <pw>` and auto load into the session with everyone. Late join works.
+Scenario B You were on another map or not in-game when everyone gathered and joined. You enter the apartment where everyone is in HMS session and try to `/hms join <pw>`. Your character wouldn't be seen by others because they're behind firewall. Rehost to include the later joiner.
 
 ### Plugin interface
 
