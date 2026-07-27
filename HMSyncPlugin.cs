@@ -977,6 +977,11 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 // real path/pos/collider-type — to fix the road-clone source match (which found nothing).
                 zoneLoad.DumpRoads1345(arg ?? "");
                 break;
+            case "weatherdiag":
+                // v0.7.473: dump the weather picker's inputs for the loaded zone. Read /xllog for [WXDIAG].
+                mapSettings.DumpWeatherDiag(zoneLoad.CurrentLoadedZone);
+                chat.Print("[HMSync] Weather diagnostic written to /xllog — look for [WXDIAG]. Also reports config.MapWeatherId=" + config.MapWeatherId + ".");
+                break;
             case "linevfx":
             {
                 // v0.7.466 (/hms linevfx [scan|gfx|one|off|destroy|on]): boss-barrier LINE suppression, type 59.

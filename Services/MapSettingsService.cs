@@ -103,6 +103,45 @@ public unsafe class MapSettingsService
         [1345] = new byte[] { 4 },    // Fog — m6d2, native set is [15] only; verified Weather.csv `4,Fog,foggy`
     };
 
+    /// <summary>v0.7.473 — `/hms weatherdiag`. Dumps every input the weather picker and chip grid decide from, for
+    /// the loaded zone, so "why isn't X in the dropdown" is answered by reading rather than by inference. Exists
+    /// because two successive static reads of this path produced two wrong answers.</summary>
+    public void DumpWeatherDiag(uint territoryId)
+    {
+        try
+        {
+            log.Information("[HMSync] [WXDIAG] territory=" + territoryId);
+            byte def = GetDefaultWeather(territoryId);
+            byte live = GetActiveWeather();
+            log.Information("[HMSync] [WXDIAG] defaultWeather(live WeatherManager)=" + def + " (" + WeatherName(def) + ")"
+                + "  activeWeather=" + live + " (" + WeatherName(live) + ")");
+            // ⚠ The dropdown SKIPS any entry equal to defaultWeather (it's rendered as the "(native)" row above the
+            // separator). So if a promoted id equals defaultWeather it is present in the list and invisible below.
+            var legal = GetLegalWeather(territoryId);
+            log.Information("[HMSync] [WXDIAG] GetLegalWeather -> " + legal.Count + " entries: "
+                + string.Join(", ", legal.Select(x => x.id + ":" + x.name)));
+            bool has59 = legal.Exists(x => x.id == 59);
+            log.Information("[HMSync] [WXDIAG] CutScene(59) in legal set = " + has59
+                + (has59 && def == 59 ? "  ← AND equals defaultWeather, so the dropdown skips it (renders as \"(native)\")" : ""));
+
+            var lvb = GetLvbWeathers(territoryId);
+            log.Information("[HMSync] [WXDIAG] LVB weathers -> " + lvb.Count + ": "
+                + string.Join(", ", lvb.Select(x => x.id + ":" + x.name + (x.legal ? "(legal)" : "(extra)"))));
+            // v0.7.474: report BOTH chip modes. The first cut modelled only the LVB path and reported "1 chip"
+            // while the debug grid was showing ~70 — because debug mode passes includeAll:true, which appends
+            // every used weather beyond the LVB set. A diagnostic that models one branch of the thing it is
+            // diagnosing is worse than none: it reads as authoritative and disagrees with the screen.
+            foreach (var dbg in new[] { false, true })
+            {
+                var zw = GetZoneWeathers(territoryId, dbg);
+                var chips = zw.Where(x => !x.legal && x.id != 0 && x.id != def).ToList();
+                log.Information("[HMSync] [WXDIAG] chips (debugMode=" + dbg + ") -> " + chips.Count + ": "
+                    + string.Join(", ", chips.Select(x => x.id + ":" + x.name)));
+            }
+        }
+        catch (Exception ex) { log.Error("[HMSync] [WXDIAG] failed: " + ex.Message); }
+    }
+
     public List<(byte id, string name)> GetLegalWeather(uint territoryId)
     {
         var result = new List<(byte, string)> { (0, "Default / atmospheric") };
