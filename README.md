@@ -170,7 +170,7 @@ Common subcommands:
 | Multi-seater mounts don't work | Not implemented yet |
 | Terncliff <map ID 925> is blank | Territory ID 925 is a special cutscene-version of Terncliff (same as usual Terncliff) which is hidden by cutscene director with no easy lever to spawn it yet. Use Terncliff 919 or 926 IDs instead - they're identical to 925 |
 | In-game cutscene is missing from the zone list | FFXIV uses several tricks to instantiate cutscenes: one of them is dynamically spawning assets and furniture on existing maps to make them appear as new locations. Some maps are used for multiple different cutscenes too. All cutscene locations which have dedicated maps are available in the Cutscenes tab. Some are constructed dynamically and are not available yet. For example, the Black Rose Research facility where Varis speaks with Emet-Selch takes place in Mor Dhona with the game adding temporary props which are removed once it's finished playing. Similarly, the Diamond Weapon bay from the Sorrow of Werlyt questline takes place in the magitek hangar of the Imperial Palace (the one where Estinien fights the Arch Ultima boss in the Vows of Virtue, Deeds of Cruelty duty). The Valens' control chamber, the Weapon itself and other props are spawned dynamically. There is currently no way to easily invoke and freeze them. This also explains why Valens van Varro's chapter is missing some familiar props - these are spawned dynamically by the cutscene director |
-| Any other map / character bugs on session exit | Fixed by relogging or re-entering the map|
+| Any other map / character visibility bugs on session exit | Fixed by relogging or re-entering the map or either `/sit` or `/groundsit` to refresh character position |
 
 ## Tips and tricks
 
