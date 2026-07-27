@@ -151,17 +151,17 @@ Common subcommands:
 
 ## Tips and tricks
 
-- A lot of maps are huge and have a lot of hidden chambers, event/phase locations tucked underground (i.e. Zadnor, South Horn Mount Rokkon). Use `noclip` on spawn and press shift to move under the map to see more of the map and locate any extra locales
-- Press noclip+carpet to get around quickly across the map without teleport
-- Enter debug mode and press "Show more presets" under Map Control \ Weather. Most will not work and return an empty skybox, but occasionally you'll get very cinematic effects (try setting Fog on the Clyteum map (ID 1345) for example)
+- Some maps huge and have a lot of hidden chambers, event/phase locations or interiors tucked underground (i.e. Zadnor, South Horn, Mount Rokkon). Use `noclip` on spawn and press shift to move under the map to see inspect if there's anything hidden underneath
+- Press noclip+carpet to get around quickly if you don't have teleport coordinates
 - Use `/hms fly` to reach an out of place location, adjust your footing and then toggle `/hms carpet on`. Then disable flight and enjoy the sensation of walking on a solid ground where the ground didn't exist five minutes ago for cinematic shots
+- You can also drop `/hms carpet` while mounted, to make a cinematic landing and dismount. The carpet will persist through dismount
 - In face control, look up in the sky and press 'hold coords'. This will make your character continue looking at the fixed point while walking. Helpful for immersion or to roleplay tracking a high up / faraway object
 - Ship cabin zone (o1e1) has an observation deck! Navigate downstairs to the aft side of the ship and enjoy the view
 
 ## Requirements
 
 - XIVLauncher with Dalamud
-- Glamourer (optional): cosmetic visibility toggles use Glamourer IPC when it is installed
+- Glamourer: cosmetic visibility toggles use Glamourer IPC when it is installed
 
 ## Installing
 
