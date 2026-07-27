@@ -1194,7 +1194,10 @@ public class HMSyncUI
             : (curW == mapDefaultWeather ? MapSettings.WeatherName(curW) + " (native)" : MapSettings.WeatherName(curW));
         ImGui.TextDisabled("Weather");
         ImGui.SetNextItemWidth(-PanelPad);
-        if (ImGui.BeginCombo("##mapweather", curWName))
+        // v0.7.474: HeightLarge. The default combo popup is ~8 rows; 958 has 9 legal weathers once CutScene is
+        // promoted, so the promoted entry — appended last by design — fell below the scroll fold and read as
+        // "the promotion didn't work". Promotions will always land last, so this must not clip.
+        if (ImGui.BeginCombo("##mapweather", curWName, ImGuiComboFlags.HeightLarge))
         {
             void Pick(byte wid)
             {
@@ -1235,6 +1238,15 @@ public class HMSyncUI
             var extras = new System.Collections.Generic.List<(byte wid, string name)>();
             foreach (var (ewid, ename, elegal) in mapAllWeather)
                 if (!elegal && ewid != 0 && ewid != mapDefaultWeather) extras.Add((ewid, ename));
+            // v0.7.474: alphabetical, then by id. The natural order is the sheet's (grouped by id), which is a
+            // fine data order and a poor reading order across ~70 chips. Note the game reuses names across ids
+            // (three "Termination", two "Gales"), so identical labels now sit adjacent instead of scattered —
+            // they are genuinely different weathers; the ImGui id suffix (##wc{id}) already keeps them distinct.
+            extras.Sort((a, b) =>
+            {
+                int c = string.Compare(a.name, b.name, StringComparison.OrdinalIgnoreCase);
+                return c != 0 ? c : a.wid.CompareTo(b.wid);
+            });
             float cavail = ImGui.GetContentRegionAvail().X;
             float cx = 0f; const float cgap = 6f;
             bool cfirst = true;
