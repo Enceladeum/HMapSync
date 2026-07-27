@@ -135,9 +135,6 @@ Common subcommands:
 
 `/facecamera` / Pause/Break key - drives head-tilt / gaze sync.
 
-[TODO] Additional diagnostic subcommands exist for development and are not listed here.
-Confirm the final user-facing command set and arguments before release.
-
 ## Known issues
 
 | Issue | Solution |
