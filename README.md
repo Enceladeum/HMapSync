@@ -8,7 +8,7 @@ Enter any in-game map and explore it with friends. HMS puts you behind a firewal
 
 - Load any zone client-side and roam it freely from your apartment, estate, FC room or even a world map
 - Packet filter keeps you secure while in-session, letting only heartbeat signals and optionally allowing /say so you can chat with your friends normally while in-session, making it seem you're just standing and chatting
-- Access cutscene-only zones (pre-war Garlemald, Garlean throne room, Steps of Faith bridge or Werlyttian countryside)
+- Access cutscene-only zones (pre-war Garlemald, Garlean throne room, Steps of Faith bridge or Werlytian countryside)
 - Co-op mode: enter any map with up to 20 friends without any time limits or action restrictions. Ever wanted to roleplay in a dungeon for longer than 90 minutes and use flying mounts indoors? Now you can
 - Enter solo instances like Terncliff, inn rooms or raids and hang out there with friends 
 
@@ -87,13 +87,13 @@ The relay is a **message forwarder**. It takes what your game client sends and c
 
 These live in the server's memory for as long as your session lasts, and vanish when it ends or the server restarts. **None of them is saved to disk.**
 
-| | Why it needs it |
+| What | Why |
 |---|---|
 | **Your ContentId** (your character's permanent FFXIV id) | This is how "join the room the people near you are in" works, and how a kick makes a ban stick. **It is never written to a log, never saved, and never attached to any statistic.** |
 | **Your character name** | Shown in the lobby roster so people know who's in the room. |
 | **The room password** | Checked against what you typed. Never written down anywhere. (Still, don't use passwords you use elsewhere, or use plugin auto-generated lobby passwords as best practice) |
 | **The characters you can see** | Used for exactly one lookup (to work out which room you're trying to join), then thrown away. Only the *number* of them is ever recorded, never who they are. |
-| **Which key you connected with** | So the person running the relay can see usage per key and revoke one that's being abused. |
+| **Which key you connected with** | Abuse detection |
 
 Your **EntityId** is sent by the plugin and the relay never even reads it. Note that **EntityID** is distinct from **AccountID** which is used by the game for account-level identification for blacklist.
 
@@ -129,8 +129,8 @@ Common subcommands:
 | `fly` | Toggle flight. |
 | `noclip` | Toggle noclip. |
 | `carpet` | Toggle carpet. |
-| `emote <id|name>` | Play a client-side emote. |
-| `minion <id|name>` | Summon a client-side minion. |
+| `emote <id \ name>` | Play a client-side emote. |
+| `minion <id \ name>` | Summon a client-side minion. |
 | `memo` | Record a spawn point for the current map. |
 
 `/facecamera` / Pause/Break key - drives head-tilt / gaze sync.
@@ -173,9 +173,6 @@ HMapSync is distributed through a custom Dalamud plugin repository.
 1. In game, open Dalamud settings (`/xlsettings`) and go to the Experimental tab.
 2. Add the custom plugin repository URL: `[TODO: repository JSON URL]`.
 3. Open the plugin installer (`/xlplugins`), search for HMapSync, and install.
-
-[TODO] Finalize once the repository JSON is published and the plugin is added to the
-master list.
 
 ## Credits
 
