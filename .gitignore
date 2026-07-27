@@ -1,0 +1,18 @@
+# ── Build output ──
+bin/
+obj/
+
+# ── IDE / editor ──
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# ── Dalamud packager / release artifacts ──
+*.zip
+
+# ── OS cruft ──
+Thumbs.db
+.DS_Store

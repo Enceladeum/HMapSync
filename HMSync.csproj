@@ -1,0 +1,34 @@
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+    <PropertyGroup>
+        <TargetFramework>net10.0-windows</TargetFramework>
+        <LangVersion>latest</LangVersion>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <Version>0.7.470.0</Version>
+        <AssemblyName>HMSync</AssemblyName>
+        <RootNamespace>HMSync</RootNamespace>
+        <Nullable>enable</Nullable>
+        <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+        <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <!-- S327: named opcode→id map (FFXIVOpcodes, Global region). Embedded so the packet inspector can label
+             packets by name (e.g. 356 → ActorControlSelf). Opcodes rotate per patch; swap this JSON to update.
+             The NAME is the durable identity we care about — numbers are per-version. -->
+        <EmbeddedResource Include="opcodes.min.json" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!--
+          S246: Glamourer.Api — the official consumer IPC package (Glamourer.Api.IpcSubscribers.*,
+          Glamourer.Api.Enums.*). Used to drive cosmetic visibility toggles (hat/visor/weapon/ears)
+          through Glamourer when it's installed. The 2.x line is current; NuGet resolves the latest.
+          Glamourer.Api.dll MUST ship next to HMSync.dll — a plain PackageReference copies it to
+          output, which is correct. Do NOT add AssemblyLoadContext: IPC crosses the ALC boundary as
+          primitives (enum values are ints on the wire), so HMS's copy never conflicts with the copy
+          Glamourer itself loaded. Every Glamourer/Penumbra consumer ships the shim this way.
+        -->
+        <PackageReference Include="Glamourer.Api" Version="2.*" />
+        <PackageReference Include="MessagePack" Version="2.5.*" /><!-- S331: v4 binary wire (Stage 4) -->
+    </ItemGroup>
+</Project>

@@ -1,0 +1,7 @@
+{
+    "Name": "HM-Sync",
+    "Author": "V",
+    "AssemblyVersion": "0.7.470.0",
+    "Punchline": "Explore any zone together.",
+    "Description": "Shared map exploration for FFXIV. Load any zone client-side and explore it with friends."
+}
