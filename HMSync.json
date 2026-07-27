@@ -3,5 +3,6 @@
     "Author": "Enceladeum",
     "AssemblyVersion": "1.0.0.0",
     "Punchline": "Explore any zone together.",
-    "Description": ""
+    "Description": "",
+    "IconUrl": "https://raw.githubusercontent.com/Enceladeum/HMapSync/main/images/icon.png"
 }
