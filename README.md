@@ -194,7 +194,7 @@ Common subcommands:
 HMapSync is distributed through a custom Dalamud plugin repository.
 
 1. In game, open Dalamud settings (`/xlsettings`) and go to the Experimental tab.
-2. Add the custom plugin repository URL: `https://raw.githubusercontent.com/Enceladeum/HMapSync/main/pluginmaster.json`.
+2. Add the custom plugin repository URL: `https://raw.githubusercontent.com/Enceladeum/DalamudPlugins/main/repo.json`.
 3. Open the plugin installer (`/xlplugins`), search for HMapSync, and install.
 
 ## Credits

@@ -12,8 +12,6 @@ obj/
 
 # ── Dalamud packager / release artifacts ──
 *.zip
-# ...but DO track the published distribution zip at repo root (tagless self-hosted feed)
-!/latest.zip
 
 # ── OS cruft ──
 Thumbs.db
