@@ -1,0 +1,24 @@
+[
+  {
+    "Author": "Enceladeum",
+    "Name": "HMapSync (HMS)",
+    "InternalName": "HMSync",
+    "AssemblyVersion": "1.0.0.0",
+    "Description": "",
+    "Punchline": "Explore any zone together.",
+    "ApplicableVersion": "any",
+    "DalamudApiLevel": 15,
+    "LoadRequiredState": 0,
+    "LoadSync": false,
+    "CanUnloadAsync": false,
+    "LoadPriority": 0,
+    "AcceptsFeedback": true,
+    "RepoUrl": "https://github.com/Enceladeum/HMapSync",
+    "IconUrl": "https://raw.githubusercontent.com/Enceladeum/HMapSync/main/images/icon.png",
+    "DownloadLinkInstall": "https://raw.githubusercontent.com/Enceladeum/HMapSync/main/latest.zip",
+    "DownloadLinkUpdate": "https://raw.githubusercontent.com/Enceladeum/HMapSync/main/latest.zip",
+    "DownloadLinkTesting": "https://raw.githubusercontent.com/Enceladeum/HMapSync/main/latest.zip",
+    "DownloadCount": 0,
+    "LastUpdate": 1785267670
+  }
+]
