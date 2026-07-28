@@ -12,7 +12,7 @@ namespace HMSync.Services;
 /// the DrawObject, which triggers Penumbra's Create CharacterBase hook in a
 /// rebuild loop (Penumbra sees a character with no draw object and recreates
 /// it every 500ms). RenderFlags hides the character while keeping the draw
-/// object intact — Penumbra has nothing to rebuild.
+/// object intact - Penumbra has nothing to rebuild.
 /// 
 /// RenderFlags == 0x00 means visible. Setting bit 1 (0x02) hides the
 /// character, nameplate, and selection indicator. Same approach used by
@@ -33,10 +33,10 @@ public unsafe class ActorVisibilityService : IDisposable
 
     private bool active;
 
-    // Object indices we've hidden — so we can restore them on Stop
+    // Object indices we've hidden - so we can restore them on Stop
     private readonly HashSet<ushort> hiddenIndices = new();
 
-    // Object indices of registered peers — these should be visible
+    // Object indices of registered peers - these should be visible
     private readonly HashSet<ushort> peerIndices = new();
 
     public ActorVisibilityService(IObjectTable objectTable, IFramework framework, IPluginLog log)
@@ -46,7 +46,7 @@ public unsafe class ActorVisibilityService : IDisposable
         this.log = log;
     }
 
-    // v0.7.360: set by the plugin so the hide sweep can stand down during gpose. See the guard in Update() —
+    // v0.7.360: set by the plugin so the hide sweep can stand down during gpose. See the guard in Update() -
     // gpose creates COPIES of actors at different object indices, so the `idx == localIdx` guard doesn't protect
     // the player's own gpose copy and the sweep was hiding it (taking its mount with it).
     public Func<bool>? IsGPosing;
@@ -62,7 +62,7 @@ public unsafe class ActorVisibilityService : IDisposable
         peerIndices.Clear();
 
         HideAll();
-        log.Information("[HMSync] ActorVisibility started — hiding " + hiddenIndices.Count + " players");
+        log.Information("[HMSync] ActorVisibility started - hiding " + hiddenIndices.Count + " players");
     }
 
     public void Stop()
@@ -80,7 +80,7 @@ public unsafe class ActorVisibilityService : IDisposable
 
         hiddenIndices.Clear();
         peerIndices.Clear();
-        log.Information("[HMSync] ActorVisibility stopped — all players restored");
+        log.Information("[HMSync] ActorVisibility stopped - all players restored");
     }
 
     /// <summary>
@@ -91,7 +91,7 @@ public unsafe class ActorVisibilityService : IDisposable
         peerIndices.Add(objectIndex);
         hiddenIndices.Remove(objectIndex);
 
-        // v0.7.335: ALWAYS clear the hide bit on bind — not gated behind our own hiddenIndices. A late joiner was hidden
+        // v0.7.335: ALWAYS clear the hide bit on bind - not gated behind our own hiddenIndices. A late joiner was hidden
         // by ZoneLoadService's LOAD-TIME sweep (a different tracking set), so it was never in our hiddenIndices; the old
         // gated Show() then no-op'd and they stayed invisible on an existing member. Clearing unconditionally is safe
         // (a peer must be visible) and fixes the late-join case; the ZoneLoad set is cleared separately via the plugin.
@@ -116,7 +116,7 @@ public unsafe class ActorVisibilityService : IDisposable
             var native = (GameObject*)obj.Address;
             Hide(native);
             hiddenIndices.Add(objectIndex);
-            log.Information("[HMSync] Peer [" + objectIndex + "] " + obj.Name + " — hidden (left)");
+            log.Information("[HMSync] Peer [" + objectIndex + "] " + obj.Name + " - hidden (left)");
         }
     }
 
@@ -137,13 +137,13 @@ public unsafe class ActorVisibilityService : IDisposable
 
     // ── v0.7.390: gpose transition audit ───────────────────────────────────────────────────────
     // Two symptoms sit on the gpose boundary and neither is measured yet:
-    //   ENTRY — peers appear TWICE. Suspected: gpose builds copies at new indices, and since v0.7.360
+    //   ENTRY - peers appear TWICE. Suspected: gpose builds copies at new indices, and since v0.7.360
     //           stands this sweep down while gposing, a peer's clone is no longer hidden. INFERRED,
     //           not observed.
-    //   EXIT  — your own character goes invisible locally (peers still see you). Mechanism UNKNOWN.
+    //   EXIT  - your own character goes invisible locally (peers still see you). Mechanism UNKNOWN.
     //           The "stale localIdx" theory is falsified: localIdx is re-read fresh every sweep below.
     //
-    // Everything in this service is keyed on OBJECT INDEX — hiddenIndices, peerIndices, idx == localIdx —
+    // Everything in this service is keyed on OBJECT INDEX - hiddenIndices, peerIndices, idx == localIdx -
     // and gpose reshapes the object table. Manual §2.4: identity is ContentId, the object handle is
     // ephemeral. This audit logs both keys side by side so we can see exactly where they diverge:
     //   • two indices sharing one ContentId  → that is the clone, and which of them carries 0x02
@@ -193,7 +193,7 @@ public unsafe class ActorVisibilityService : IDisposable
             " active=" + active +
             " peers=[" + string.Join(",", peerIndices) + "]" +
             " hidden=[" + string.Join(",", hiddenIndices) + "]" +
-            (dupes > 0 ? "  <<< " + dupes + " ContentId(s) AT TWO INDICES — THE CLONE" : "") +
+            (dupes > 0 ? "  <<< " + dupes + " ContentId(s) AT TWO INDICES - THE CLONE" : "") +
             sb;
 
         if (line == prevDiagLine) return;   // change-gated
@@ -201,21 +201,21 @@ public unsafe class ActorVisibilityService : IDisposable
         log.Information("[HMSync] [GPOSEDIAG] " + line);
     }
 
-    // v0.7.391: did WE hide this index? GPoseMountDrawService's recovery pass needs this — it was
+    // v0.7.391: did WE hide this index? GPoseMountDrawService's recovery pass needs this - it was
     // blanket-clearing 0x02 from every Pc in gpose, which undid the game's own hide of the originals
     // when it spawned clones, so both copies drew. Only ever un-hide a bit we set.
     public bool WasHiddenByUs(ushort objectIndex) => hiddenIndices.Contains(objectIndex);
 
     public void Update()
     {
-        if (Diag) DiagTick();   // ahead of every guard — the transition is the thing we need to see
+        if (Diag) DiagTick();   // ahead of every guard - the transition is the thing we need to see
         if (!active) return;
 
         // v0.7.360 ROOT FIX for "HMS mounts disappear in gpose". GPose builds COPIES of actors at DIFFERENT object
         // indices. The `idx == localIdx` guard below only protects the LIVE local player, so the player's own gpose
-        // copy (still ObjectKind.Pc, not in peerIndices) fell through and got RenderFlags |= 0x02 — and the mount
+        // copy (still ObjectKind.Pc, not in peerIndices) fell through and got RenderFlags |= 0x02 - and the mount
         // attached to it inherited the hide. The probe caught it exactly: at the first sweep after gpose entry
-        // (frame 36 — this 30-frame throttle), RIDER rf 0x0 → 0x1002 and MOUNT rf 0x0 → 0x8802 on the SAME frame,
+        // (frame 36 - this 30-frame throttle), RIDER rf 0x0 → 0x1002 and MOUNT rf 0x0 → 0x8802 on the SAME frame,
         // i.e. both gained bit 0x02. Nothing was destroying the mount; it was being hidden.
         //
         // Standing the sweep down while gposing is the correct behaviour, not just a patch: the sweep exists to hide

@@ -11,14 +11,14 @@ namespace HMSync.Services;
 /// <summary>
 /// Reflection-based struct/type inspector. Given a set of fully-qualified type names, walks
 /// each type and dumps its fields (with [FieldOffset] where present), properties, and methods
-/// (with parameter signatures) to a text file. Pure reflection — no game state touched, safe
+/// (with parameter signatures) to a text file. Pure reflection - no game state touched, safe
 /// to run anytime. Built to answer "does this FFXIVClientStructs type expose a visibility/
 /// SetActive member in the bundled CS version?" without guessing, but reusable for any type.
 /// </summary>
 public static class StructDumper
 {
     // Types we want to inspect. Add/remove freely. We try several namespace candidates per
-    // simple name because FFXIVClientStructs moves things between namespaces across versions —
+    // simple name because FFXIVClientStructs moves things between namespaces across versions -
     // whichever resolves wins, and the dump notes which one matched.
     private static readonly string[] TargetTypes =
     {
@@ -37,7 +37,7 @@ public static class StructDumper
     public static string Dump(string outputDirectory)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("HMSync StructDumper — " + DateTime.Now.ToString("u"));
+        sb.AppendLine("HMSync StructDumper - " + DateTime.Now.ToString("u"));
         sb.AppendLine("Resolving against the FFXIVClientStructs your plugin actually compiled with.");
         sb.AppendLine(new string('=', 78));
         sb.AppendLine();
@@ -88,7 +88,7 @@ public static class StructDumper
             catch { /* dynamic/reflection-only assemblies can throw; skip */ }
         }
 
-        // Nested-type fallback: "Ns.Outer+Inner" — resolve Outer, then GetNestedType(Inner).
+        // Nested-type fallback: "Ns.Outer+Inner" - resolve Outer, then GetNestedType(Inner).
         if (fullName.Contains('+'))
         {
             var split = fullName.Split('+');
@@ -167,7 +167,7 @@ public static class StructDumper
             sb.AppendLine();
         }
 
-        // ── Methods (skip property accessors) — this is where SetActive/SetVisible would be ──
+        // ── Methods (skip property accessors) - this is where SetActive/SetVisible would be ──
         var methods = type.GetMethods(flags)
                           .Where(m => !m.IsSpecialName)
                           .OrderBy(m => m.Name);

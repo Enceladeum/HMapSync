@@ -7,10 +7,10 @@ using FFXIVClientStructs.FFXIV.Client.Game.Character;
 
 namespace HMSync.Services;
 
-// COSM_1_016 — SKILLS: cosmetic action replay (v0.7.365).
+// COSM_1_016 - SKILLS: cosmetic action replay (v0.7.365).
 //
 // WHAT THIS IS. In session, the packet firewall drops every outbound opcode except the heartbeat, so a skill you press
-// never reaches the server — which means PEERS never hear about it. Your OWN client still presents the cast normally
+// never reaches the server - which means PEERS never hear about it. Your OWN client still presents the cast normally
 // (animation, VFX, sound all play locally without server confirmation), so nothing needs fixing locally. This service
 // exists purely to carry "I cast X" to peers and replay it on their puppet of you.
 //
@@ -19,7 +19,7 @@ namespace HMSync.Services;
 // state etc. exactly as normal, so behaviour stays faithful instead of us reimplementing the restriction system. We
 // only record a cast the client itself ACCEPTED (ret == true).
 //
-// REPLAY. ActionEffectHandler.Receive is the engine's own entry point for "a remote character performed an action" —
+// REPLAY. ActionEffectHandler.Receive is the engine's own entry point for "a remote character performed an action" -
 // the function the game runs on incoming ActionEffect packets. Driving it gives the whole presentation cascade for
 // free (caster animation, VFX, sound, telegraphs) instead of hand-composing pieces. We pass NumTargets = 0, so the
 // action presents but applies NO effect to anyone: cosmetic by construction, not by filtering.
@@ -43,7 +43,7 @@ public sealed unsafe class SkillSyncService : IDisposable
     public uint PendingActionEpoch { get; private set; }
     public Vector3 PendingActionTarget { get; private set; }
     // v0.7.367: the TARGET's stable ContentId. A raw targetId is a client-local entity id and is meaningless on
-    // another machine, so the first build defaulted the replay's animation target to the caster — which made every
+    // another machine, so the first build defaulted the replay's animation target to the caster - which made every
     // targeted action (heals especially) visibly self-cast on the receiver. ContentId is the identity HMS already
     // binds peers on (stable across worlds/zones), so it translates correctly on the far side. 0 = no/unresolvable
     // target → the receiver falls back to the caster, which is right for self-casts and ground AoE.
@@ -61,7 +61,7 @@ public sealed unsafe class SkillSyncService : IDisposable
         try
         {
             // Sig from ClientStructs' [MemberFunction] on ActionManager.UseAction. HookFromSignature (never a manual
-            // rel32 resolve — that crashes in HookManager.FollowJmp).
+            // rel32 resolve - that crashes in HookManager.FollowJmp).
             useActionHook = hooks.HookFromSignature<UseActionDelegate>("E8 ?? ?? ?? ?? B0 01 EB B6", UseActionDetour);
             useActionHook.Enable();
             log.Information("[HMSync] [SKILL] UseAction hook installed.");
@@ -75,7 +75,7 @@ public sealed unsafe class SkillSyncService : IDisposable
     private bool UseActionDetour(ActionManager* mgr, ActionType actionType, uint actionId,
         ulong targetId, uint extraParam, ActionManager.UseActionMode mode, uint comboRouteId, bool* outOptAreaTargeted)
     {
-        // Original FIRST — the game applies all its own gating, and we only care about casts it accepted.
+        // Original FIRST - the game applies all its own gating, and we only care about casts it accepted.
         bool ret = useActionHook!.Original(mgr, actionType, actionId, targetId, extraParam, mode, comboRouteId, outOptAreaTargeted);
         try
         {
@@ -83,7 +83,7 @@ public sealed unsafe class SkillSyncService : IDisposable
             {
                 PendingActionId = actionId;
                 PendingActionType = (byte)actionType;
-                PendingActionEpoch++;               // monotonic — the receiver replays only on CHANGE
+                PendingActionEpoch++;               // monotonic - the receiver replays only on CHANGE
                 PendingActionTarget = ReadTargetPos(targetId);
                 PendingActionTargetCid = ReadTargetContentId(targetId);
                 log.Debug("[HMSync] [SKILL] captured action " + actionId + " (type " + actionType + ") epoch " + PendingActionEpoch
@@ -124,7 +124,7 @@ public sealed unsafe class SkillSyncService : IDisposable
     }
 
     /// <summary>
-    /// Replay a cast on ANY character — a peer puppet today, an HDM-spawned NPC tomorrow. Presentation only:
+    /// Replay a cast on ANY character - a peer puppet today, an HDM-spawned NPC tomorrow. Presentation only:
     /// NumTargets = 0 means the engine plays animation/VFX/sound and applies no effect to anybody.
     /// </summary>
     public void ReplayOn(Character* caster, uint actionId, byte actionType, Vector3 targetPos, Character* target = null)
@@ -137,7 +137,7 @@ public sealed unsafe class SkillSyncService : IDisposable
             // The action's animation plays on AnimationTargetId. Pointing it at the caster made every targeted action
             // (heals, single-target buffs) self-cast on the receiver even though it looked correct on the caster's own
             // client. Use the resolved target when we have one; fall back to the caster for self-casts, ground AoE and
-            // unresolvable targets — which is the correct behaviour for those.
+            // unresolvable targets - which is the correct behaviour for those.
             var animTarget = target != null ? target : caster;
 
             var header = default(ActionEffectHandler.Header);
@@ -149,7 +149,7 @@ public sealed unsafe class SkillSyncService : IDisposable
             header.SourceSequence = 0;      // 0 = "not client-initiated" → no animation lock forced on the puppet
             header.AnimationLock = 0f;
             header.NumTargets = 0;          // ← cosmetic by construction: presentation without effects
-            header.ShowInLog = false;       // never write to the action log — this isn't a real combat event
+            header.ShowInLog = false;       // never write to the action log - this isn't a real combat event
             header.ForceAnimationLock = false;
             header.RotationInt = (ushort)0;
             header.AnimationVariation = 0;

@@ -7,7 +7,7 @@ using Lumina.Excel.Sheets;
 namespace HMSync.Services;
 
 /// <summary>
-/// Detects the local player's actor state — emote, move mode, jump phase,
+/// Detects the local player's actor state - emote, move mode, jump phase,
 /// sprint, turning, and weapon draw. Pulled once per capture tick via
 /// <see cref="Detect"/>, which returns an immutable <see cref="LocalActorState"/>.
 ///
@@ -37,7 +37,7 @@ public unsafe class LocalStateDetector
     private ushort mountActionTimeline; // S323j: tl0 of the current mount action one-shot (on the mount object)
     private uint mountActionEpoch;      // S323j: bumps per new mount action
     private ushort lastMountActionTl;   // S323j: edge-detect a new mount action vs the same one held
-    private byte prevCPoseState;        // S323k: last tick's CPoseState — distinguishes a hold-intro (cpose changed) from an action (cpose stable)
+    private byte prevCPoseState;        // S323k: last tick's CPoseState - distinguishes a hold-intro (cpose changed) from an action (cpose stable)
 
     private bool active;
 
@@ -58,7 +58,7 @@ public unsafe class LocalStateDetector
     private readonly ushort[] lastUpperSlots = new ushort[4]; // S122: seated overlay slot watch
     private uint emoteEpoch;
 
-    // S55: standup detection — fires when the game's get-up timeline appears
+    // S55: standup detection - fires when the game's get-up timeline appears
     // on ActionTimeline[0] while still in a seated mode, i.e. at the START of
     // the standup process (before mode transitions to Normal).
     private ushort standupTimelineId;
@@ -108,7 +108,7 @@ public unsafe class LocalStateDetector
     //
     // Reset used to assert lastMode = Normal regardless of what the character was actually doing. If a
     // session engages while the player is SEATED, the detector therefore believes they were already
-    // standing — and its standup emission requires
+    // standing - and its standup emission requires
     //     timelineChanged && (isSeated || (modeChanged && wasSeated)) && standupTimelines.Contains(tl)
     // so `wasSeated` is false, `modeChanged` is false, and a subsequent stand-up is UNOBSERVABLE. The
     // peer never receives StandupEpoch, and their seated branch never writes CharMode by design, so the
@@ -191,7 +191,7 @@ public unsafe class LocalStateDetector
         // let the local mount change the locomotion flavor on the wire.
         // IMPORTANT: this force is required even though the explicit "if Mounted → GroundMount" upgrade
         // was removed, because DetectModeFromTimeline ALSO returns ModeGroundMount for the seated mount
-        // poses (166/167/168/…) the rider holds while mounted — so without this force the GroundMount
+        // poses (166/167/168/…) the rider holds while mounted - so without this force the GroundMount
         // flavor would survive through that path. Forcing Ground here closes BOTH routes.
         if (currentMode == CharacterModes.Mounted)
             moveMode = LocomotionData.ModeGround;
@@ -205,33 +205,33 @@ public unsafe class LocalStateDetector
         // S322: capture the summoned minion (companion) id so each receiver replicates it on A's puppet.
         // 0 when none → receiver dismisses. The LIVE summoned minion is the spawned companion OBJECT, whose
         // GameObject.BaseId is the Companion sheet row (HaselDebug reads exactly this). CompanionData.CompanionId
-        // (0x18) is NOT the live id — it reads 0 here, which is why the summon never synced and a pre-summoned
+        // (0x18) is NOT the live id - it reads 0 here, which is why the summon never synced and a pre-summoned
         // minion never carried. Object null ⇒ no minion out. Mirror of the mount capture above.
         ushort minionId = character->CompanionData.CompanionObject != null
             ? (ushort)character->CompanionData.CompanionObject->BaseId
             : (ushort)0;
         // S322f: capture the minion's runtime Behaviour (CompanionMove enum: None/Obedient/Independent/
         // Stationary) from the SENDER's companion, where it's correct. A receiver's puppet-spawned companion
-        // never gets this field set, so it can't tell a stationary minion (campfire/cushion) from a follower —
+        // never gets this field set, so it can't tell a stationary minion (campfire/cushion) from a follower -
         // it relies on this sent value to decide whether to drive the follow. 0 when no minion is out.
         byte minionBehaviour = character->CompanionData.CompanionObject != null
             ? (byte)character->CompanionData.CompanionObject->Behavior
             : (byte)0;
         // S322g: capture the minion's live base animation timeline (idle/walk/VFX) so a receiver can replay it
-        // on the puppet's companion — same model ⇒ same clip. The puppet's companion AI doesn't animate it
+        // on the puppet's companion - same model ⇒ same clip. The puppet's companion AI doesn't animate it
         // natively (it only appears + is position-driven), so this is what makes its legs move. 0 = none.
         ushort minionAnim = character->CompanionData.CompanionObject != null
             ? (ushort)character->CompanionData.CompanionObject->Timeline.TimelineSequencer.TimelineIds[0]
             : (ushort)0;
         // S322h: capture the minion's position OFFSET from its owner + its facing, so a receiver can place a
         // perfect copy at (puppetPos + offset) instead of computing its own follow. Position and the replayed
-        // animation then both originate here and stay locked together — no catch-up slide. All 0 when no minion.
+        // animation then both originate here and stay locked together - no catch-up slide. All 0 when no minion.
         float minionOffX = 0f, minionOffY = 0f, minionOffZ = 0f, minionRot = 0f;
         if (character->CompanionData.CompanionObject != null)
         {
             var ownerPos = character->GameObject.Position;
             // Companion's GameObject base isn't surfaced as a member (only Character's own fields are flattened by
-            // [Inherits<Character>]), so reach it by casting to the GameObject base at offset 0 — the same pattern
+            // [Inherits<Character>]), so reach it by casting to the GameObject base at offset 0 - the same pattern
             // StateApplyService uses to drive the puppet's companion.
             var minionGo = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)character->CompanionData.CompanionObject;
             minionOffX = minionGo->Position.X - ownerPos.X;
@@ -239,10 +239,10 @@ public unsafe class LocalStateDetector
             minionOffZ = minionGo->Position.Z - ownerPos.Z;
             minionRot = minionGo->Rotation;
         }
-        // S322k/l: the live ornament id is the container's OrnamentId (@0x18) — confirmed empirically (S323b):
+        // S322k/l: the live ornament id is the container's OrnamentId (@0x18) - confirmed empirically (S323b):
         // while equipped, the object's own OrnamentId (@0x2380) and BaseId (@0x84) both read 0, the OPPOSITE of
         // minions (where the container id reads 0 and BaseId carries it). 0 = none. Ornaments are skeletally
-        // attached, so no position/animation sync — SetupOrnament on the puppet is all the apply needs.
+        // attached, so no position/animation sync - SetupOrnament on the puppet is all the apply needs.
         ushort ornamentId = character->OrnamentData.OrnamentId;
         if (ornamentId != lastOrnamentLogId)
         {
@@ -250,16 +250,16 @@ public unsafe class LocalStateDetector
             lastOrnamentLogId = ornamentId;
         }
 
-        // S323g/h/k: ornament ANIMATION one-shot detection — fully generic, no per-ornament table. Accessory
+        // S323g/h/k: ornament ANIMATION one-shot detection - fully generic, no per-ornament table. Accessory
         // emotes (torch 8194, parasol 8073/8074) and the shovel dig (13383) are tl0 one-shots; the peer copies
         // whatever's broadcast. Detect: an ornament is equipped and tl0 is neither idle (3 = base, 7367 = universal
-        // ornament-held idle) nor a locomotion timeline (walking would otherwise look like an action —
+        // ornament-held idle) nor a locomotion timeline (walking would otherwise look like an action -
         // DetectModeFromTimeline calls both "ground", so the locomotion set is the discriminator).
         //
         // S323k FIX: also require CPoseState to be STABLE this tick. The hold-transition intros (8062/8065/8067)
         // fire ON a cpose change; S323h replayed them so holds would animate, but on the peer the intro animates
         // toward the new stance while the byte-mirror still asserts the OLD CPoseState (which trails a few frames
-        // on the wire) — the puppet begins the cpose then snaps back ("yanked to the original stance"). The dig and
+        // on the wire) - the puppet begins the cpose then snaps back ("yanked to the original stance"). The dig and
         // the emotes both fire at stable cpose, so gating on stability drops the intros (holds go back to a clean
         // byte-mirror snap, as in the confirmed-good S323g) while keeping the dig + emotes. When cpose IS changing,
         // still record the intro's tl0 so it can't fire as an "action" the moment cpose settles a frame later.
@@ -282,17 +282,17 @@ public unsafe class LocalStateDetector
         }
         else
         {
-            lastOrnActionTl = 0; // idle/hold/locomotion — let the same action re-fire next time
+            lastOrnActionTl = 0; // idle/hold/locomotion - let the same action re-fire next time
         }
         prevCPoseState = cPoseState;
 
-        // S323j: mount ACTION one-shot capture — the mount analog of the ornament channel above, confirmed by
+        // S323j: mount ACTION one-shot capture - the mount analog of the ornament channel above, confirmed by
         // MOUNTACTIONTRACE: mount-hotbar actions (mount-17's ground-target 1752 + machine-gun 1753, Fenrir howl,
         // mount music, etc.) are pure tl0 one-shots on the MOUNT OBJECT's slot 0, while the rider stays seated
-        // (166). AllLocomotionTimelines already contains every value the mount shows in motion — idle (3),
-        // turns (7/8), jumps (31/32/33), walk/run, the mounted poses (165–168), fly (4040–4058), swim — so a
+        // (166). AllLocomotionTimelines already contains every value the mount shows in motion - idle (3),
+        // turns (7/8), jumps (31/32/33), walk/run, the mounted poses (165–168), fly (4040–4058), swim - so a
         // slot-0 value OUTSIDE that set is an action. Latch it + bump an epoch on the rising edge; the peer
-        // replays it once on its OWN mount object. No per-mount table — the peer copies whatever's broadcast.
+        // replays it once on its OWN mount object. No per-mount table - the peer copies whatever's broadcast.
         ushort mountActSlot0 = 0;
         if (currentMode == CharacterModes.Mounted)
         {
@@ -303,7 +303,7 @@ public unsafe class LocalStateDetector
         // S323j: a slot-0 value OUTSIDE the locomotion set is a mount ACTION one-shot (hotbar action, howl,
         // etc.), latched + epoch-bumped for the peer to replay once on its own mount object.
         // v0.7.450: takeoff (4051) and landing (4050) are TRANSITION one-shots that live INSIDE the fly
-        // locomotion range (4040–4058), so the plain "outside AllLocomotionTimelines" test excluded them —
+        // locomotion range (4040–4058), so the plain "outside AllLocomotionTimelines" test excluded them -
         // and the receiver's steady-flight resolver (GetFlyTimeline: idle/run/turn by speed+direction) has
         // no path to emit them, so peers saw the rider snap ground↔flight with no spring-up/descend blend.
         // Route them through this SAME one-shot channel (the proven mount-action replay path) by treating
@@ -322,24 +322,24 @@ public unsafe class LocalStateDetector
         }
         else
         {
-            lastMountActionTl = 0; // idle/locomotion/dismounted — let the same action re-fire next time
+            lastMountActionTl = 0; // idle/locomotion/dismounted - let the same action re-fire next time
         }
 
         // ── LOCOTRACE (Phase 0, locomotion refactor): build the movement→timeline TRUTH TABLE. Sender-side, on
-        // change. For each movement case — forward/back/strafe-L/strafe-R/turn/sprint — across base / ornament /
+        // change. For each movement case - forward/back/strafe-L/strafe-R/turn/sprint - across base / ornament /
         // mount, it records what actually drives the puppet: tl0, BaseOverride, mode, sprint, turn, the computed
         // movement DIRECTION (relative to facing), the raw position delta + facing (to catch the moonwalk facing
         // inversion), armed state, and the mount object's tl0. The resolver's direction model + sender-authoritative
         // timeline sources get designed from THIS, not guesses. dir legend: 0=Fwd 1=Left 2=Right 3=Back. REMOVE with
         // the other traces at refactor Phase 4. S328w: gated behind DebugTrace (debug mode) to avoid log spam.
-        // (Phase 0 LOCOTRACE diagnostic block removed — the locomotion resolver's direction/timeline model is
+        // (Phase 0 LOCOTRACE diagnostic block removed - the locomotion resolver's direction/timeline model is
         // designed; the per-frame trace emit is retired for prod.)
 
         // S197: the rider's TimelineIds[0] holds the seated pose (166/167) while mounted, NOT the jump
         // (31/32/33) or TURN (7/8), which live on the MOUNT OBJECT's slot 0. KEPT/EXTENDED for the
         // async model: derive both jumpPhase AND isTurning from the mount object's slot 0 so a
         // self-mounted jump and A/D turn-in-place still broadcast as plain on-foot jump/turn the
-        // receiver animates via the normal path. (Not a skating bleed — sets only jumpPhase/isTurning,
+        // receiver animates via the normal path. (Not a skating bleed - sets only jumpPhase/isTurning,
         // never the locomotion mode/speed.)
         if (currentMode == CharacterModes.Mounted)
         {
@@ -348,7 +348,7 @@ public unsafe class LocalStateDetector
             {
                 ushort mountSlot0 = (ushort)mountObj->Timeline.TimelineSequencer.TimelineIds[0];
                 jumpPhase = LocomotionData.DetectJumpPhase(mountSlot0);
-                // S197g: A/D rotation-in-place — the turn plays GndTurnL/R (7/8) on the mount object,
+                // S197g: A/D rotation-in-place - the turn plays GndTurnL/R (7/8) on the mount object,
                 // not the rider, so the rider-timeline check above missed it (turn never reached peers).
                 if (LocomotionData.IsTurnTimeline(mountSlot0))
                     isTurning = true;
@@ -359,9 +359,9 @@ public unsafe class LocalStateDetector
                 // was forced to 0 → peers got ground-walk timelines at flight altitude ("walking on
                 // air"). Fix: when the mount object's slot 0 is a flight timeline, broadcast
                 // ModeFlyMount so the receiver's GetTimeline ModeFlyMount branch (Fly* timelines, already
-                // defined) animates flight on the mounted puppet — same as Gnd* animates ground. The
+                // defined) animates flight on the mounted puppet - same as Gnd* animates ground. The
                 // puppet's altitude already rides the normal Y position sync, so only the mode was wrong.
-                // (Ground-mount still force-Ground from the rule above — skate-free — because its slot 0
+                // (Ground-mount still force-Ground from the rule above - skate-free - because its slot 0
                 // is Gnd*, not Fly*, so this branch doesn't fire.)
                 if (LocomotionData.DetectModeFromTimeline(mountSlot0) == LocomotionData.ModeFlyMount)
                     moveMode = LocomotionData.ModeFlyMount;
@@ -371,7 +371,7 @@ public unsafe class LocalStateDetector
                 // altitude. Pitch lives in the mount object's DrawObject rotation quaternion
                 // (GameObject+0x100 → Object+0x60). [PITCHDIAG] confirmed it's smeared across the quat's
                 // X/Z by yaw (it's a full 3D orientation), so we extract the nose angle directly:
-                //   pitch = asin(2*(w*x - y*z))   — validated vs the log: ~0 level, ~-0.7rad climbing,
+                //   pitch = asin(2*(w*x - y*z))   - validated vs the log: ~0 level, ~-0.7rad climbing,
                 //   ~+0.7rad diving. Sent as a scalar (not the raw quat) so it composes on top of the
                 //   yaw the receiver already applies, instead of double-applying yaw.
                 if (moveMode == LocomotionData.ModeFlyMount)
@@ -390,7 +390,7 @@ public unsafe class LocalStateDetector
 
         // ── Emote detection (updates currentEmoteId / epoch) ──
         // S122: seated overlay emotes (add_* family: /pray 4814, /yes nod, etc.) play
-        // on TL SLOTS 1–3, never touching TL0 — invisible to the TL0-only watch.
+        // on TL SLOTS 1–3, never touching TL0 - invisible to the TL0-only watch.
         // Stream any nonzero slot-change while seated through the sub-emote channel
         // (epoch + timeline); the receiver's PlayTimeline routes by the sheet's Slot.
         if (currentMode != CharacterModes.Normal)
@@ -415,13 +415,13 @@ public unsafe class LocalStateDetector
         DetectEmoteState(currentMode, currentParam, currentTimeline, poseType, cPoseState, weaponDrawn, now);
 
         // ── S323w REVERTED (thread IX) ── The cpose-stance→emote-channel route is removed. Emote.csv proves emotes
-        // 243/244/253 (stances 1/2/3) have their OWN ActionTimeline set to 8062/8065/8067 — the exact clips that
+        // 243/244/253 (stances 1/2/3) have their OWN ActionTimeline set to 8062/8065/8067 - the exact clips that
         // DETACH the accessory on the puppet. So routing the stance through the native emote path was always going to
         // play the detaching clip; it was a longer road to the same 8062. The accessory drop is NOT a timeline/channel
-        // problem — it's the ornament's SKELETAL ATTACHMENT (held items are hand-bone-parented; the custom cpose
+        // problem - it's the ornament's SKELETAL ATTACHMENT (held items are hand-bone-parented; the custom cpose
         // repositions the hand and the puppet never re-establishes the parent). The fix lives receiver-side as a
         // SetupOrnament re-assert on CPoseState change (see StateApplyService ornament reconcile). Nothing to capture
-        // here — CPoseState already rides the wire via the byte-mirror.
+        // here - CPoseState already rides the wire via the byte-mirror.
 
         // ── Weapon draw logging ──
         if (weaponDrawn != lastWeaponDrawn)
@@ -462,7 +462,7 @@ public unsafe class LocalStateDetector
                     var baseOverride = character->Timeline.BaseOverride;
                     var tl0 = currentTimeline;
 
-                    // S87: the spawn-packet state fields — how the game tells other
+                    // S87: the spawn-packet state fields - how the game tells other
                     // clients how to render this actor's resting pose.
                     // ModelState @ TimelineContainer 0x2C0, AnimationState @ 0x2C1
                     // (2 bytes, documented as "4 bits each").
@@ -497,7 +497,7 @@ public unsafe class LocalStateDetector
         }
 
         // ── ORNAMENTTRACE (S323d): while an ornament is equipped, dump the animation/pose drivers on change so
-        // we can see what the shovel-menu actions actually move — dig & put-away are one-shot animations (expect a
+        // we can see what the shovel-menu actions actually move - dig & put-away are one-shot animations (expect a
         // timeline slot to flick), the cpose hold-change is a resting-pose shift (expect ModelState/AnimationState,
         // the spawn-packet resting-pose fields, and/or CPoseState to move). They DON'T ride the emote channel
         // (EmoteId won't shift), which is why nothing currently propagates. INF + gated on equipped + change, so
@@ -536,10 +536,10 @@ public unsafe class LocalStateDetector
 
         // ── MOUNTACTIONTRACE (S323i): mounts carry the same action hotbar as ornaments (Fenrir howl, mount
         // music, mount-VFX/attack e.g. mount-17 reaper). Ornament actions turned out to be pure tl0 one-shots on
-        // the RIDER — but mount actions almost certainly live on the MOUNT OBJECT instead: while mounted the rider
+        // the RIDER - but mount actions almost certainly live on the MOUNT OBJECT instead: while mounted the rider
         // holds a seated pose (166/167) and the mount's own jump (31/32/33) / turn (7/8) already sit on the mount
         // object's slot 0 (see the S197 block above). This dumps BOTH timelines on change so we can see which one
-        // flicks — and in which slot — when a mount action fires, before cloning the ornament-action channel onto
+        // flicks - and in which slot - when a mount action fires, before cloning the ornament-action channel onto
         // the right target + slot. INF + gated on Mounted + change; REMOVE once mount actions are wired. ──
         if (currentMode == CharacterModes.Mounted)
         {
@@ -675,7 +675,7 @@ public unsafe class LocalStateDetector
         // bypassing pose replication. We capture the transition timeline (the _start tmb) so
         // the receiver can blend. Only fires after first observation (poseInit) to avoid a
         // spurious epoch bump on session start.
-        // 255 (0xFF) is the game's "no pose family active" sentinel, not a real pose — seen
+        // 255 (0xFF) is the game's "no pose family active" sentinel, not a real pose - seen
         // on standup/idle reset. Treat the byte as 0 (Idle) so a transition INTO 255 doesn't
         // register as a spurious cpose and never propagates the garbage sentinel downstream.
         const byte NoPose = 0xFF;
@@ -690,11 +690,11 @@ public unsafe class LocalStateDetector
         {
             // S111: an emote fired FROM a held cpose also changes the pose bytes
             // (CPose→0), so this branch was claiming the frame and capturing the
-            // EMOTE timeline (e.g. /wave 706) as a "pose intro" — early return, no
+            // EMOTE timeline (e.g. /wave 706) as a "pose intro" - early return, no
             // epoch bump, receiver never learns an emote happened ("completely
             // ignored" from alt stances; default armed stance sits at PoseType=255
             // so its bytes don't change and waves classified correctly). A pose-exit
-            // whose timeline is a known one-shot emote is an EMOTE INTERRUPT — fall
+            // whose timeline is a known one-shot emote is an EMOTE INTERRUPT - fall
             // through to the emote classifier below.
             bool emoteInterrupt = cPoseState == 0
                 && emoteTimelineIds.Contains(currentTimeline);
@@ -706,7 +706,7 @@ public unsafe class LocalStateDetector
                 // trigger ApplyEmoteState's one-shot replay, playing a competing timeline.
                 currentTimelineId = currentTimeline;
                 // S107: remember this pose's intro. When a one-shot emote interrupts a held
-                // cpose, the game reassumes by replaying THIS intro — the sustain branch
+                // cpose, the game reassumes by replaying THIS intro - the sustain branch
                 // recognizes it by identity and re-streams the pose to the receiver.
                 lastPoseIntro = cPoseState > 0 ? currentTimeline : (ushort)0;
                 Dbg("[HMSync][POSEDIAG] cpose change pose=" + normPoseType + " cpose=" + cPoseState +
@@ -724,12 +724,12 @@ public unsafe class LocalStateDetector
         // Detects the get-up timeline appearing when the character exits a seated
         // mode. Two cases:
         //  (a) Early: AT[0] changes to the get-up timeline while mode is still seated
-        //      (ideal — fires before mode change, gives receiver ~0.5s head start).
+        //      (ideal - fires before mode change, gives receiver ~0.5s head start).
         //  (b) Simultaneous: AT[0] and CharMode both change in the same 10Hz tick
-        //      (observed in practice — the game holds the sit-loop on AT[0] until the
+        //      (observed in practice - the game holds the sit-loop on AT[0] until the
         //      mode releases, so both flip together). In this case lastMode was seated,
         //      currentMode is Normal, and currentTimeline is the get-up timeline.
-        // In both cases we set the standup signal. We do NOT return — if the mode also
+        // In both cases we set the standup signal. We do NOT return - if the mode also
         // changed this tick, the mode-change handler below must still run (set emoteId=0,
         // bump emoteEpoch, clear standupFired).
         bool wasSeated = lastMode == CharacterModes.InPositionLoop
@@ -750,17 +750,17 @@ public unsafe class LocalStateDetector
                 " param=" + (modeChanged ? lastModeParam : currentParam) +
                 " epoch=" + standupEpoch +
                 (modeChanged ? " (simultaneous)" : " (early)"));
-            // Fall through — mode-change handler below needs to run if modeChanged.
+            // Fall through - mode-change handler below needs to run if modeChanged.
         }
 
         if (modeChanged)
         {
             if (currentMode == CharacterModes.Normal && lastMode != CharacterModes.Normal)
             {
-                // Mode reached Normal — the standup is complete. Clear the fire gate
+                // Mode reached Normal - the standup is complete. Clear the fire gate
                 // so the next standup can trigger. Do NOT clear standupTimelineId here:
                 // in the simultaneous case, the standup detection just set it this tick
-                // and Detect() returns it at the end — clearing it would send TL=0 to
+                // and Detect() returns it at the end - clearing it would send TL=0 to
                 // the receiver. The receiver only reacts on epoch change, so a stale
                 // value on subsequent ticks is harmless.
                 standupFired = false;
@@ -768,17 +768,17 @@ public unsafe class LocalStateDetector
                 // A one-shot interrupting a loop lands here: the /hms breaker clears the loop (Mode→Normal)
                 // and PlayTimeline puts the one-shot in TimelineIds[0] in the SAME frame, so this tick sees
                 // BOTH the mode drop and a real emote timeline. If we treated it as a bare standup we'd record
-                // lastTimelineId=<emote> and the mutually-exclusive one-shot branch below would never fire —
+                // lastTimelineId=<emote> and the mutually-exclusive one-shot branch below would never fire -
                 // the emote would be swallowed and the peer would never see the interrupt (the loop→non-loop
                 // bug). So when the new timeline is a real emote, broadcast THAT emote instead. A genuine
                 // standup (idle/locomotion timeline) is not in emoteTimelineIds and still routes to emoteId=0.
-                // v0.7.414 — A STANDUP TIMELINE IS NEVER AN EMOTE.
+                // v0.7.414 - A STANDUP TIMELINE IS NEVER AN EMOTE.
                 // The note above assumes "a genuine standup is not in emoteTimelineIds". FALSE for
-                // chair/ground: 644 and 655 ARE emote timelines — they are ActionTimeline[0] of emote 51
+                // chair/ground: 644 and 655 ARE emote timelines - they are ActionTimeline[0] of emote 51
                 // and 53, the EndEmote halves of the sit. So a standup fell through to this branch and
                 // was broadcast as emote 51. Emote 51's EmoteMode is 2, whose ConditionMode is
                 // InPositionLoop, so the RECEIVER did SetMode(InPositionLoop, 2) and SAT THE PUPPET BACK
-                // DOWN — the standup channel and the emote channel firing with opposite effects on the
+                // DOWN - the standup channel and the emote channel firing with opposite effects on the
                 // same tick, emote winning. Observed:
                 //     A: Standup signal: TL 644 param=2 epoch=1
                 //     A: One-shot interrupting loop: ... tl=644 -> emoteId=51 epoch=1
@@ -830,7 +830,7 @@ public unsafe class LocalStateDetector
         {
             // During standup cooldown, suppress non-emote timeline noise
             // (idle cycles, transition artifacts) but let real emotes through.
-            // v0.7.414: standup timelines excluded — 644/655 are emote 51/53's AT[0] and would be
+            // v0.7.414: standup timelines excluded - 644/655 are emote 51/53's AT[0] and would be
             // broadcast as an emote whose ConditionMode re-seats the peer. See the note above.
             if (!standupTimelines.Contains(currentTimeline)
                 && emoteTimelineIds.Contains(currentTimeline))
@@ -854,15 +854,15 @@ public unsafe class LocalStateDetector
             // weapon is drawn and we're in a cpose (PoseType=1, CPose>0), carry the
             // held timeline (3127/3128) on the wire so the receiver's AnimLock can hold
             // it. The one-shot path below would zero it (route through emote channel),
-            // which is why the puppet reverted right after the cpose anim — the held
+            // which is why the puppet reverted right after the cpose anim - the held
             // value never reached the receiver.
             // S107: identity-only sustain for held cposes (ALL standing families).
             // Replaces the loose S92 weapon guard, which sustained ANY timeline while
-            // armed+cpose>0 — a one-shot emote played in that state (/wave) leaked its
+            // armed+cpose>0 - a one-shot emote played in that state (/wave) leaked its
             // timeline onto the wire as a "held pose" (the +1-leak class V warned of:
             // /panic→/point). Sustain ONLY:
             //  (a) the literal +1 flip of the streamed value (intro→loop), or
-            //  (b) the remembered pose intro re-appearing — the game replays the intro
+            //  (b) the remembered pose intro re-appearing - the game replays the intro
             //      when reassuming a held cpose after a one-shot emote finishes.
             // Anything else (a real emote) falls through to the one-shot path.
             if (cPoseState > 0
@@ -874,7 +874,7 @@ public unsafe class LocalStateDetector
                 lastTimelineId = currentTimeline;
             }
             // One-shot emote
-            // v0.7.414: standup timelines excluded — same reason: they belong to the standup channel.
+            // v0.7.414: standup timelines excluded - same reason: they belong to the standup channel.
             else if (!standupTimelines.Contains(currentTimeline)
                 && emoteTimelineIds.Contains(currentTimeline))
             {
@@ -898,7 +898,7 @@ public unsafe class LocalStateDetector
         {
             // S112: identity discipline for the seated fallback. The intro→loop flip
             // of a seated cpose (or its intro re-appearing after an emote) is a POSE
-            // CHANNEL sustain — stream it on TimelineId WITHOUT an epoch bump, so the
+            // CHANNEL sustain - stream it on TimelineId WITHOUT an epoch bump, so the
             // receiver's seated hold follows it like every other family. Everything
             // else (seated emotes, noise) keeps the original epoch-bump behavior.
             bool seatedPoseSustain =
@@ -975,7 +975,7 @@ public unsafe class LocalStateDetector
                             standupTimelines.Add(standupTl);
                         }
                     }
-                    catch { /* EndEmote row not found — skip */ }
+                    catch { /* EndEmote row not found - skip */ }
                 }
             }
 

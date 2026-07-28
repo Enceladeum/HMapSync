@@ -4,7 +4,7 @@ using Lumina.Data;
 namespace HMSync.Services;
 
 /// <summary>
-/// Reads a zone's <c>.lvb</c> (level) file weather table — the FULL per-zone weather set, which includes cinematic
+/// Reads a zone's <c>.lvb</c> (level) file weather table - the FULL per-zone weather set, which includes cinematic
 /// weathers (e.g. CutScene) that never appear in the WeatherRate sheet. Parse ported from Weatherman, which credits
 /// TitleEdit (https://github.com/lmcintyre/TitleEditPlugin). Loaded via IDataManager.GetFile&lt;LvbFile&gt;.
 /// </summary>

@@ -31,7 +31,7 @@ public class HMSyncConfig : IPluginConfiguration
     }
 
     // v0.7.338: keep normal (non-debug) users OFF the localhost dev endpoint. The localhost service is only meaningful
-    // with a local relay running (dev only) and is only switchable via the debug-mode picker — so a non-debug user
+    // with a local relay running (dev only) and is only switchable via the debug-mode picker - so a non-debug user
     // sitting on it (fresh seed pre-0.7.338, or a stale config) is stuck showing "offline" with no recourse. If we're
     // not in debug mode and the selected service is the localhost built-in, move them to Enceladeum. Called from the
     // plugin ctor once debug-mode is known. No-op in debug mode (devs keep their localhost selection).
@@ -55,7 +55,7 @@ public class HMSyncConfig : IPluginConfiguration
 
     // v0.7.248: migrate pre-key-field configs. Before the Key field existed, users pasted the FULL keyed URL
     // (wss://host/?k=KEY) into svc.Url. That baked-in key rode every connection even after the new Key field was
-    // emptied (SyncSelectedRelayUrl saw ?k= already present and used the URL verbatim — the "master key won't clear"
+    // emptied (SyncSelectedRelayUrl saw ?k= already present and used the URL verbatim - the "master key won't clear"
     // bug). Split any ?k=/&k= token out of every service URL into svc.Key, leaving a clean base URL, so the Key field
     // becomes authoritative and emptying it actually clears the key. Also re-canonicalises the Enceladeum built-in base.
     public void MigrateRelayKeys()
@@ -105,12 +105,12 @@ public class HMSyncConfig : IPluginConfiguration
             }
         }
     }
-    // v0.7.466 (D-12): `TickRateHz` REMOVED — it was declared here and read by NOTHING. The real cadence is
+    // v0.7.466 (D-12): `TickRateHz` REMOVED - it was declared here and read by NOTHING. The real cadence is
     // `const double TickInterval = 0.1` in StateCaptureService (10 Hz, compile-time).
     //
     // ⚠ DO NOT RE-ADD THIS AS A USER SETTING WITHOUT TALKING TO THE RELAY. The relay's ingress rate brake
     // (RMS 1.0.0 / F3) is sized against that fixed 10 Hz: a non-host peer's structural ceiling is 2 lanes ×
-    // 10 Hz = 20 msg/s, which sits BELOW the relay's 25 msg/s refill — which is why normal play cannot trip the
+    // 10 Hz = 20 msg/s, which sits BELOW the relay's 25 msg/s refill - which is why normal play cannot trip the
     // brake at all. Making the tick rate user-tunable breaks that arithmetic silently: a peer at 30 Hz would
     // trip the throttle constantly through no fault of their own, and the symptom (an amber "relay throttling"
     // banner during ordinary play) would look like a relay bug. If this ever becomes a setting, the relay's
@@ -126,7 +126,7 @@ public class HMSyncConfig : IPluginConfiguration
     public float CarpetPitch { get; set; } = -0.05f;       // walking slope (was CarpetYOffset/flat-lock)
     public float CarpetDropOffset { get; set; } = -0.05f;  // first-patch offset (cinematic drop-in)
 
-    // S326: map-state backbone — the host's last-chosen map settings, persisted so a scene can be re-dialled
+    // S326: map-state backbone - the host's last-chosen map settings, persisted so a scene can be re-dialled
     // quickly across sessions. MapSettingsTerritory is the territory selected in the Map Settings tab dropdown.
     public uint MapSettingsTerritory { get; set; }         // selected territory in the Map Settings tab (0 = none)
     public byte MapWeatherId { get; set; }                 // 0 = default/atmospheric (valid)
@@ -136,21 +136,21 @@ public class HMSyncConfig : IPluginConfiguration
     public uint MapBgmId { get; set; }                     // 0 = none
     public bool MapRemoveNpcs { get; set; }
     public bool MapHideQuestSigns { get; set; }   // S328aa: hide over-head quest markers (keep NPC bodies)
-    // (S328ag DirtyCheckEnabled removed at release hardening — change-detection is always on, no longer configurable.)
+    // (S328ag DirtyCheckEnabled removed at release hardening - change-detection is always on, no longer configurable.)
 
     // S328d: when true, /say from players NOT in the HMS session is hidden from chat while a session is active
-    // (a privacy-safe display filter — hides strangers' /say during RP sessions; no chat is collected or relayed).
+    // (a privacy-safe display filter - hides strangers' /say during RP sessions; no chat is collected or relayed).
 
     // ── Say-passthrough opcode management (S328p) ──────────────────────────────────────────────────────────────────
     // The ONLY two hardcoded opcodes in the filter, now config-driven so they survive a patch without a rebuild.
     // 300 = ChatHandler (outbound /say/yell/shout submission); 912 = inbound spatial-chat delivery. A structural
     // validator (chat-shape check) guards the inbound pass so a rotated opcode fails CLOSED. ShowDebugCommands gates
-    // the debug UI. GameVersionStamp records the game version these were last confirmed on — a version change marks
+    // the debug UI. GameVersionStamp records the game version these were last confirmed on - a version change marks
     // them unverified and shuts the passthrough until re-learned. SayOpcodesVerified is the live gate.
     public uint SayOutboundOpcode { get; set; } = 300;
     public uint SayInboundOpcode { get; set; } = 912;
     // v0.7.462 (P2, Codex QA + V): DEFAULT UNVERIFIED (fail-closed). A fresh install must NOT auto-arm the
-    // hardcoded 300/912 — a game patch could have repurposed the send-opcode since these were captured, and
+    // hardcoded 300/912 - a game patch could have repurposed the send-opcode since these were captured, and
     // passing the wrong outbound packet is a security exposure. The seed values above are a hint for the
     // learner, not a trusted default. Passthrough stays OFF until the user runs Re-learn (which captures the
     // live opcodes AND stamps the current game version). README documents "initiate on first use".
@@ -162,7 +162,7 @@ public class HMSyncConfig : IPluginConfiguration
     // in the UI; hover and text-on-accent are derived so any accent stays legible.
     public float[] AccentColor { get; set; } = { 0.83f, 0.62f, 0.20f, 1f };
 
-    // Say proximity is fixed game behavior, not a preference — no config. The values match the game (see the
+    // Say proximity is fixed game behavior, not a preference - no config. The values match the game (see the
     // SayFilterService constants). "Hide non-session say" is likewise always-on: in a session you're isolated, so any
     // /say from outside the session is hidden (in-session members are heard via the passthrough + proximity cull).
 
@@ -181,12 +181,12 @@ public class HMSyncConfig : IPluginConfiguration
     public float DashMapsHeight { get; set; } = 220f;
     public float DashParticipantsHeight { get; set; } = 180f;
 
-    // S322: Emotes tab — favourites (user-starred) + recently-played (rolling, most-recent-first). Both
+    // S322: Emotes tab - favourites (user-starred) + recently-played (rolling, most-recent-first). Both
     // persisted so the top split survives restarts. This is the template for the future mount list.
     public List<uint> FavouriteEmotes { get; set; } = new();
     public List<uint> RecentEmotes { get; set; } = new();
 
-    // S326q: the display list for a section's "Recent" — STARRED (pinned) items first (they survive the FIFO
+    // S326q: the display list for a section's "Recent" - STARRED (pinned) items first (they survive the FIFO
     // overwrite), then the most-recent non-starred, capped at 6 total. Starring pins; un-starring lets it age out
     // of Recent normally. This is what the Character-tab quadrants show under "Recent".
     public const int PinnedRecentCap = 6;
@@ -216,24 +216,24 @@ public class HMSyncConfig : IPluginConfiguration
     {
         RecentEmotes.Remove(id);          // move-to-front (dedupe)
         RecentEmotes.Insert(0, id);
-        const int max = 6;                // 3×2 rows — exactly fills the History grid's default height
+        const int max = 6;                // 3×2 rows - exactly fills the History grid's default height
         if (RecentEmotes.Count > max)
             RecentEmotes.RemoveRange(max, RecentEmotes.Count - max);
         Save();
     }
 
     public List<uint> RecentZones { get; set; } = new();
-    // S332: Zones-tab favourites — territory ids the user has pinned (★). Persisted across sessions.
+    // S332: Zones-tab favourites - territory ids the user has pinned (★). Persisted across sessions.
     public List<uint> FavouriteZones { get; set; } = new();
 
     // v0.7.231: unified recent list. From the user's chair a cutscene stage is just a place they visited, so Recent
     // must list it like any zone. Zones have a unique territory id; swap cutscene stages share a donor id and are
-    // identified by their bg path instead. RecentPlace carries both — StageBg==null means a plain territory, else a
+    // identified by their bg path instead. RecentPlace carries both - StageBg==null means a plain territory, else a
     // swap stage reloaded via CutsceneStageService. RecentZones (the old uint list) is kept only so existing configs
     // migrate forward (see MigrateRecentZones, called once on load).
     public class RecentPlace
     {
-        public uint TerritoryId { get; set; }        // the zone id (plain zone) OR the donor id (swap stage — informational)
+        public uint TerritoryId { get; set; }        // the zone id (plain zone) OR the donor id (swap stage - informational)
         public string? StageBg { get; set; }         // set => swap cutscene stage, reloaded by bg; null => plain zone
     }
     public List<RecentPlace> RecentPlaces { get; set; } = new();
@@ -269,7 +269,7 @@ public class HMSyncConfig : IPluginConfiguration
         Save();
     }
 
-    // S322: Minions tab — favourites (user-starred) + recently-summoned (rolling). Mirror of the emote lists.
+    // S322: Minions tab - favourites (user-starred) + recently-summoned (rolling). Mirror of the emote lists.
     public List<uint> FavouriteMinions { get; set; } = new();
     public List<uint> RecentMinions { get; set; } = new();
 
@@ -283,13 +283,13 @@ public class HMSyncConfig : IPluginConfiguration
     {
         RecentMinions.Remove(id);
         RecentMinions.Insert(0, id);
-        const int max = 6;                // 3×2 rows — exactly fills the History grid's default height
+        const int max = 6;                // 3×2 rows - exactly fills the History grid's default height
         if (RecentMinions.Count > max)
             RecentMinions.RemoveRange(max, RecentMinions.Count - max);
         Save();
     }
 
-    // S322k: Accessories tab — favourites + recently-equipped, same shape as the minion/emote lists.
+    // S322k: Accessories tab - favourites + recently-equipped, same shape as the minion/emote lists.
     public List<uint> FavouriteOrnaments { get; set; } = new();
     public List<uint> RecentOrnaments { get; set; } = new();
 
@@ -309,7 +309,7 @@ public class HMSyncConfig : IPluginConfiguration
         Save();
     }
 
-    // S323c: Mounts tab — favourites + recently-summoned, same shape as the other lists.
+    // S323c: Mounts tab - favourites + recently-summoned, same shape as the other lists.
     public List<uint> FavouriteMounts { get; set; } = new();
     public List<uint> RecentMounts { get; set; } = new();
 
@@ -346,7 +346,7 @@ public class HMSyncConfig : IPluginConfiguration
     public float OrnamentAllHeight { get; set; } = 0f;
     public float MountAllHeight { get; set; } = 0f;
 
-    // S326o: character tab 2x2 quadrant layout — height of the TOP row of quadrants (Emotes/Mounts); the bottom row
+    // S326o: character tab 2x2 quadrant layout - height of the TOP row of quadrants (Emotes/Mounts); the bottom row
     // (Minions/Accessories) fills the remainder. Dragging the divider trades space between the two rows.
     public float CharQuadrantTopHeight { get; set; } = 260f;
 
@@ -372,7 +372,7 @@ public class RelayService
     public string Name { get; set; } = "";
     public string Url { get; set; } = "";
     // v0.7.247: the access key, entered alone. The full connect URL is composed as {Url}?k={Key} by
-    // SyncSelectedRelayUrl — users type only the key they're handed, the plugin does the wss://.../?k= bureaucracy.
+    // SyncSelectedRelayUrl - users type only the key they're handed, the plugin does the wss://.../?k= bureaucracy.
     public string Key { get; set; } = "";
     public bool BuiltIn { get; set; } = false;
 }

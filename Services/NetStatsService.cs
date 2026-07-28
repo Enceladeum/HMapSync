@@ -9,11 +9,11 @@ namespace HMSync.Services;
 /// points in RelaySyncService (Send → outbound, the receive loop → inbound); read by /hms netdiag.
 ///
 /// Deliberately dependency-free and allocation-light: the hot path just does two integer adds per message. The
-/// rolling window is a small ring of per-second buckets so the live KB/s figure doesn't need a timer — it's
+/// rolling window is a small ring of per-second buckets so the live KB/s figure doesn't need a timer - it's
 /// computed on read from whatever buckets fall inside the last second.
 ///
 /// This measures the WIRE bytes actually handed to/from the socket (post-serialization, and post-compression IF the
-/// transport compresses — which is exactly the unknown we want ground truth on). It does NOT model fan-out: a client
+/// transport compresses - which is exactly the unknown we want ground truth on). It does NOT model fan-out: a client
 /// sees its own upload + the inbound it receives; the relay's fan-out cost is inferred from those, or measured
 /// relay-side separately.
 /// </summary>
@@ -27,7 +27,7 @@ public sealed class NetStatsService
     public long TotalMsgsOut { get; private set; }
     public long TotalMsgsIn { get; private set; }
 
-    // Per-message-type breakdown (which channel dominates — transforms vs map-state vs the rest).
+    // Per-message-type breakdown (which channel dominates - transforms vs map-state vs the rest).
     private readonly Dictionary<string, long> bytesOutByType = new();
     private readonly Dictionary<string, long> msgsOutByType = new();
 
@@ -46,7 +46,7 @@ public sealed class NetStatsService
     {
         long slot = NowMs() / BucketMs;
         int idx = (int)(slot % NumBuckets);
-        if (bucketStampMs[idx] != slot)   // this bucket is stale (belongs to an older second) — recycle it
+        if (bucketStampMs[idx] != slot)   // this bucket is stale (belongs to an older second) - recycle it
         {
             bucketStampMs[idx] = slot;
             outBuckets[idx] = 0;          // reset BOTH directions for this recycled slot so neither carries stale data

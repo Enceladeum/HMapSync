@@ -6,35 +6,35 @@ using System.Reflection;
 namespace HMSync.Sync;
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════════════
-// SYNC-LANE SCAFFOLDING — Stage 1 (S329a)
+// SYNC-LANE SCAFFOLDING - Stage 1 (S329a)
 //
-// This file is SCAFFOLDING ONLY. Nothing here is wired into the send/receive path yet — the wire still carries the
+// This file is SCAFFOLDING ONLY. Nothing here is wired into the send/receive path yet - the wire still carries the
 // monolithic TransformUpdate (0x10). What this establishes:
 //   1. The lane enum (which lane each field belongs to).
 //   2. The authoritative field→lane CENSUS MAP (every TransformData render field assigned to exactly one lane).
-//   3. A reflection-based validator (LaneCensus.Validate) that asserts the map is COMPLETE and DISJOINT — no field
+//   3. A reflection-based validator (LaneCensus.Validate) that asserts the map is COMPLETE and DISJOINT - no field
 //      orphaned (in no lane), none double-assigned. This is the anti-orphan guard: the silent failure mode of the
 //      refactor is a field that lands in no lane and quietly stops syncing. This test makes that impossible to ship.
 //
 // Stage 2 splits the SENDER to emit per-lane using this map. Stage 3 splits the RECEIVER onto a per-peer composite.
 // The map here is the single source of truth both stages build against.
 //
-// COUPLED FIELDS STAY CO-LANE (architecture decision): mount id + mount pitch, minion id + its offsets — so a coupled
+// COUPLED FIELDS STAY CO-LANE (architecture decision): mount id + mount pitch, minion id + its offsets - so a coupled
 // change never splits across a frame boundary. That's why MountPitch is HOT-adjacent conceptually but the mount BLOCK
 // lives in WARM; the coupling that matters for MountPitch is with position (it's per-frame flight attitude), so it
 // rides HOT with position. Minion offsets ride WARM with the minion identity (they only matter while a minion is out).
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════════════
 
-/// <summary>Which sync lane a field travels on. Cadences differ per lane — that's the whole point of the split.</summary>
+/// <summary>Which sync lane a field travels on. Cadences differ per lane - that's the whole point of the split.</summary>
 public enum SyncLane
 {
-    /// <summary>Position/rotation/movement — up to 10Hz while moving, silent when still. The only high-rate lane.</summary>
+    /// <summary>Position/rotation/movement - up to 10Hz while moving, silent when still. The only high-rate lane.</summary>
     Hot,
-    /// <summary>Emote/mount/minion/ornament/target/weapon — emitted on change (event-driven).</summary>
+    /// <summary>Emote/mount/minion/ornament/target/weapon - emitted on change (event-driven).</summary>
     Warm,
-    /// <summary>Moniker + cosmetic toggles — session-start + on change.</summary>
+    /// <summary>Moniker + cosmetic toggles - session-start + on change.</summary>
     Cold,
-    /// <summary>Map-state block (host-authoritative) — emitted on host map-state change only.</summary>
+    /// <summary>Map-state block (host-authoritative) - emitted on host map-state change only.</summary>
     Host,
 }
 
@@ -44,16 +44,16 @@ public enum SyncLane
 /// </summary>
 public static class LaneCensus
 {
-    // Fields that are NOT render state — envelope/identity/ordering. Excluded from lane assignment by design.
+    // Fields that are NOT render state - envelope/identity/ordering. Excluded from lane assignment by design.
     public static readonly HashSet<string> NonRenderFields = new()
     {
-        "Seq",              // ordering/dedup — envelope concern, not a lane
-        "Protocol",         // wire version — envelope concern
-        "SenderContentId",  // identity binding — travels on every lane's envelope, not a lane payload field
+        "Seq",              // ordering/dedup - envelope concern, not a lane
+        "Protocol",         // wire version - envelope concern
+        "SenderContentId",  // identity binding - travels on every lane's envelope, not a lane payload field
     };
 
     // The map: every render field → its lane. This is the single source of truth. Adding a field to TransformData and
-    // not adding it here (or to NonRenderFields) fails LaneCensus.Validate — that's the guard.
+    // not adding it here (or to NonRenderFields) fails LaneCensus.Validate - that's the guard.
     public static readonly Dictionary<string, SyncLane> Map = new()
     {
         // ── HOT: position / rotation / movement / per-frame flight attitude / body-draw offset ──
@@ -61,12 +61,12 @@ public static class LaneCensus
         ["Y"] = SyncLane.Hot,
         ["Z"] = SyncLane.Hot,
         ["Rotation"] = SyncLane.Hot,
-        ["MountPitch"] = SyncLane.Hot,          // per-frame flight attitude — coupled with POSITION, rides HOT
+        ["MountPitch"] = SyncLane.Hot,          // per-frame flight attitude - coupled with POSITION, rides HOT
         ["MoveState"] = SyncLane.Hot,
         ["MoveMode"] = SyncLane.Hot,
         ["JumpPhase"] = SyncLane.Hot,
         ["IsTurning"] = SyncLane.Hot,
-        ["BodyDrawOffsetX"] = SyncLane.Hot,     // swim/sit body offset — per-frame positional, rides HOT
+        ["BodyDrawOffsetX"] = SyncLane.Hot,     // swim/sit body offset - per-frame positional, rides HOT
         ["BodyDrawOffsetY"] = SyncLane.Hot,
         ["BodyDrawOffsetZ"] = SyncLane.Hot,
         ["BodyDrawOffsetEpoch"] = SyncLane.Hot, // its gate rides with it
@@ -80,7 +80,7 @@ public static class LaneCensus
         ["GazeEyesOn"] = SyncLane.Warm, ["GazeEyesX"] = SyncLane.Warm, ["GazeEyesY"] = SyncLane.Warm, ["GazeEyesZ"] = SyncLane.Warm,
         ["GazeBodyOn"] = SyncLane.Warm, ["GazeBodyX"] = SyncLane.Warm, ["GazeBodyY"] = SyncLane.Warm, ["GazeBodyZ"] = SyncLane.Warm,
         ["GazeHeadOn"] = SyncLane.Warm, ["GazeHeadX"] = SyncLane.Warm, ["GazeHeadY"] = SyncLane.Warm, ["GazeHeadZ"] = SyncLane.Warm,
-        // skills (COSM_1_016) — cosmetic action replay, fire-and-forget on ActionEpoch
+        // skills (COSM_1_016) - cosmetic action replay, fire-and-forget on ActionEpoch
         ["ActionId"] = SyncLane.Warm, ["ActionType"] = SyncLane.Warm, ["ActionEpoch"] = SyncLane.Warm,
         ["ActionTgtX"] = SyncLane.Warm, ["ActionTgtY"] = SyncLane.Warm, ["ActionTgtZ"] = SyncLane.Warm,
         ["ActionTgtCid"] = SyncLane.Warm,
@@ -130,7 +130,7 @@ public static class LaneCensus
 
     /// <summary>
     /// The anti-orphan guard. Reflects over every public get/set property of TransformData and asserts each is EITHER
-    /// in NonRenderFields OR in Map — exactly once, never both, never neither. Returns null if the census is valid,
+    /// in NonRenderFields OR in Map - exactly once, never both, never neither. Returns null if the census is valid,
     /// or a description of the problem. Call at plugin init (fail loud) and from any test harness.
     /// </summary>
     public static string? Validate()
@@ -149,9 +149,9 @@ public static class LaneCensus
             bool inMap = Map.ContainsKey(name);
             bool inNonRender = NonRenderFields.Contains(name);
             if (inMap && inNonRender)
-                problems.Add($"'{name}' is in BOTH the lane Map and NonRenderFields — pick one.");
+                problems.Add($"'{name}' is in BOTH the lane Map and NonRenderFields - pick one.");
             else if (!inMap && !inNonRender)
-                problems.Add($"'{name}' is ORPHANED — in no lane and not marked non-render. Add it to LaneCensus.Map " +
+                problems.Add($"'{name}' is ORPHANED - in no lane and not marked non-render. Add it to LaneCensus.Map " +
                              $"(or NonRenderFields if it's envelope/identity). This is the exact failure the census guards against.");
         }
 
@@ -170,7 +170,7 @@ public static class LaneCensus
     public static IEnumerable<string> FieldsForLane(SyncLane lane) =>
         Map.Where(kv => kv.Value == lane).Select(kv => kv.Key);
 
-    /// <summary>Count of render fields per lane — for logging/diagnostics.</summary>
+    /// <summary>Count of render fields per lane - for logging/diagnostics.</summary>
     public static Dictionary<SyncLane, int> LaneCounts() =>
         Map.GroupBy(kv => kv.Value).ToDictionary(g => g.Key, g => g.Count());
 }

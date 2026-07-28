@@ -25,14 +25,14 @@ public unsafe class PacketFilterService : IDisposable
     private ushort heartbeatOpcode;
     // True once the heartbeat opcode has been resolved by sig-scan. If false, the filter would suppress the heartbeat
     // too (heartbeatOpcode==0 matches no real packet) → the client disconnects on session start. Session start checks
-    // this to fail LOUDLY (refuse + warn) instead of silently dropping the connection — the one heartbeat-sig-break
+    // this to fail LOUDLY (refuse + warn) instead of silently dropping the connection - the one heartbeat-sig-break
     // failure mode made diagnosable. (See FFXIV-Network-Opcodes-Security.md §14.)
     public bool HeartbeatResolved => heartbeatOpcode != 0;
 
     // v0.7.461 (P1, Codex QA): the firewall may only be enabled if EVERY critical hook actually created AND the
     // heartbeat resolved. Enable() is null-safe (sendHook?.Enable()), so if a game patch broke ONLY the send-packet
     // signature, the old code would still set IsActive=true while outbound packets flowed UNFILTERED to the live
-    // server — the exact exposure the firewall exists to prevent. sendHook is the load-bearing one (outbound
+    // server - the exact exposure the firewall exists to prevent. sendHook is the load-bearing one (outbound
     // suppression); receiveHook and interactHook round out the guarantee. HeartbeatResolved alone is insufficient
     // because it's independent of these hooks. EngageSyntheticSession must gate on this, not just HeartbeatResolved.
     public bool CanEnable => HeartbeatResolved && sendHook != null && receiveHook != null && interactHook != null;
@@ -88,7 +88,7 @@ public unsafe class PacketFilterService : IDisposable
             log.Error("[HMSync] Failed to hook receive: " + ex.Message);
         }
 
-        // InteractWithObject — prevents NPC interactions from generating packets
+        // InteractWithObject - prevents NPC interactions from generating packets
         try
         {
             var interactAddr = sigScanner.ScanText(
@@ -105,12 +105,12 @@ public unsafe class PacketFilterService : IDisposable
     public void Enable()
     {
         if (IsActive) return;
-        // v0.7.461: never enable with a missing critical hook — IsActive must imply the firewall is actually
+        // v0.7.461: never enable with a missing critical hook - IsActive must imply the firewall is actually
         // intercepting. The caller (EngageSyntheticSession) checks CanEnable and aborts the load with a warning;
         // this is the defense-in-depth backstop so IsActive can't be set true through any other path either.
         if (!CanEnable)
         {
-            log.Error("[HMSync] Packet filter NOT enabled — a critical hook is missing (signature break). Refusing to set active.");
+            log.Error("[HMSync] Packet filter NOT enabled - a critical hook is missing (signature break). Refusing to set active.");
             return;
         }
         sendHook?.Enable();
@@ -157,7 +157,7 @@ public unsafe class PacketFilterService : IDisposable
                                 if (*(byte*)(a2 + i + j) != target[j]) { ok = false; break; }
                             if (ok)
                             {
-                                log.Information("[HMSync] [SAY-FINDER] OUTBOUND MATCH — opcode=" + opcode + " (0x" + opcode.ToString("X3") +
+                                log.Information("[HMSync] [SAY-FINDER] OUTBOUND MATCH - opcode=" + opcode + " (0x" + opcode.ToString("X3") +
                                     ") carries the marker. THIS is the /say outbound opcode.");
                                 SayFinderTextOut = null;
                                 OnSayOutOpcodeFound?.Invoke(opcode);
@@ -170,7 +170,7 @@ public unsafe class PacketFilterService : IDisposable
             }
 
             // Outbound diagnostic (/hms senddiag): log every outbound opcode + whether it's passed or suppressed. This
-            // reveals which outbound opcode /say produces (ChatHandler?) and confirms it's being dropped in-session —
+            // reveals which outbound opcode /say produces (ChatHandler?) and confirms it's being dropped in-session -
             // the likely reason /say doesn't reach peers (the SENDER's outbound chat is killed before it leaves).
             if (SendDiag)
             {
@@ -181,11 +181,11 @@ public unsafe class PacketFilterService : IDisposable
                     (willPass ? "PASS" : "SUPPRESS") + (IsActive ? "" : " [capture-only]"));
             }
 
-            // ⚠ v0.7.418 — SAFETY GATE, and it is not optional.
+            // ⚠ v0.7.418 - SAFETY GATE, and it is not optional.
             // This method ends in `return 1` (suppress). It was previously unreachable outside a
             // session because the send hook only existed while the filter was active. Capture-only
             // now installs it WITHOUT the filter, so without this line every outbound packet the
-            // client produced would be swallowed — movement, actions, chat, everything — and the
+            // client produced would be swallowed - movement, actions, chat, everything - and the
             // player would be frozen with no indication why.
             // Mirrors OnReceivePacket, which already passes through when !IsActive.
             if (!IsActive)
@@ -219,7 +219,7 @@ public unsafe class PacketFilterService : IDisposable
     public readonly HashSet<ushort> SayChatOutOpcodes = new();
 
     // Structure dump (S328o): when true, dump a labeled hex+ASCII view of chat packets (out 300 / in 912) so we can see
-    // the real layout — channel/type byte, sender id, message string offset — to design the structural validator on
+    // the real layout - channel/type byte, sender id, message string offset - to design the structural validator on
     // CONFIRMED offsets rather than inferred ones. Toggled with /hms saydump. Dumps 96 bytes from the packet base.
     public bool SayDump;
 
@@ -265,7 +265,7 @@ public unsafe class PacketFilterService : IDisposable
     // When PassSayChat is true, these opcodes are PASSED inbound even while the filter is active (everything else is
     // still dropped). This lets co-located session members hear each other's spatial chat (/say, /yell, /shout). The
     // DISPLAY filter (SayFilterService) then hides non-session-members' messages. Opcode 695 (0x2B7) = /say, found by
-    // content correlation (S328i). Yell/shout added once confirmed (they may share 695 — a chat-type byte in-payload —
+    // content correlation (S328i). Yell/shout added once confirmed (they may share 695 - a chat-type byte in-payload -
     // or use their own opcodes). Passing the packet is safe: it's inbound chat, no server anomaly (we send nothing).
     // Inbound spatial-chat opcode (config-driven, S328p). 912 default carries /say, /yell, AND /shout inbound (one
     // "public chat" packet type; the channel is a byte inside the payload). Guarded by ValidateChatShape so a rotated
@@ -278,7 +278,7 @@ public unsafe class PacketFilterService : IDisposable
     private int consecutiveChatShapeFailures;
     private const int DriftFailureThreshold = 20;
 
-    // Structural validator (S328p) — the SAFETY CORE. Confirms a packet on the say opcode really IS spatial chat, by
+    // Structural validator (S328p) - the SAFETY CORE. Confirms a packet on the say opcode really IS spatial chat, by
     // STRUCTURE, before passing it. Offsets confirmed from live captures (network doc §27):
     //   payload chat-type @ +0x26 (2 bytes LE) ∈ {Say=10, Shout=11, Yell=30}   ← the decisive field
     //   sender ContentId  @ +0x10 (8 bytes) nonzero
@@ -344,7 +344,7 @@ public unsafe class PacketFilterService : IDisposable
         receiveHook?.Enable();
         // v0.7.418: install the SEND hook too, so outbound traffic is observable with no session
         // running. Safe only because OnSendPacket now returns Original unconditionally when
-        // !IsActive — see the safety gate there. This is the window the exit-freeze investigation
+        // !IsActive - see the safety gate there. This is the window the exit-freeze investigation
         // needs: after teardown, does the client still emit movement at all?
         sendHook?.Enable();
     }
@@ -366,7 +366,7 @@ public unsafe class PacketFilterService : IDisposable
         try
         {
             // Full inbound opcode log (under SendDiag): shows EVERY inbound opcode reaching the receiver, so if the say
-            // (695) isn't arriving we can see what DOES — distinguishes "server didn't send it" (proximity broke) from
+            // (695) isn't arriving we can see what DOES - distinguishes "server didn't send it" (proximity broke) from
             // "it arrived but we didn't render" (downstream). Throttled to say-plausible range to avoid a firehose.
             if (SendDiag && IsActive)
             {
@@ -383,7 +383,7 @@ public unsafe class PacketFilterService : IDisposable
             }
 
             // Say-opcode finder: scan the payload for the target string (set via SayFinderText). A hit means THIS packet
-            // carries the /say text → log its opcode. Content correlation — definitive, no timestamp matching.
+            // carries the /say text → log its opcode. Content correlation - definitive, no timestamp matching.
             if (SayFinderText != null)
             {
                 try
@@ -404,7 +404,7 @@ public unsafe class PacketFilterService : IDisposable
                         }
                         if (matchAt >= 0)
                         {
-                            log.Information("[HMSync] [SAY-FINDER] MATCH — opcode=" + fop + " (0x" + fop.ToString("X3") +
+                            log.Information("[HMSync] [SAY-FINDER] MATCH - opcode=" + fop + " (0x" + fop.ToString("X3") +
                                 ") carries '" + SayFinderText + "' at payload offset 0x" + matchAt.ToString("X") +
                                 ". THIS is the /say inbound opcode.");
                             SayFinderText = null;   // one-shot: clear after the first hit
@@ -412,7 +412,7 @@ public unsafe class PacketFilterService : IDisposable
                         }
                     }
                 }
-                catch { /* payload shorter than scan window — ignore */ }
+                catch { /* payload shorter than scan window - ignore */ }
             }
 
             if (CaptureInbound)
@@ -423,7 +423,7 @@ public unsafe class PacketFilterService : IDisposable
                 if (CaptureOpcodes == null || CaptureOpcodes.Count == 0 || CaptureOpcodes.Contains(opcode))
                 {
                     int ts = *(int*)(a3 + 0x0C);
-                    // The target entity id is the SECOND hook parameter (a2 / targetId) — this is exactly how Dalamud's
+                    // The target entity id is the SECOND hook parameter (a2 / targetId) - this is exactly how Dalamud's
                     // NetworkMonitor gets it, NOT a payload offset. ZoneUp (outbound) would be 0; inbound carries the id.
                     uint eid = a2;
                     var sb = new System.Text.StringBuilder();
@@ -440,7 +440,7 @@ public unsafe class PacketFilterService : IDisposable
             }
 
             // Drop inbound ONLY when the filter is genuinely active (in a session). If we're merely CAPTURING outside a
-            // session, PASS the packet through — otherwise capturing in an inn would break your inbound traffic.
+            // session, PASS the packet through - otherwise capturing in an inn would break your inbound traffic.
             if (IsActive)
             {
                 // Say passthrough: pass spatial-chat packets (/say/yell/shout) so co-located members hear each other;
@@ -466,7 +466,7 @@ public unsafe class PacketFilterService : IDisposable
                         {
                             DriftDetected = true;
                             log.Warning("[HMSync] [DRIFT] opcode " + op + " (0x" + op.ToString("X3") + ") stopped carrying chat-shaped packets after " +
-                                DriftFailureThreshold + " tries — likely rotated by a patch. Shutting say passthrough (fail-closed).");
+                                DriftFailureThreshold + " tries - likely rotated by a patch. Shutting say passthrough (fail-closed).");
                             OnDriftDetected?.Invoke();
                         }
                         return;   // not chat-shaped → suppress (fail closed), do NOT pass
@@ -484,7 +484,7 @@ public unsafe class PacketFilterService : IDisposable
 
     private nint OnInteractWithObject(nint a1, nint a2, byte a3)
     {
-        // Block all NPC/object interactions — prevents server-bound packets
+        // Block all NPC/object interactions - prevents server-bound packets
         return 0;
     }
 

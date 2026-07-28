@@ -10,36 +10,36 @@ namespace HMSync.Services;
 // ============================ GROUND CARPET ============================
 // Ported from HCollider (CARPET_HANDOFF.md). A toggle that lets the player walk on surfaces with no
 // collision mesh (out-of-bounds roofs, gaps, the void) by laying a short trail of overlapping flat
-// collider patches under the player each game tick — dropping a new one ahead of their movement,
+// collider patches under the player each game tick - dropping a new one ahead of their movement,
 // retiring old ones behind. Patches are REAL engine colliders (created via the game's own SceneWrapper
 // factory), so the player physically stands and walks on them. Purely client-side; paired with HMS's
 // packet filter there is no server desync.
 //
 // Headline flow: fly in on a mount to altitude, toggle on (first patch spawns at the mount's feet so
-// you land naturally), dismount, walk — the carpet extends under you.
+// you land naturally), dismount, walk - the carpet extends under you.
 //
-// Load-bearing design choices (do NOT regress — see the handoff):
+// Load-bearing design choices (do NOT regress - see the handoff):
 //   • Trail of STATIC patches, never a moving disc. Repositioning the floor under you mid-frame makes
 //     the physics engine jitter/launch/drop you. Add ahead, retire behind, never move a live one.
 //   • Never retire the patch the player is currently over (horizontal distance check vs radius*1.1).
-//   • Velocity from POSITION DELTA, not facing — captures true movement (strafe/backwalk), unlike
+//   • Velocity from POSITION DELTA, not facing - captures true movement (strafe/backwalk), unlike
 //     GameObject.Rotation.
-//   • Forward cap, speed-scaled — bias the patch ahead along actual movement so the leading edge stays
+//   • Forward cap, speed-scaled - bias the patch ahead along actual movement so the leading edge stays
 //     in front of the feet (prevents walking off the front edge at speed).
-//   • Box patches only (S320c) — the cylinder option wedged the capsule on dismount / mid-air enable /
+//   • Box patches only (S320c) - the cylinder option wedged the capsule on dismount / mid-air enable /
 //     jumps; the box doesn't. Square joins tile cleanly with the speed-scaled forward cap.
-//   • Pitch -0.05 = flat — Position.Y is the foot origin; a thin box is centred on its origin, so -0.05
+//   • Pitch -0.05 = flat - Position.Y is the foot origin; a thin box is centred on its origin, so -0.05
 //     puts the top face exactly at foot level. Positive Pitch climbs, negative descends. The FIRST patch
 //     uses DropOffset instead (a separate first-only offset for a cinematic drop-in); the rest use Pitch.
 //
 // HMS-specific improvements over the HCollider original (per the handoff's open items):
 //   • Real frame delta (IFramework.UpdateDelta) for velocity/lead instead of the framerate-naive *60.
 //   • S320: turned OFF (+ notified) on any HMS-driven zone change via ZoneLoadService.ZoneWillChange
-//     (HMS's own lifecycle — LoadZone for /hms load, the load detour for normal teleports, and the
+//     (HMS's own lifecycle - LoadZone for /hms load, the load detour for normal teleports, and the
 //     leave teardown for /hms stop|leave). Carpet is a map-specific convenience, so it does NOT carry
 //     across a zone load: loading into a new zone with a flat trail still active would glide you off
 //     the first staircase. Full disable beats clear-and-keep, and re-enabling is a trivial cost.
-//     (Driven by HMS, NOT the Dalamud TerritoryChanged event — that fires after the fact and couples
+//     (Driven by HMS, NOT the Dalamud TerritoryChanged event - that fires after the fact and couples
 //     the carpet to an external signal it shouldn't own.)
 public sealed unsafe class CarpetService
 {
@@ -56,7 +56,7 @@ public sealed unsafe class CarpetService
     public int Trail = 5;               // max live patches
     public float LeadBase = 1.0f;       // forward-cap base offset
     public float LeadPerSpeed = 0.25f;  // additional lead per unit speed (speed-scaled cap)
-    // S320c: the WALKING SLOPE. Each ongoing patch sits at footY + Pitch. Flat (level walking) is -0.05 —
+    // S320c: the WALKING SLOPE. Each ongoing patch sits at footY + Pitch. Flat (level walking) is -0.05 -
     // the thin box's top face exactly at foot level. Positive = uphill (each patch higher, player climbs),
     // negative = downhill. Replaces the old YOffset value + FlatLock checkbox: flat is now a Reset button,
     // with Uphill/Downhill presets at the clearance limit for the default radius/step.
@@ -124,7 +124,7 @@ public sealed unsafe class CarpetService
         config.Save();
     }
 
-    // /hms carpet — toggle with the baked-in flat preset. Applies defaults on enable.
+    // /hms carpet - toggle with the baked-in flat preset. Applies defaults on enable.
     public void Toggle()
     {
         if (On) Disable();
@@ -210,9 +210,9 @@ public sealed unsafe class CarpetService
 
         // Flat ground at foot level (+ offset). The carpet's job is footing where none exists; the
         // surface-conforming downward-ray variant was built and removed (stuttered on stairs, flattened
-        // descents) — flat-at-feet is both simpler and the behaviour actually wanted for unwired roofs.
+        // descents) - flat-at-feet is both simpler and the behaviour actually wanted for unwired roofs.
         // S320c: the FIRST patch (none yet) uses DropOffset (cinematic-drop control); every patch after
-        // follows Pitch (the walking slope — flat / uphill / downhill).
+        // follows Pitch (the walking slope - flat / uphill / downhill).
         float yOff = (centers.Count == 0) ? DropOffset : Pitch;
         var center = new Vector3(target.X, pos.Y + yOff, target.Z);
 
@@ -229,12 +229,12 @@ public sealed unsafe class CarpetService
             centers.Add(center);
         }
 
-        // Retire oldest beyond trail length — but never one the player is still standing on/near.
+        // Retire oldest beyond trail length - but never one the player is still standing on/near.
         while (patches.Count > Trail)
         {
             var c0 = centers[0];
             float horiz = Vector3.Distance(new Vector3(pos.X, 0, pos.Z), new Vector3(c0.X, 0, c0.Z));
-            if (horiz <= Radius * 1.1f) break;   // still on/near it — keep
+            if (horiz <= Radius * 1.1f) break;   // still on/near it - keep
             RemoveColliderPtr((Collider*)patches[0]);
             patches.RemoveAt(0);
             centers.RemoveAt(0);
@@ -275,9 +275,9 @@ public sealed unsafe class CarpetService
     }
 
     // Create one flat box patch at the given centre via the game's OWN factory (SceneWrapper.AddColliderBox).
-    // The engine allocates from its per-type pool, inserts into the BVH, and owns teardown — a supported
+    // The engine allocates from its per-type pool, inserts into the BVH, and owns teardown - a supported
     // runtime op. Scale = (radius, 0.05 thickness, radius). Returns the live Collider*.
-    // S320c: box only. The cylinder option was removed — it stuck the actor on dismount, on mid-air
+    // S320c: box only. The cylinder option was removed - it stuck the actor on dismount, on mid-air
     // activation, and on some jumps (the rounded collision let the capsule wedge); the box has none of that.
     private Collider* CreatePatch(Vector3 center)
     {
@@ -294,7 +294,7 @@ public sealed unsafe class CarpetService
         return (Collider*)sw->AddColliderBox(lm, &pos, &rot, &scl);
     }
 
-    // Remove a single collider via the engine, but only if it's still actually in the scene — avoids a
+    // Remove a single collider via the engine, but only if it's still actually in the scene - avoids a
     // double-free if a zone change already reclaimed it.
     private void RemoveColliderPtr(Collider* coll)
     {

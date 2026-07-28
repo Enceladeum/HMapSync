@@ -6,12 +6,12 @@ using FFXIVClientStructs.FFXIV.Client.System.Framework;
 namespace HMSync.Services;
 
 // Freezes Eorzea time by HOOKING the game's per-frame UpdateEorzeaTime recompute and no-oping it while frozen, then
-// writing the held value into ClientTime.EorzeaTime (0x8) — the field the renderer reads directly. Mechanism ported
-// from Brio's TimeService (AGPL — technique reused, credited). This is the CORRECT lever:
-//   • Writing EorzeaTimeOverride (0x30) does NOT work — UpdateEorzeaTime recomputes EorzeaTime from the real clock
+// writing the held value into ClientTime.EorzeaTime (0x8) - the field the renderer reads directly. Mechanism ported
+// from Brio's TimeService (AGPL - technique reused, credited). This is the CORRECT lever:
+//   • Writing EorzeaTimeOverride (0x30) does NOT work - UpdateEorzeaTime recomputes EorzeaTime from the real clock
 //     every frame and ignores the override in the render path, clobbering it.
-//   • Weatherman patches the render READ (raw byte patch) — works but fragile.
-//   • Brio hooks the recompute and disables it — a standard Dalamud hook (same idiom as HMS's other hooks), robust,
+//   • Weatherman patches the render READ (raw byte patch) - works but fragile.
+//   • Brio hooks the recompute and disables it - a standard Dalamud hook (same idiom as HMS's other hooks), robust,
 //     and the value simply holds once the recompute stops. This is what we use.
 public sealed unsafe class TimeFreezeService : IDisposable
 {
@@ -37,7 +37,7 @@ public sealed unsafe class TimeFreezeService : IDisposable
         catch (Exception ex)
         {
             updateHook = null;
-            log.Error("[HMSync] TimeFreezeService: failed to scan UpdateEorzeaTime — time freeze unavailable: " + ex.Message);
+            log.Error("[HMSync] TimeFreezeService: failed to scan UpdateEorzeaTime - time freeze unavailable: " + ex.Message);
         }
     }
 
@@ -45,7 +45,7 @@ public sealed unsafe class TimeFreezeService : IDisposable
     // is suppressed → whatever we wrote into EorzeaTime stays.
     private void UpdateEorzeaTimeDetour(IntPtr a1, IntPtr a2)
     {
-        // DO NOTHING while frozen — suppress the recompute.
+        // DO NOTHING while frozen - suppress the recompute.
     }
 
     public bool IsFrozen => updateHook?.IsEnabled ?? false;
@@ -55,7 +55,7 @@ public sealed unsafe class TimeFreezeService : IDisposable
     {
         if (updateHook == null)
         {
-            log.Warning("[HMSync] [FREEZE] FreezeAt(" + hour + ":" + minute + ") — NO HOOK (sig scan failed at ctor) → cannot freeze");
+            log.Warning("[HMSync] [FREEZE] FreezeAt(" + hour + ":" + minute + ") - NO HOOK (sig scan failed at ctor) → cannot freeze");
             return;
         }
         var fw = Framework.Instance();
@@ -72,21 +72,21 @@ public sealed unsafe class TimeFreezeService : IDisposable
             fw->ClientTime.EorzeaTimeOverride = target;
     }
 
-    // Freeze at the CURRENT live time (used when the user taps Freeze without dragging — pin "now", not a stale value).
+    // Freeze at the CURRENT live time (used when the user taps Freeze without dragging - pin "now", not a stale value).
     public void FreezeAtCurrent()
     {
         var (h, m) = GetTimeOfDay();
         FreezeAt(h, m);
     }
 
-    // Release the freeze — the recompute resumes and time flows from the real clock again.
+    // Release the freeze - the recompute resumes and time flows from the real clock again.
     public void Unfreeze()
     {
         if (updateHook is { IsEnabled: true }) updateHook.Disable();
     }
 
     // Current Eorzea time-of-day as (hour, minute). When frozen this is our held value (the recompute is off); when
-    // not frozen it's the live recomputed clock. Reads EorzeaTime (0x8) — the field the renderer uses.
+    // not frozen it's the live recomputed clock. Reads EorzeaTime (0x8) - the field the renderer uses.
     public (int hour, int minute) GetTimeOfDay()
     {
         try

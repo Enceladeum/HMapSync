@@ -10,7 +10,7 @@ using Newtonsoft.Json;
 // sync-friendly IPC surface (namespace "Moniker.*"), mirroring the Mare/Honorific courier pattern: a courier reads a
 // player's chosen name and applies it to another client's copy of that player. HMS is that courier for a session.
 //
-// DETECTION: the IPC namespace IS the stable signature — no opcode, no memory scan, no drift. We probe
+// DETECTION: the IPC namespace IS the stable signature - no opcode, no memory scan, no drift. We probe
 // "Moniker.ApiVersion"; if it resolves and returns a compatible major version, Moniker is present. This is exactly how
 // HMS detects Penumbra/Glamourer. Absence is soft: every call is guarded, so no Moniker = the feature is simply inert.
 //
@@ -69,8 +69,8 @@ public sealed class MonikerService : IDisposable
         catch (Exception ex) { log.Debug("[HMSync] Moniker ready/disposing subscribe failed: " + ex.Message); }
     }
 
-    private void OnMonikerReady() { TryConnect(); if (Available) log.Information("[HMSync] Moniker detected — nameplate sync active."); }
-    private void OnMonikerDisposing() { Available = false; log.Information("[HMSync] Moniker went away — nameplate sync inert."); }
+    private void OnMonikerReady() { TryConnect(); if (Available) log.Information("[HMSync] Moniker detected - nameplate sync active."); }
+    private void OnMonikerDisposing() { Available = false; log.Information("[HMSync] Moniker went away - nameplate sync inert."); }
 
     private void TryConnect()
     {
@@ -81,7 +81,7 @@ public sealed class MonikerService : IDisposable
             if (major != RequiredMajor)
             {
                 Available = false;
-                log.Information($"[HMSync] Moniker present but API v{major} != required v{RequiredMajor} — nameplate sync off.");
+                log.Information($"[HMSync] Moniker present but API v{major} != required v{RequiredMajor} - nameplate sync off.");
                 return;
             }
             getLocalName = pi.GetIpcSubscriber<string>("Moniker.GetLocalCharacterName");
@@ -111,7 +111,7 @@ public sealed class MonikerService : IDisposable
     }
 
     // Apply a chosen name to a peer's puppet (by object index) so this client renders it. Empty name clears.
-    // NOTE: the game caches the rendered nameplate — calling SetCharacterName again with a NEW name updates Moniker's
+    // NOTE: the game caches the rendered nameplate - calling SetCharacterName again with a NEW name updates Moniker's
     // data but doesn't always invalidate the already-drawn nameplate (observed: first set redraws, subsequent changes
     // don't). So on a re-set we CLEAR first, then set, forcing a full invalidate→redraw cycle (the pattern nameplate
     // plugins like Honorific use). forceRedraw is passed by the apply layer when the name is CHANGING (not initial).
@@ -126,7 +126,7 @@ public sealed class MonikerService : IDisposable
             if (string.IsNullOrEmpty(name) && !hideFc && !hideName) { clearName?.InvokeAction(objectIndex); return; }
             // v0.7.369: a plain set is sufficient. Moniker's IPC handlers now call RequestNameplateRedraw() themselves
             // (its Set/Clear previously mutated the peer-name dictionary without dirtying the plate, so a peer's plate
-            // waited for the next ORGANIC rebuild — the "flag change doesn't repaint, name change does" bug). HMS no
+            // waited for the next ORGANIC rebuild - the "flag change doesn't repaint, name change does" bug). HMS no
             // longer clears-then-sets or defers across frames to force it; forceRedraw is retained in the signature but
             // is now a no-op hint, since redraws coalesce per frame on Moniker's side.
             var json = JsonConvert.SerializeObject(new NameData { Name = name, HideFcTag = hideFc, HideName = hideName });

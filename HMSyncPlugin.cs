@@ -37,12 +37,12 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     private readonly OpcodeMapService opcodeMap;
     private SayFilterService sayFilter = null!;
     private bool sayDriftBanner;   // S328p: set when the say passthrough auto-shuts (drift/patch); shown in the Config tab + session strip
-    private bool relearnGotOut, relearnGotIn;   // S328q: symmetric re-learn — track which direction's opcode has been captured
+    private bool relearnGotOut, relearnGotIn;   // S328q: symmetric re-learn - track which direction's opcode has been captured
     private readonly ZoneLoadService zoneLoad;
     private readonly CutsceneStageService cutscene;   // cutscene free-roam (Tier B LoadZone / Tier A donor-redirect)
     private readonly NoclipService noclip;
     private readonly CarpetService carpet;   // S315: ported HCollider ground-carpet (walk anywhere)
-    private readonly DeckFloorService deckFloor;   // v0.7.351: constructive collision — add box floor patches
+    private readonly DeckFloorService deckFloor;   // v0.7.351: constructive collision - add box floor patches
     private readonly GPoseMountDrawService gposeMountDraw;   // v0.7.358: keep HMS mounts drawn in gpose
     private readonly SkillSyncService skillSync;   // COSM_1_016: cosmetic skill capture + peer replay
     private readonly InstalledPluginService installedPlugins;   // v0.7.371: Modules panel presence + open
@@ -111,21 +111,21 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         config.EnsureRelayServicesSeeded();   // S328am: populate built-in relay services on first run
         config.EnforceRelayServiceForMode(config.ShowDebugCommands);   // v0.7.338: keep non-debug users off the localhost dev endpoint
 
-        // S329a (Stage 1): validate the sync-lane census — every TransformData field must map to exactly one lane
+        // S329a (Stage 1): validate the sync-lane census - every TransformData field must map to exactly one lane
         // (or be marked non-render). This is the anti-orphan guard: it fails LOUD here if a field is added without a
-        // lane assignment, rather than silently not-syncing after the Stage 2/3 split. Scaffolding only right now —
+        // lane assignment, rather than silently not-syncing after the Stage 2/3 split. Scaffolding only right now -
         // the wire still carries the monolithic TransformUpdate; this just keeps the census honest ahead of the split.
         var laneCensusError = HMSync.Sync.LaneCensus.Validate();
         if (laneCensusError != null)
-            log.Error("[HMSync] SYNC-LANE CENSUS INVALID — a field is orphaned or misassigned:\n" + laneCensusError);
+            log.Error("[HMSync] SYNC-LANE CENSUS INVALID - a field is orphaned or misassigned:\n" + laneCensusError);
         else
         {
             var lc = HMSync.Sync.LaneCensus.LaneCounts();
-            log.Information("[HMSync] Sync-lane census OK — HOT:" + lc.GetValueOrDefault(HMSync.Sync.SyncLane.Hot)
+            log.Information("[HMSync] Sync-lane census OK - HOT:" + lc.GetValueOrDefault(HMSync.Sync.SyncLane.Hot)
                 + " WARM:" + lc.GetValueOrDefault(HMSync.Sync.SyncLane.Warm)
                 + " COLD:" + lc.GetValueOrDefault(HMSync.Sync.SyncLane.Cold)
                 + " HOST:" + lc.GetValueOrDefault(HMSync.Sync.SyncLane.Host)
-                + " (scaffolding — wire still monolithic TransformUpdate).");
+                + " (scaffolding - wire still monolithic TransformUpdate).");
         }
 
         relay = new RelaySyncService(log);
@@ -138,7 +138,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         moniker = new MonikerService(pluginInterface, log);   // S328x: Moniker nameplate integration (optional; inert if absent)
         npcVisibility = new NpcVisibilityService(objectTable, log);   // S328aa: NPC scene-cleanup (despawn / hide quest signs)
         stateCapture = new StateCaptureService(objectTable, framework, relay, detector, log);
-        // (S328ag dirty-check toggle removed — change-detection is always on now.)
+        // (S328ag dirty-check toggle removed - change-detection is always on now.)
         locoDiag = new LocoDiagService(log);   // S328ai
         stateApply = new StateApplyService(objectTable, framework, dataManager, log, pluginInterface, sigScanner);
         stateApply.LocoDiag = locoDiag;        // receiver-side locomotion diagnostic hook (after stateApply exists)
@@ -187,12 +187,12 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         mapSettings = new MapSettingsService(dataManager, log, timeFreeze, sigScanner);   // S326
         glamourer = new GlamourerIpc(pluginInterface);   // S246: optional Glamourer routing for visibility toggles
         // S248: when Glamourer reports ANY actor's state changed, mark badges dirty. The refresh
-        // (main thread) reads the LOCAL player's state — we don't need to match the address here;
+        // (main thread) reads the LOCAL player's state - we don't need to match the address here;
         // a cheap re-read on any change keeps the badges correct without per-frame polling.
         glamourer.StateChanged += _ => glamourerBadgesDirty = true;
 
         // S250: AFK-warning suppressor. Gated on relay.IsConnected so it ONLY acts during an HMS
-        // session — never swallows a real player's expel warning in a real dungeon.
+        // session - never swallows a real player's expel warning in a real dungeon.
         afkSuppressor = new AfkNotificationSuppressor(chat, log, () => relay.IsSessionActive);
 
         // v0.7.351: deck-floor patcher. Player-position getter reuses ReadLivePosition (native GameObject.Position).
@@ -204,7 +204,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             // v0.7.391: only let the recovery pass un-hide objects HMS itself hid. Blanket-clearing 0x02
             // undid the game's own hide of gpose originals, so original + clone both drew.
             idx => actorVisibility.WasHiddenByUs(idx));
-        // v0.7.360: the hide sweep must stand down during gpose — it was hiding the player's gpose COPY
+        // v0.7.360: the hide sweep must stand down during gpose - it was hiding the player's gpose COPY
         // (different object index than the live local player) and the mount inherited the hide.
         actorVisibility.IsGPosing = () => clientState.IsGPosing;
 
@@ -218,12 +218,12 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                                                 skillSync.PendingActionEpoch, skillSync.PendingActionTarget,
                                                 skillSync.PendingActionTargetCid);
         // The delegate's signature contains a Character*, so CONSTRUCTING it needs unsafe context here (the bridge
-        // method being unsafe isn't sufficient — CS0214 is raised at the conversion site).
+        // method being unsafe isn't sufficient - CS0214 is raised at the conversion site).
         unsafe { stateApply.SkillReplay = SkillReplayBridge; }
 
         // v0.7.339: click-to-dismount on the mount-status HUD icon (_StatusCustom2). The native click fires a dismount
         // ACTION the filter drops behind the firewall; route the click to HMS's local dismount instead. Only acts while
-        // a synthetic session is active AND you're actually mounted — outside a session the native click works normally,
+        // a synthetic session is active AND you're actually mounted - outside a session the native click works normally,
         // so we no-op and let the game handle it.
         mountHudDismount = new MountHudDismountService(addonLifecycle, gameGui, log, () =>
         {
@@ -240,7 +240,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
 
         relay.OnTransformReceived += stateApply.OnTransformReceived;
         stateApply.OnPeerBound = idx => { actorVisibility.RegisterPeer(idx); zoneLoad.UnhidePreservedObject(idx); };   // S327/v0.7.335: show a puppet the moment it binds, clearing BOTH hide systems
-        // S328x: Moniker nameplate integration — capture the local chosen name into outgoing transforms, and apply a
+        // S328x: Moniker nameplate integration - capture the local chosen name into outgoing transforms, and apply a
         // peer's chosen name to their puppet. Both no-op if Moniker isn't installed (MonikerService.Available == false).
         stateCapture.MonikerNameSupplier = () => moniker.GetLocalName();
         stateApply.ApplyMonikerName = (idx, name, hideFc, hideName, redraw) => moniker.ApplyName(idx, name, hideFc, hideName, redraw);
@@ -254,7 +254,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         relay.OnSessionEnded += OnSessionEnded;
         relay.OnDisconnected += OnDisconnected;
         relay.OnError += OnRelayError;
-        relay.OnRateLimited += OnRelayRateLimited;   // v0.7.464: soft throttle — advisory banner, no teardown
+        relay.OnRateLimited += OnRelayRateLimited;   // v0.7.464: soft throttle - advisory banner, no teardown
 
         packetFilter.Initialize();
         sayFilter.Initialize();
@@ -263,7 +263,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         carpet.Initialize();
         afkSuppressor.Initialize();
 
-        // Route status messages (e.g. flight) to chat — same surface as the /hms commands.
+        // Route status messages (e.g. flight) to chat - same surface as the /hms commands.
         noclip.StatusReport = msg => chat.Print(msg);
         carpet.StatusReport = msg => chat.Print(msg);
         zoneLoad.StatusReport = msg => chat.Print(msg);
@@ -274,7 +274,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         stateApply.ApplyMapState = td =>
         {
             // Store the host's state always (so it applies when this peer's map finishes loading), but only touch the
-            // live environment if a map is actually loaded here — never in the open world. Weather/time/BGM applied;
+            // live environment if a map is actually loaded here - never in the open world. Weather/time/BGM applied;
             // NPC-removal is still a held flag (despawn functionality pending).
             mapSettings.WeatherId = td.MapWeatherId;
             mapSettings.TimeForced = td.MapTimeForced;
@@ -286,24 +286,24 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             mapSettings.MarkStateSet();
             if (zoneLoad.IsZoneLoaded)
             {
-                // v0.7.475 — MIRROR VERBATIM, INCLUDING 0. The v0.7.429 version substituted the zone's native
+                // v0.7.475 - MIRROR VERBATIM, INCLUDING 0. The v0.7.429 version substituted the zone's native
                 // default whenever the host sent 0, on the reasoning that 0 renders an invalid "void" sky. That
                 // reasoning was right about the render and wrong about the intent: the invalid void IS the
                 // feature ("None - Atmospheric", the cinematic blank), and it is also where most debug weathers
                 // legitimately land. Since the host now ships the sky it is actually rendering (PushMapState
-                // reads live EnvManager), there is nothing here left to resolve — re-deriving would reintroduce
+                // reads live EnvManager), there is nothing here left to resolve - re-deriving would reintroduce
                 // exactly the host/peer divergence both guards were written to prevent.
                 mapSettings.ApplyWeather(td.MapWeatherId);   // idempotent write, safe to repeat; 0 is meaningful
                 // Single time path: freeze at the host's time when held, release to the real clock when not.
                 if (td.MapTimeForced) mapSettings.ApplyTime(td.MapEorzeaHour, td.MapEorzeaMinute);
                 else mapSettings.DisableTimeOverride();
-                // SINGLE-AUTHORITY BGM: the host broadcasts a RESOLVED concrete id (never 0). Mirror it VERBATIM — no
+                // SINGLE-AUTHORITY BGM: the host broadcasts a RESOLVED concrete id (never 0). Mirror it VERBATIM - no
                 // peer-side GetDefaultBgm/live-read (that independent resolution caused the host#3/peer-Silence drift).
                 // Only (re)play on change so rapid epoch bumps (a time drag) don't restart the track.
                 if (td.MapBgmId != 0 && td.MapBgmId != lastAppliedPeerBgm)
                     mapSettings.PlayBgm(td.MapBgmId);
                 lastAppliedPeerBgm = td.MapBgmId;
-                // S328aa: NPC scene-cleanup — engage the host's chosen NPC modes locally (despawn all / hide quest signs).
+                // S328aa: NPC scene-cleanup - engage the host's chosen NPC modes locally (despawn all / hide quest signs).
                 // The service is a persistent watch (NPCs stream in by proximity), started when either mode is on and
                 // stopped when both are off. Same host-authoritative broadcast + late-join replay as the rest of map-state.
                 DriveNpcVisibility(td.MapRemoveNpcs, td.MapHideQuestSigns);
@@ -315,9 +315,9 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // to our async (deferred-restore) revert.
         zoneLoad.OnHomeRestoreComplete = () =>
         {
-            // v0.7.419 — POSTURE SANITISE AFTER SETTLE. Force-clear any posture the reload
+            // v0.7.419 - POSTURE SANITISE AFTER SETTLE. Force-clear any posture the reload
             // rebuilt from the client's internal cache.
-            // v0.7.449 — only evict the base lane (idle stomp) when the ORIGIN was a genuine seated/emote
+            // v0.7.449 - only evict the base lane (idle stomp) when the ORIGIN was a genuine seated/emote
             // posture (the cache-rebuild case that needs it). If the origin was merely STANDING (e.g. a
             // folded-arms cpose), the forced clear still resets mode/emote/draw-offset but SKIPS the idle
             // stomp that would otherwise flicker the cpose off-and-on for one cycle on exit.
@@ -331,13 +331,13 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 chat.Print("[HMSync] Packet filter OFF.");
             }
 
-            // v0.7.419 — SERVER-ACKNOWLEDGED STANDUP. The filter prevented us from telling the
+            // v0.7.419 - SERVER-ACKNOWLEDGED STANDUP. The filter prevented us from telling the
             // server we stood up. After the filter drops, re-enter the origin posture and execute
             // the sit toggle so the server processes the mode transition. See ServerAckStandup().
             if (originWasPosture)
                 ServerAckStandup();
 
-            // v0.7.419 — re-clear peers after the reload rebuilt them from cached HMS state.
+            // v0.7.419 - re-clear peers after the reload rebuilt them from cached HMS state.
             // Stop() ran before the reload but the reload overwrites it. Do a second pass now
             // that the actors are settled. The server's natural update cadence will repaint
             // peers with their real state once both filters are down.
@@ -358,7 +358,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         noclip.TransitionGuard = () => zoneLoad.IsTransitioning;
         carpet.TransitionGuard = () => zoneLoad.IsTransitioning;
         // S320: carpet is map-specific and must not carry across a zone load (you'd glide flat off the
-        // first staircase on arrival). Turn it OFF + notify on ANY zone change — HMS-driven (/hms load)
+        // first staircase on arrival). Turn it OFF + notify on ANY zone change - HMS-driven (/hms load)
         // or external (normal teleport / zone line). /hms stop|leave is handled in DoLeaveInternal.
         zoneLoad.ZoneWillChange += carpet.Disable;
 
@@ -407,10 +407,10 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             SetDebugMode = v => { config.ShowDebugCommands = v; config.Save(); detector.DebugTrace = v; stateApply.DebugTrace = v; zoneLoad.DebugMode = v; },
             ConnectedRelay = () => relay.IsConnected,                              // S328am: service-picker live indicator
             RelayKeyStatusGet = () => relayHealth.KeyStatus,                       // v0.7.317: key-status dot (grey/green/amber/red)
-            ConfirmRelayKey = () =>                                                // probe /health?k=<key> for the selected service
+            ConfirmRelayKey = () =>                                                // verify the key via the relay's real WS handshake (101 = accepted)
             {
                 var svcs = config.RelayServices; int s = config.SelectedRelayService;
-                if (s >= 0 && s < svcs.Count) _ = relayHealth.CheckKey(svcs[s].Url ?? "", svcs[s].Key ?? "");
+                if (s >= 0 && s < svcs.Count) _ = relayHealth.CheckKey(svcs[s].Key ?? "");
             },
             ResetRelayKeyEdit = () => relayHealth.ResetKeyStatus(),                // re-open editing → clear the status
             RelayLightFn = () => relayHealth.Light,                                // relay reachability traffic-light
@@ -452,15 +452,15 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             RevertSpawnFor = terr => RevertSpawn(terr),
             // v0.7.230: stage-aware. On a swap cutscene stage the user spawn lives in UserStageSpawns keyed by bg
             // (not UserSpawns keyed by the shared donor id), so a plain UserSpawns[terr] check reported "no spawn" and
-            // greyed the reset button even though one was set — and it couldn't be cleared. Check the active stage bg
+            // greyed the reset button even though one was set - and it couldn't be cleared. Check the active stage bg
             // first, then fall back to territory.
             HasUserSpawn = terr =>
                 (zoneLoad.ActiveStageBg != null && config.UserStageSpawns.ContainsKey(zoneLoad.ActiveStageBg))
                 || config.UserSpawns.ContainsKey(terr),
             BgmNowPlaying = () => config.MapBgmId == 0 ? "" : mapSettings.BgmName(config.MapBgmId),
-            // S327g: the SINGLE host time-set path. Silent (no chat) — updates config, applies locally (freeze or
+            // S327g: the SINGLE host time-set path. Silent (no chat) - updates config, applies locally (freeze or
             // release via the Brio hook), and pushes map-state (bumps the epoch) so peers get this exact value on the
-            // next transform. Called on drag (every frame), Freeze, and reset — one path, no spam, no separate mirror.
+            // next transform. Called on drag (every frame), Freeze, and reset - one path, no spam, no separate mirror.
             SetHostTime = (h, m, forced) =>
             {
                 config.MapEorzeaHour = h; config.MapEorzeaMinute = m; config.MapTimeForced = forced;
@@ -483,6 +483,8 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         pluginInterface.UiBuilder.Draw += ui.DrawFaceControlBar;  // dynamic face control tear-off
         pluginInterface.UiBuilder.Draw += ui.DrawMovementBar;      // v0.7.465: movement strip tear-off
         pluginInterface.UiBuilder.Draw += ui.DrawAppearanceBar;    // v0.7.465: appearance strip tear-off
+        pluginInterface.UiBuilder.OpenMainUi += ui.OpenMain;       // installer "Open" button → window on Session tab
+        pluginInterface.UiBuilder.OpenConfigUi += ui.OpenConfig;   // installer "Settings" button → window on Config tab
 
         framework.Update += OnFrameworkUpdate;
 
@@ -492,8 +494,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
 
         commands.AddHandler("/hms", new CommandInfo(OnCommand)
         {
-            HelpMessage =
-                "/hms start | join | load | reload | leave | stop | fly | carpet | emote <id|name> | minion <id|name> | maps | status",
+            HelpMessage = "Open the HMapSync window.",
             ShowInHelp = true,
         });
 
@@ -501,18 +502,18 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         log.Information("[HMSync] Plugin loaded v" + (asmVer != null ? asmVer.ToString(3) : "?"));
 
         // F3: best-effort once-per-session refresh of the packet-inspector opcode-name map from GitHub. Non-blocking;
-        // falls back to the bundled map if GitHub is unreachable. Labels only — cannot affect the firewall.
+        // falls back to the bundled map if GitHub is unreachable. Labels only - cannot affect the firewall.
         opcodeMap.StartRefresh(GetGameVersion());
     }
 
-    // Teleport hold — a one-shot SetPosition gets re-grounded/reverted by the engine each tick (which is why noclip
+    // Teleport hold - a one-shot SetPosition gets re-grounded/reverted by the engine each tick (which is why noclip
     // writes every frame), so we force the target for a few frames to make it stick.
     private System.Numerics.Vector3? teleportHoldTarget;
     private int teleportHoldFrames;
     private int retOriginFrames;   // v0.7.328: post-return re-assert window for restoring peer origin positions
     private System.Collections.Generic.List<(ushort idx, System.Numerics.Vector3 pos)> retPeerOrigins = new();
 
-    // v0.7.419 — origin posture state, captured at engage BEFORE SanitiseLocalPosture clears it.
+    // v0.7.419 - origin posture state, captured at engage BEFORE SanitiseLocalPosture clears it.
     // Used in post-settle to execute a server-acknowledged standup if the server still thinks we're
     // in a posture. The server is the mode authority; the filter prevented us from telling it we stood.
     private CharacterModes originMode;
@@ -544,7 +545,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         npcVisibility.Update();   // S328aa: persistent NPC re-scan (NPCs stream in by proximity like furniture)
 
         // v0.7.352: apply/clear baked collision patches for the active cutscene stage (o1e1 observation deck, etc.).
-        // Idempotent — creates the colliders once when the stage becomes active, drops them when it changes to null or
+        // Idempotent - creates the colliders once when the stage becomes active, drops them when it changes to null or
         // another stage. Only while a session's virtual map is active (patches are a synthetic-scene edit).
         deckFloor.EnsureStagePatches(relay.IsSessionActive ? zoneLoad.ActiveStageBg : null);
 
@@ -559,7 +560,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 foreach (var (idx, pos) in retPeerOrigins) stateApply.WritePeerPosition(idx, pos);
         }
 
-        // v0.7.320: guarantee the furniture de-draw poll is running on EVERY client in a session on a virtual map —
+        // v0.7.320: guarantee the furniture de-draw poll is running on EVERY client in a session on a virtual map -
         // not just whoever's load path armed it. A peer pulled into the host's map (by any path) must de-draw
         // furniture the same as the host; the trigger is role-agnostic, so once the poll is subscribed the peer
         // catches re-streaming furniture whenever it's visible, no matter who approached. Idempotent (no state reset).
@@ -567,9 +568,9 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             zoneLoad.EnsureDeDrawPollRunning();
 
         // Dynamic face control: apply the local player's own gaze so they SEE it while setting it (apply only drives
-        // puppets). Auto-clear on movement (fire-and-forget): set a gaze, then walking/turning releases it — matches
+        // puppets). Auto-clear on movement (fire-and-forget): set a gaze, then walking/turning releases it - matches
         // the RP flow of glancing away then pivoting back. ApplyGazeToLocal is called EVERY frame (not gated on
-        // anyGaze) so that when the last slot clears, its own on/off tracking fires the release — otherwise the head
+        // anyGaze) so that when the last slot clears, its own on/off tracking fires the release - otherwise the head
         // would stick in the last gaze after clearing.
         {
             bool anyGaze = FaceControlState.EyesOn || FaceControlState.BodyOn || FaceControlState.HeadOn;
@@ -579,7 +580,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 var p = lp.Position; float rot = lp.Rotation;
                 if (!faceGazeHasAnchor)
                 {
-                    // First frame this gaze is active: anchor the pose ONCE. Don't re-anchor every frame — otherwise
+                    // First frame this gaze is active: anchor the pose ONCE. Don't re-anchor every frame - otherwise
                     // 'moved' only ever measures one frame's delta, so gradual walking never trips the threshold
                     // (that was the walk-doesn't-clear-but-pivot-does bug). Anchor-at-set makes displacement cumulative.
                     faceGazeAnchorPos = p; faceGazeAnchorRot = rot; faceGazeHasAnchor = true;
@@ -610,7 +611,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
 
         // S248: refresh the Glamourer display badges when the window is open and either Glamourer
         // signalled a state change or we haven't read yet this open-session. Event-driven (no
-        // per-frame IPC) — glamourerBadgesDirty is set by the StateChanged handler and on window open.
+        // per-frame IPC) - glamourerBadgesDirty is set by the StateChanged handler and on window open.
         if (ui.IsOpen && glamourerBadgesDirty)
         {
             glamourerBadgesDirty = false;
@@ -618,7 +619,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         }
 
         // S326h: re-assert host map-state a short while AFTER a load settles. A zone/map load can clobber weather+time
-        // (the load writes its own environment), so setting them before/during the load doesn't stick — we re-apply
+        // (the load writes its own environment), so setting them before/during the load doesn't stick - we re-apply
         // once the load has settled. mapReassertCountdown is armed on load (ArmMapReassert) and on the host only.
         if (mapReassertCountdown > 0)
         {
@@ -644,11 +645,11 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 if (zoneLoad.IsZoneLoaded)
                     stateApply.ForceMapStateReapply();   // re-apply the host's (resolved, concrete) map-state on the next transform
                 else
-                    guestMapReapplyCountdown = 1;         // not loaded yet — check again next frame
+                    guestMapReapplyCountdown = 1;         // not loaded yet - check again next frame
             }
         }
 
-        // v0.7.448: AUTO MAP REVEAL, settle-gated. Armed on every HMS load (ArmMapReveal) for host AND guest —
+        // v0.7.448: AUTO MAP REVEAL, settle-gated. Armed on every HMS load (ArmMapReveal) for host AND guest -
         // both load the zone and each reveals its OWN HUD fog locally. Like the guest re-apply above, hold the
         // countdown until the zone is actually loaded AND the agent's CurrentMapId has caught up, so we reveal
         // the RIGHT map (a blind countdown could fire mid-load on the stale/previous map). Purely local; the
@@ -667,26 +668,26 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                         if (agent != null) mapId = agent->CurrentMapId;
                     }
                     if (mapId != 0) AutoRevealMap(mapId);
-                    else mapRevealCountdown = 1;   // agent not ready — check again next frame
+                    else mapRevealCountdown = 1;   // agent not ready - check again next frame
                 }
                 else
                 {
-                    mapRevealCountdown = 1;        // zone not loaded yet — hold
+                    mapRevealCountdown = 1;        // zone not loaded yet - hold
                 }
             }
         }
 
         // S327j: the old per-frame time-override lifecycle block was REMOVED here. It was the mystery disabler: it
         // gated "want time held" on `relay.IsHost`, so on a PEER (IsHost=false) it hit the else-branch and called
-        // DisableTimeOverride() EVERY FRAME — unfreezing the clock ~1 frame after ApplyMapState froze it (the two
+        // DisableTimeOverride() EVERY FRAME - unfreezing the clock ~1 frame after ApplyMapState froze it (the two
         // fought at frame cadence; the real clock won). It also fought the host's own SetHostTime path. Time is now
         // driven entirely by: host UI → SetHostTime (apply + push epoch) and peer → ApplyMapState (freeze if
-        // MapTimeForced, else release). No per-frame re-assertion is needed — the Brio hook HOLDS once set, and
+        // MapTimeForced, else release). No per-frame re-assertion is needed - the Brio hook HOLDS once set, and
         // Reassert() re-applies after a map load. A single writer per client, no races.
 
         // S326h: PACKET-FILTER SAFETY WATCHDOG. The filter is what keeps the server seeing us idle while we're on a
         // virtual map broadcasting movement. If it drops UNEXPECTEDLY (hook failure, exception, external toggle) while
-        // a map is loaded, we are exposed — the server sees real movement on a map we shouldn't be roaming. Previously
+        // a map is loaded, we are exposed - the server sees real movement on a map we shouldn't be roaming. Previously
         // nothing reacted; the status dot just went red and relied on the host noticing. This makes it automatic and
         // immediate: an unexpected drop while loaded → full safe teardown (which returns us to origin + ends the
         // session, via the same idempotent DoLeaveInternal used on hard disconnect). We only trip when the filter was
@@ -696,7 +697,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         if (relay.IsSessionActive && zoneLoad.IsZoneLoaded && !packetFilter.IsActive && !filterDropHandled)
         {
             filterDropHandled = true;
-            log.Warning("[HMSync] Packet filter dropped while a virtual map was loaded — emergency return to origin + session end.");
+            log.Warning("[HMSync] Packet filter dropped while a virtual map was loaded - emergency return to origin + session end.");
             chat.PrintError("[HMSync] Lost protection on a virtual map. Returning you to safety and ending the session.");
             DoLeaveInternal(silent: true);
         }
@@ -710,7 +711,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     // S326: arm the post-load map-state re-assert (~2.5s at 60fps, comfortably after the furniture de-draw settle so
     // the environment has finished loading). Called after a successful load/host-load.
     private int mapReassertCountdown;    private int guestMapReapplyCountdown;   // S327j: after a guest zone-load, force map-state (held time) re-apply
-    private uint lastAppliedPeerBgm;   // S327g: guest-side last-applied BGM id (idempotent apply — don't restart music every epoch bump)
+    private uint lastAppliedPeerBgm;   // S327g: guest-side last-applied BGM id (idempotent apply - don't restart music every epoch bump)
     private bool filterDropHandled;   // S326h: latch so the packet-filter-drop emergency return fires once
     private void ArmMapReassert() => mapReassertCountdown = 150;
 
@@ -722,7 +723,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     // S328aa: engage/disengage the NPC scene-cleanup service from the two host modes. Start when either mode is on,
     // stop (restoring every NPC) when both are off, and push mode changes through live. Called from the map-state apply
     // (peers + host) and from Reassert (host/solo local engage) so despawn/quest-sign-hide behaves exactly like the
-    // rest of the map-state backbone — host-authoritative, broadcast, late-join-replayed, solo-compatible.
+    // rest of the map-state backbone - host-authoritative, broadcast, late-join-replayed, solo-compatible.
     private void DriveNpcVisibility(bool despawn, bool hideQuestSigns)
     {
         if (despawn || hideQuestSigns)
@@ -779,7 +780,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         var arg = parts.Length > 1 ? parts[1].Trim() : null;
 
         // ── Default-deny session gate ──
-        // Inverts the old per-handler whitelist (which failed OPEN — most commands fired with no
+        // Inverts the old per-handler whitelist (which failed OPEN - most commands fired with no
         // session check). Only these commands are allowed when NOT in a session: the ones that
         // START/ENTER a session, and pure-UI commands that touch no game state. EVERYTHING ELSE
         // returns "not in session". This is fail-closed: a new command is gated by default unless
@@ -793,20 +794,20 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 case "starts":
                 case "join":
                 case "maps":
-                case "load":       // v0.7.363: allowed out of session — it routes through DoQuickLoad, which starts a
+                case "load":       // v0.7.363: allowed out of session - it routes through DoQuickLoad, which starts a
                                    // solo session first (exactly what clicking a zone/recent chip has always done).
                                    // The command was the odd one out; the UI never required /hms start first.
                 case "status":
-                case "visor":      // S320: harmless cosmetic toggles (Glamourer-equivalent) — no session needed
+                case "visor":      // S320: harmless cosmetic toggles (Glamourer-equivalent) - no session needed
                 case "displayhead":
                 case "displayarms":
                 case "emote":      // S322: client-side self-emote (also useful solo for previewing/testing IDs)
                 case "minion":     // S322: client-side self-minion (unlocked summonable solo; locked gated in DoMinion)
                 case "accessory":  // S322k: client-side self-ornament (fashion accessory; locked gated in DoAccessory)
-                case "senddiag":   // v0.7.418: outbound observer — must run OUT of session (that is the window under test)
-                case "pktcap":     // S327: packet inspector capture — a diagnostic; useful out of session (passes packets through when not filtering)
-                case "firecut":    // P1 cutscene probe — arms capture; must run in an inn (out of session)
-                case "cutstop":    // P1 safety escape — must work anywhere
+                case "senddiag":   // v0.7.418: outbound observer - must run OUT of session (that is the window under test)
+                case "pktcap":     // S327: packet inspector capture - a diagnostic; useful out of session (passes packets through when not filtering)
+                case "firecut":    // P1 cutscene probe - arms capture; must run in an inn (out of session)
+                case "cutstop":    // P1 safety escape - must work anywhere
                     break; // allowed outside a session
                 default:
                     chat.Print("[HMSync] Not in a session. Use /hms start or /hms join <code> first.");
@@ -817,7 +818,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // ── Debug-command gate (S328ad) ──
         // Developer/troubleshooting commands are hidden behind ShowDebugCommands so the user surface stays clean.
         // With debug off they report the requirement instead of running. This is the single place the whole debug
-        // class is gated (no per-handler checks) — add a new debug command by listing it here.
+        // class is gated (no per-handler checks) - add a new debug command by listing it here.
         switch (sub)
         {
 
@@ -867,11 +868,11 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             {
                 if (arg == null) { chat.Print("[HMSync] Usage: /hms load <territory ID | zone name | cutscene name/tag>"); return; }
                 // v0.7.363: use DoQuickLoad (solo-if-idle → load), the same path the zone chips and recent-map chips
-                // take. The command used to call DoLoad directly, which refuses when idle ("Not in a session") — an
+                // take. The command used to call DoLoad directly, which refuses when idle ("Not in a session") - an
                 // inconsistency, not a safeguard: clicking a chip from idle has always started solo automatically.
                 if (uint.TryParse(arg, out var zoneId)) { DoQuickLoad(zoneId); break; }
                 // v0.7.362: cutscene stages resolve in TWO passes around the zone lookup, deliberately:
-                //   (a) an exact TAG match ("o1e1") wins outright — tags never collide with place names;
+                //   (a) an exact TAG match ("o1e1") wins outright - tags never collide with place names;
                 //   (b) zones are tried next, so real place names win. Several stage names ARE real zone names
                 //       ("Limsa Lominsa", "Kholusia", "Baelsar's Wall", "The Burn"), and someone typing those means
                 //       the zone, not the cutscene;
@@ -914,7 +915,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 DoToggleNoclip(); break;
             case "carpet":
                 if (!carpet.On && !MovementResearchAllowed()) { chat.Print("[HMSync] Carpet is only available on a loaded map or cutscene (or research mode)."); break; }
-                carpet.Toggle(); break;   // S315: ground-carpet — walk on unwired surfaces
+                carpet.Toggle(); break;   // S315: ground-carpet - walk on unwired surfaces
             case "emote": DoEmote(arg); break;        // S322: play + sync an emote (locked ones gated to in-session)
             case "minion": DoMinion(arg); break;      // S322: summon + sync a minion (locked ones gated to in-session)
             case "accessory": DoAccessory(arg); break; // S322k: equip + sync a fashion accessory (ornament)
@@ -936,7 +937,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                     zoneLoad.ResearchMode = !zoneLoad.ResearchMode;
                     LocalStateDetector.Verbose = zoneLoad.ResearchMode; // S304: gate pose/cpose/mode traces too
                     chat.Print("[HMSync] Research mode " + (zoneLoad.ResearchMode ? "ON" : "OFF") +
-                        " — director setup " + (zoneLoad.ResearchMode ? "ENABLED (Duty-Info HUD will show on next load)" : "disabled (clean load)") +
+                        " - director setup " + (zoneLoad.ResearchMode ? "ENABLED (Duty-Info HUD will show on next load)" : "disabled (clean load)") +
                         ". Applies on the next /hms load.");
                 }
                 break;
@@ -949,7 +950,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             case "senddiag":
                 // v0.7.418: OUTBOUND packet observer. Logs every opcode the client emits, with
                 // PASS/SUPPRESS, and installs the send hook in pass-through so it works with NO session
-                // running — which is the window the exit-freeze needs (does the client resume sending
+                // running - which is the window the exit-freeze needs (does the client resume sending
                 // movement after teardown, or stay silent?).
                 // Safe to leave on: OnSendPacket returns Original unconditionally while !IsActive.
                 {
@@ -957,17 +958,17 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                     if (packetFilter.SendDiag) packetFilter.EnableCaptureOnly();
                     else if (!packetFilter.CaptureInbound) packetFilter.DisableCaptureOnly();
                     chat.Print("[HMSync] Outbound packet diagnostic " + (packetFilter.SendDiag ? "ON" : "OFF") +
-                        " — watch [SEND-DIAG] in /xllog. Nothing is filtered while out of session.");
+                        " - watch [SEND-DIAG] in /xllog. Nothing is filtered while out of session.");
                 }
                 break;
             case "pktcap": DoPktCap(arg); break;
             case "mapdiag": DoMapDiag(); break;   // S328ab: map-reveal investigation (logs AgentMap + discovery state)
-            case "mapreveal": DoMapReveal(); break;   // v0.7.447: TEST — snapshot + reveal the current map's discovery table (research mode)
-            case "maprestore": DoMapRestore(); break; // v0.7.447: TEST — write the snapshot back (undo mapreveal)
+            case "mapreveal": DoMapReveal(); break;   // v0.7.447: TEST - snapshot + reveal the current map's discovery table (research mode)
+            case "maprestore": DoMapRestore(); break; // v0.7.447: TEST - write the snapshot back (undo mapreveal)
             case "netdiag": DoNetDiag(arg); break;   // S328ag: relay bandwidth diag (live rates + reset)
             case "mounthud":
                 // v0.7.339 probe: force a mount-HUD attach attempt + dump the addon/node state, so we can see whether
-                // _StatusCustom2 is found, whether the node exists, and whether AddEvent takes — independent of the
+                // _StatusCustom2 is found, whether the node exists, and whether AddEvent takes - independent of the
                 // lifecycle listener timing. Run it WHILE MOUNTED.
                 mountHudDismount.DebugProbe();
                 break;
@@ -979,27 +980,27 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 break;
             case "roaddump":
                 // v0.7.353b probe (/hms roaddump [term]): list every BgPart whose path contains term (default flo01) with
-                // real path/pos/collider-type — to fix the road-clone source match (which found nothing).
+                // real path/pos/collider-type - to fix the road-clone source match (which found nothing).
                 zoneLoad.DumpRoads1345(arg ?? "");
                 break;
             case "weatherdiag":
                 // v0.7.473: dump the weather picker's inputs for the loaded zone. Read /xllog for [WXDIAG].
                 mapSettings.DumpWeatherDiag(zoneLoad.CurrentLoadedZone);
-                chat.Print("[HMSync] Weather diagnostic written to /xllog — look for [WXDIAG]. Also reports config.MapWeatherId=" + config.MapWeatherId + ".");
+                chat.Print("[HMSync] Weather diagnostic written to /xllog - look for [WXDIAG]. Also reports config.MapWeatherId=" + config.MapWeatherId + ".");
                 break;
             case "linevfx":
             {
                 // v0.7.466 (/hms linevfx [scan|gfx|one|off|destroy|on]): boss-barrier LINE suppression, type 59.
-                // DIAGNOSTIC-FIRST — run with no argument and read /xllog before mutating anything. The scan says
+                // DIAGNOSTIC-FIRST - run with no argument and read /xllog before mutating anything. The scan says
                 // which of the three mechanisms is usable; `one` exists so the first SetActive costs one call.
-                // NB: named lvSub, not sub — `sub` is the outer dispatcher's subcommand local (line ~772) and
+                // NB: named lvSub, not sub - `sub` is the outer dispatcher's subcommand local (line ~772) and
                 // C# forbids shadowing it here (CS0136).
                 string lvSub = (arg ?? "scan").Trim().ToLowerInvariant();
                 switch (lvSub)
                 {
                     case "scan":
                         zoneLoad.DumpLineVfx();
-                        chat.Print("[HMSync] LineVFX scan written to /xllog — look for [LINEVFX]. Read the last line: it names the mechanism to use.");
+                        chat.Print("[HMSync] LineVFX scan written to /xllog - look for [LINEVFX]. Read the last line: it names the mechanism to use.");
                         break;
                     case "gfx":
                         chat.Print("[HMSync] LineVFX: hid graphics leaf on " + zoneLoad.SuppressLineVfx("gfx", 0) + " instance(s).");
@@ -1014,24 +1015,24 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                     case "auto":
                         zoneLoad.SetLineVfxAuto(!zoneLoad.LineVfxAuto);
                         chat.Print("[HMSync] LineVFX auto-cadence " + (zoneLoad.LineVfxAuto ? "ON" : "OFF")
-                            + (zoneLoad.LineVfxAuto ? " — lines are re-suppressed every frame as they re-stream." : " — lines will return on movement."));
+                            + (zoneLoad.LineVfxAuto ? " - lines are re-suppressed every frame as they re-stream." : " - lines will return on movement."));
                         break;
                     case "off":
                         chat.Print("[HMSync] LineVFX: SetActive(false) on " + zoneLoad.SuppressLineVfx("setactive", 0) + " instance(s).");
                         break;
                     case "destroy":
                         chat.Print("[HMSync] LineVFX: DestroyPrimary on " + zoneLoad.SuppressLineVfx("destroy", 0)
-                            + " instance(s) — NOT reversible without a re-stream.");
+                            + " instance(s) - NOT reversible without a re-stream.");
                         break;
                     case "on":
-                        // Disable the cadence BEFORE restoring — otherwise the very next frame re-destroys
+                        // Disable the cadence BEFORE restoring - otherwise the very next frame re-destroys
                         // everything we just restored and the command silently appears to do nothing.
                         zoneLoad.SetLineVfxAuto(false);
                         chat.Print("[HMSync] LineVFX: auto-cadence OFF; restored " + zoneLoad.RestoreLineVfx()
                             + " instance(s) (a destroyed primary returns on re-stream, i.e. when you move).");
                         break;
                     default:
-                        chat.Print("[HMSync] /hms linevfx [scan|near|gfx|off|destroy|on|auto] — auto-cadence is ON by default.");
+                        chat.Print("[HMSync] /hms linevfx [scan|near|gfx|off|destroy|on|auto] - auto-cadence is ON by default.");
                         break;
                 }
                 break;
@@ -1044,17 +1045,17 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 zoneLoad.DumpVfxPaths(arg ?? "");
                 chat.Print("[HMSync] VFX dump written to /xllog - look for [VFXDUMP]. MATCH = a current pattern hits it.");
                 break;
-            // v0.7.456: /hms gposemount (the gpose mount-flicker diagnostic probe) REMOVED — a spent v0.7.357
+            // v0.7.456: /hms gposemount (the gpose mount-flicker diagnostic probe) REMOVED - a spent v0.7.357
             // investigation tool (its finding is recorded in GPoseMountDrawService). The probe object, per-tick
             // Update, and wiring are gone; the null-safe GPoseProbe?.NoteClear stubs in StateApplyService become
-            // permanent no-ops (left in place — they're ?.-guarded and woven into working mount-clear paths; a
+            // permanent no-ops (left in place - they're ?.-guarded and woven into working mount-clear paths; a
             // later deep-clean can strip them). Not user-facing; pure dev scaffolding.
-            // v0.7.456: /hms deckfloor (the manual place-and-see collision-patch authoring tool) REMOVED — it was
+            // v0.7.456: /hms deckfloor (the manual place-and-see collision-patch authoring tool) REMOVED - it was
             // a one-off used to dial in the o1e1 ship-cabin observation-deck floor, now baked into DeckFloorService
             // (StagePatches) and auto-applied via EnsureStagePatches on stage load. The service + baked patch stay;
             // only the runtime hand-placement command is gone (superseded, and carpet covers the general case).
             case "wiredump":
-                // S331 (Stage 4): arm the binary-frame decoder — capture the next N frames (sent+received) and
+                // S331 (Stage 4): arm the binary-frame decoder - capture the next N frames (sent+received) and
                 // pretty-print kind + decoded msgpack payload as readable JSON. Buys back the eyeball-ability the JSON
                 // wire gave for free. Default 10 frames. Usage: /hms wiredump [n]
                 {
@@ -1065,7 +1066,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 }
                 break;
             case "lanecensus":
-                // S329a: print the sync-lane census to chat on demand — verifies the anti-orphan guard without
+                // S329a: print the sync-lane census to chat on demand - verifies the anti-orphan guard without
                 // hunting the startup log. Shows the field→lane breakdown, or the error if a field is orphaned.
                 {
                     var err = HMSync.Sync.LaneCensus.Validate();
@@ -1087,7 +1088,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             case "teardownhousing":
                 // CONTINGENCY ONLY (console command, intentionally not in HelpMessage). The normal
                 // furniture lifecycle is fully handled by the deferred de-draw (despawn on load) +
-                // lean revert (respawn on stop) — this nuclear Dtor(1) territory teardown is NOT in
+                // lean revert (respawn on stop) - this nuclear Dtor(1) territory teardown is NOT in
                 // that path and is kept only as a manual fallback if the de-draw ever fails on some
                 // map. Clunky to type by design; do not wire into auto-flow.
                 DoTeardownHousing();
@@ -1099,7 +1100,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 // catches the self-hide in the act. Covers both gpose symptoms in one run.
                 actorVisibility.Diag = !actorVisibility.Diag;
                 chat.Print("[HMSync] gpose diagnostic " + (actorVisibility.Diag ? "ON" : "OFF") +
-                    " — enter gpose, look around, exit. Watch [GPOSEDIAG] in /xllog.");
+                    " - enter gpose, look around, exit. Watch [GPOSEDIAG] in /xllog.");
                 break;
             case "locodiag":
                 locoDiag.Start();
@@ -1133,7 +1134,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 //       the mount natively (you see yourself mounted, the self-illusion).
                 //   (2) Peer-view: the sender broadcasts your MountId + PLAIN ON-FOOT locomotion (iter 1:
                 //       moveMode forced to Ground even while mounted), so every peer applies your mount to
-                //       your puppet and drives it through the PROVEN testmount path — native mounted
+                //       your puppet and drives it through the PROVEN testmount path - native mounted
                 //       animation, all restrictions/speed limits respected, skate-free, with the free
                 //       native dismount/dismiss animation.
                 // They run async and reconcile visually because everyone sees the same world. "/hms mount 0"
@@ -1236,7 +1237,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         if (localPlayer == null) { chat.Print("[HMSync] No local player."); return; }
 
         // Guard: if the heartbeat sig didn't resolve (a patch broke the signature), starting a session would suppress
-        // the heartbeat too and disconnect you. Fail loudly here instead. (The one opcode/sig failure mode — §14.)
+        // the heartbeat too and disconnect you. Fail loudly here instead. (The one opcode/sig failure mode - §14.)
         if (!packetFilter.HeartbeatResolved)
         {
             chat.Print("[HMSync] Cannot start: a game patch changed the heartbeat signature.");
@@ -1252,8 +1253,8 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         DoStartAsync(password, LocalContentId(), localPlayer.EntityId, localPlayer.Name.TextValue);
     }
 
-    // S328f — SOLO SESSION. Runs the full map-authoring feature set (zone load, time/weather/BGM, NPC, cosmetics,
-    // movement, packet filter) with NO relay and no peers — the same client-side loop Hyperborea does. It's the
+    // S328f - SOLO SESSION. Runs the full map-authoring feature set (zone load, time/weather/BGM, NPC, cosmetics,
+    // movement, packet filter) with NO relay and no peers - the same client-side loop Hyperborea does. It's the
     // DoStartAsync engage sequence MINUS relay.Connect, with SoloMode set so HasMapAuthority/IsSessionActive are true.
     // The peer apply loop, roster, and all transmit are naturally inert without a connection (transmit gates on
     // IsConnected; the apply loop has no peers). Teardown reuses DoLeaveInternal verbatim (relay-independent).
@@ -1267,7 +1268,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         var localPlayer = objectTable.LocalPlayer;
         if (localPlayer == null) { chat.Print("[HMSync] No local player."); return; }
 
-        // Same heartbeat guard as a networked session — solo still engages the packet filter, so a broken heartbeat sig
+        // Same heartbeat guard as a networked session - solo still engages the packet filter, so a broken heartbeat sig
         // would disconnect. Fail loudly instead. (§14.)
         if (!packetFilter.HeartbeatResolved)
         {
@@ -1277,7 +1278,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         }
 
         // Solo lobby: set the flag so HasMapAuthority/IsSessionActive are true, but DON'T engage the synthetic
-        // session yet — that fires on zone-load (EngageSyntheticSession in DoLoad), same as a hosted session. Until
+        // session yet - that fires on zone-load (EngageSyntheticSession in DoLoad), same as a hosted session. Until
         // then you're a normal player.
         relay.SoloMode = true;
 
@@ -1285,7 +1286,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         chat.Print("[HMSync] Solo session ready. Load a map to start the scene. /hms stop to end.");
     }
 
-    // S328p — say-passthrough pre-flight, run at every session start. Checks the game version against the stamp the
+    // S328p - say-passthrough pre-flight, run at every session start. Checks the game version against the stamp the
     // opcodes were confirmed on; if the game has patched since, the opcodes are UNVERIFIED → the passthrough stays
     // shut and the user is prompted to re-learn (fail-closed on patch). Otherwise loads the configured opcodes and
     // arms the passthrough. Wires the drift handler so a mid-session rotation (validator failures) also shuts it.
@@ -1306,7 +1307,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
 
         string gameVersion = GetGameVersion();
         // F1: only run the patch-detection when we could actually READ the live version. An empty read (CS not ready /
-        // exception) is NOT evidence of a patch — comparing "" against a real stamp would falsely trip the drift branch
+        // exception) is NOT evidence of a patch - comparing "" against a real stamp would falsely trip the drift branch
         // and shut a perfectly-good passthrough. Skip the check and leave the current verified state untouched.
         if (string.IsNullOrEmpty(gameVersion))
         {
@@ -1334,7 +1335,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             return false;   // stay shut until re-learned
         }
 
-        // v0.7.462 (P2): belt-and-suspenders — never arm with an EMPTY version stamp. A stamp is only written
+        // v0.7.462 (P2): belt-and-suspenders - never arm with an EMPTY version stamp. A stamp is only written
         // by Re-learn (which captures live opcodes for the running version). Empty means "never learned on any
         // known version", so even if Verified somehow reads true, the opcodes aren't trustworthy for THIS game
         // version. Fail closed. (The default is now unverified, so this is a second guard, not the primary one.)
@@ -1344,7 +1345,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             packetFilter.PassSayChatOut = false;
             config.SayOpcodesVerified = false;
             config.Save();
-            // F4: this branch means Verified read true but there's no version stamp — the opcodes were never captured
+            // F4: this branch means Verified read true but there's no version stamp - the opcodes were never captured
             // for any known version. Log it (rare, but otherwise invisible) instead of shutting silently.
             log.Warning("[HMSync] /say passthrough stays off: opcodes were marked verified but carry no game-version " +
                 "stamp, so they can't be trusted for this version. Re-learn them to enable it.");
@@ -1365,7 +1366,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
 
     // S327f: clear all targets before the packet filter engages on session start. A queued/hard/focus target on an
     // INTERACTABLE (e.g. a door) can start an interaction whose server response the filter then DROPS, leaving the
-    // character "occupied"-locked (only alt-F4 recovers — even logout shows "you're occupied"). Nulling the target
+    // character "occupied"-locked (only alt-F4 recovers - even logout shows "you're occupied"). Nulling the target
     // pointers means no interactable is queued, so nothing can get stuck. Safe: just clears selection state.
     private unsafe void ClearTargetsOnStart()
     {
@@ -1400,7 +1401,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             var ok = await relay.Connect(config.RelayUrl, "", createIfMissing: true, password: password, nearbyContentIds: null, contentId, entityId, charName);
             RunOnMainThread(() =>
             {
-                // Success ("Lobby open") now waits for the relay's RoomJoined (see OnRoomJoined) — connect-ok only
+                // Success ("Lobby open") now waits for the relay's RoomJoined (see OnRoomJoined) - connect-ok only
                 // means the socket opened and JoinRoom was sent; a refusal (e.g. AlreadyHosting) still arrives after.
                 if (!ok) chat.Print("[HMSync] Failed to connect to relay.");
             });
@@ -1436,9 +1437,9 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     {
         try
         {
-            // Join: the relay resolves WHICH room from the ContentIds we can see (the presence gate) + the password —
+            // Join: the relay resolves WHICH room from the ContentIds we can see (the presence gate) + the password -
             // no target, no picker. Send everyone visible; the relay disambiguates multiple candidate rooms by the
-            // password. If nobody's visible there's no one to resolve against — say so before connecting.
+            // password. If nobody's visible there's no one to resolve against - say so before connecting.
             var nearby = EnumerateNearbyContentIds();
             if (nearby.Length == 0)
             {
@@ -1457,8 +1458,8 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     }
 
     // The ContentIds of every player character currently in our object table (visual range), sent on Join so the relay
-    // can resolve which room we mean by intersecting with live session members — the presence gate. ContentId is read
-    // natively (same as LocalContentId); our own is excluded. Everyone visible is included — the relay disambiguates
+    // can resolve which room we mean by intersecting with live session members - the presence gate. ContentId is read
+    // natively (same as LocalContentId); our own is excluded. Everyone visible is included - the relay disambiguates
     // multiple candidate rooms by password, so we don't filter to one group.
     private unsafe ulong[] EnumerateNearbyContentIds()
     {
@@ -1478,9 +1479,9 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     }
 
     // Quick-load from the Recent list: if idle, silently start a solo lobby first (so there's map authority), then
-    // load; if already in a session, just load. The load itself goes synthetic (EngageSyntheticSession in DoLoad) —
+    // load; if already in a session, just load. The load itself goes synthetic (EngageSyntheticSession in DoLoad) -
     // the filter comes up before the zone changes, so nothing is exposed.
-    // COSM_1_016: bridge for StateApplyService.SkillReplay — an unsafe method (not a lambda) because the delegate
+    // COSM_1_016: bridge for StateApplyService.SkillReplay - an unsafe method (not a lambda) because the delegate
     // takes a Character*, which can't be an implicitly-typed lambda parameter in this non-unsafe class.
     private unsafe void SkillReplayBridge(FFXIVClientStructs.FFXIV.Client.Game.Character.Character* caster,
         uint actionId, byte actionType, System.Numerics.Vector3 targetPos,
@@ -1493,14 +1494,14 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         if (relay.IsSessionActive) DoLoad(territoryId);
     }
 
-    // Engage the synthetic session — the packet filter plus everything that isolates you from the real server and
+    // Engage the synthetic session - the packet filter plus everything that isolates you from the real server and
     // drives peers as puppets. This is phase two: it fires on ZONE-LOAD (host DoLoad, guest OnZoneLoadReceived), NOT
     // on host/join/solo start, so the lobby stays a normal-player gather where friends are real characters and Mare
-    // can cache them. Idempotent — a second zone-load while already synthetic no-ops. Returns false (aborting the
+    // can cache them. Idempotent - a second zone-load while already synthetic no-ops. Returns false (aborting the
     // load) if the heartbeat signature is unresolved, so the filter can never fail to come up while the zone changes.
     private unsafe bool EngageSyntheticSession()
     {
-        if (packetFilter.IsActive) return true;   // already synthetic — don't re-engage on a subsequent load
+        if (packetFilter.IsActive) return true;   // already synthetic - don't re-engage on a subsequent load
         // v0.7.461 (P1, Codex QA): gate on CanEnable (all critical hooks created AND heartbeat resolved), not just
         // HeartbeatResolved. A patch that broke only the send-packet sig would pass the old heartbeat-only check and
         // engage the session with outbound traffic UNFILTERED to the live server. CanEnable closes that exposure.
@@ -1516,9 +1517,9 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         PrepareSayPassthrough();   // S328p: version-check + configure opcodes + arm (fail-closed if unverified/patched)
         stateCapture.Start();
         stateApply.Start();
-        detector.Reset();   // baselines from the LIVE actor (v0.7.413) — must precede the stand-up below
+        detector.Reset();   // baselines from the LIVE actor (v0.7.413) - must precede the stand-up below
 
-        // v0.7.419 — capture the origin posture BEFORE SanitiseLocalPosture clears it. If the player
+        // v0.7.419 - capture the origin posture BEFORE SanitiseLocalPosture clears it. If the player
         // entered seated, the server still thinks they're in InPositionLoop for the whole session. On
         // exit, we need to tell the server via a native standup emote. Capture here; act in post-settle.
         // v0.7.420: also capture the emote ID for origin restore (50=chair-sit, 52=ground-sit, 203=lean).
@@ -1545,15 +1546,15 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         actorVisibility.Start();
         // Bridge peers that bound during the LOBBY (before actorVisibility was running) into its visible set.
         // actorVisibility.Start() hides all non-self players, and the OnPeerBound→RegisterPeer path only fires for
-        // peers that bind via the apply loop (which wasn't running in the lobby) — so without this the co-located
+        // peers that bind via the apply loop (which wasn't running in the lobby) - so without this the co-located
         // peers stay hidden after we go synthetic. The apply loop re-registers them on their next transform (idempotent).
         foreach (var idx in stateApply.GetPeerObjectIndices())
             actorVisibility.RegisterPeer(idx);
-        // (v0.7.261: dropped the "Private session active" line — redundant with "Solo/Lobby ready" + the zone-load line.)
+        // (v0.7.261: dropped the "Private session active" line - redundant with "Solo/Lobby ready" + the zone-load line.)
         return true;
     }
 
-    // v0.7.348: extract the short stage tag from a cutscene bg path — "ffxiv/ocn_o1/evt/o1e1/level/o1e1" → "o1e1"
+    // v0.7.348: extract the short stage tag from a cutscene bg path - "ffxiv/ocn_o1/evt/o1e1/level/o1e1" → "o1e1"
     // (the last '/'-segment). Used to label a cutscene load by its stage tag instead of the donor territory id.
     private static string StageTagFromBg(string bg)
     {
@@ -1568,7 +1569,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         if (!relay.HasMapAuthority) { chat.Print("[HMSync] Only the host can load zones."); return; }
         if (!zoneLoad.IsValidTerritory(territoryId)) { chat.Print("[HMSync] Invalid territory ID."); return; }
 
-        // Hide NPCs is per-map — clear it on every load so a new map starts with its NPCs shown (flip it back on for
+        // Hide NPCs is per-map - clear it on every load so a new map starts with its NPCs shown (flip it back on for
         // this map if you want them gone). Quest markers are left as-is.
         if (config.MapRemoveNpcs) { config.MapRemoveNpcs = false; config.Save(); DriveNpcVisibility(false, config.MapHideQuestSigns); }
 
@@ -1576,7 +1577,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // a swap; a plain zone load sets neither. So PendingStageBg==null at entry means this is a plain load → clear
         // any stale ActiveStageBg from a prior swap. ActiveStageBg is otherwise PERSISTENT (survives the load) so a
         // later "Set spawn" capture keys by the same bg. When set, spawns key by STAGE BG (unique) instead of the
-        // shared donor territoryId — the fix for the "custom spawn applies to every map" leak.
+        // shared donor territoryId - the fix for the "custom spawn applies to every map" leak.
         if (zoneLoad.PendingStageBg == null)
             zoneLoad.ActiveStageBg = null;
         var stageBg = zoneLoad.ActiveStageBg;
@@ -1623,7 +1624,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         string loadTag = stageBg != null ? StageTagFromBg(stageBg) : territoryId.ToString();
         chat.Print("[HMSync] Loading " + zoneName + " (" + loadTag + ").");
 
-        // Go synthetic BEFORE the zone changes — the filter must be up before we leave the real map, or the server
+        // Go synthetic BEFORE the zone changes - the filter must be up before we leave the real map, or the server
         // sees us at the synthetic coordinates. Idempotent (no-op if already synthetic on a subsequent load); aborts
         // the load if the filter can't engage.
         if (!EngageSyntheticSession()) return;
@@ -1632,18 +1633,18 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         zoneLoad.LoadZone(territoryId, peerIndices, spawn, spawnFacing);
         actorVisibility.Refresh();
         config.PushRecentZone(territoryId);   // legacy list (kept for migration)
-        // v0.7.231: unified recent — a swap cutscene stage records by its bg (stageBg), a plain zone by territoryId.
+        // v0.7.231: unified recent - a swap cutscene stage records by its bg (stageBg), a plain zone by territoryId.
         // This is why "I just visited the Correction Chamber" now shows up in Recent instead of the donor zone.
         config.PushRecentPlace(territoryId, stageBg);
 
         // v0.7.475 (was v0.7.429, supersedes S326u): reset the WEATHER pick per load, exactly like BGM below.
-        // The reset is still right but the REASON changed and the old wording is now false — PushMapState no
+        // The reset is still right but the REASON changed and the old wording is now false - PushMapState no
         // longer resolves a pick, it broadcasts the LIVE sky. Which is what makes the reset safe: on a fresh
         // load the live sky IS the new zone's native weather, so clearing the pick and reading reality agree.
         // (Under the old resolver the justification was "pick if legal, else native"; that ladder is gone.)
         // pick=0 is safe and correct:
         // it means "follow the new zone's own sky". Without this reset, a pick from map A (e.g. Snow) rode
-        // into map B's broadcast; the host legality-gated it locally in Reassert (fell back to native — sunny),
+        // into map B's broadcast; the host legality-gated it locally in Reassert (fell back to native - sunny),
         // but peers mirrored the illegal id verbatim → invalid render → the "peers stuck on none/atmospheric
         // while the host sees sunny skies" desync. Map load resets everyone to the zone default; subsequent
         // host picks sync as before.
@@ -1653,7 +1654,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         ArmMapReassert();   // S326: re-apply host map-state once the load settles (load clobbers weather/time)
         ArmMapReveal();     // v0.7.448: reveal this map's HUD fog once the load settles (local; restored on exit)
 
-        // S327l: reset BGM to the NEW zone's default on load — a pick from the previous map must not carry over (it
+        // S327l: reset BGM to the NEW zone's default on load - a pick from the previous map must not carry over (it
         // would show/play the wrong zone's track). The display reads live, but resetting the stored pick keeps the
         // picker/broadcast honest. lastAppliedPeerBgm reset so guests re-apply cleanly.
         config.MapBgmId = 0;   // 0 = follow the zone's natural/default music (no forced override)
@@ -1676,7 +1677,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         });
 
         ui.SetStatus("Zone: " + zoneName);
-        // Only mention peers when there actually are some (solo sessions have none — "broadcast sent to peers" was a lie).
+        // Only mention peers when there actually are some (solo sessions have none - "broadcast sent to peers" was a lie).
         chat.Print(stateApply.Peers.Count > 0 ? "[HMSync] Loaded. Synced to peers." : "[HMSync] Loaded.");
     }
 
@@ -1704,7 +1705,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
 
     private void DoLeaveInternal(bool silent)
     {
-        // S289: AIRBORNE-STOP FIX. Do NOT revoke flight while still airborne over the foreign zone —
+        // S289: AIRBORNE-STOP FIX. Do NOT revoke flight while still airborne over the foreign zone -
         // the moment IsFlightProhibited flips back to prohibited, the GAME force-relocates the airborne
         // actor to a "valid" position, which over flyable-but-not-walkable space (e.g. the Clyteum)
         // resolves to a point ~1000 yalms out. That was the air-stop-only OOB (ground stop never hit it
@@ -1717,10 +1718,10 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         stateApply.SanitizePeerStates();
         sayFilter.Active = false;            // S328v: chat returns fully to normal once the session ends (stop/leave/crash all route here)
 
-        // S328u — reset the host's per-session map overrides to neutral so nothing (experimental weather especially)
+        // S328u - reset the host's per-session map overrides to neutral so nothing (experimental weather especially)
         // leaks into a LATER session. These are only ever SET by the map* handlers and were never reset, so a value
         // chosen in one session would persist in config and get re-broadcast to the next session's peers even after
-        // the host's live state reset on zone load. Reset regardless of whether it was the weather-bug cause — a
+        // the host's live state reset on zone load. Reset regardless of whether it was the weather-bug cause - a
         // set-but-never-reset value is a latent cross-session leak. Neutral defaults mirror the config initializers.
         config.MapWeatherId = 0;         // 0 = default/atmospheric
         config.MapTimeForced = false;
@@ -1747,19 +1748,19 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         bool announceMovement = noclip.IsActive;
 
         // S292: clear ALL movement state (flight, noclip, flat) BEFORE Revert. The flying mount's
-        // movement controller writes the actor position EVERY frame while flight is active — it was
+        // movement controller writes the actor position EVERY frame while flight is active - it was
         // overwriting our restore SetPosition each tick (drift frozen at 72.4 for 30 frames). Flight
         // MUST be off before the restore poll runs, or the restore can never land. The S289 concern
         // (revoking flight while airborne triggers the game's relocate) is moot here: we reload the zone
         // immediately, and the held packet filter + deferred restore own the landing.
         noclip.Disable();
-        // v0.7.259: no notification on auto-disable — movement modes dropping on leave is expected, not news.
+        // v0.7.259: no notification on auto-disable - movement modes dropping on leave is expected, not news.
 
-        // S320: carpet is a session/map convenience — drop it on stop|leave too (notifies via its own
+        // S320: carpet is a session/map convenience - drop it on stop|leave too (notifies via its own
         // StatusReport; idempotent, so the ZoneWillChange fired by Revert's reload won't double-notify).
         carpet.Disable();
 
-        // v0.7.419 — POSTURE SANITISE ON EXIT. Same pattern as the mount/minion/ornament teardown:
+        // v0.7.419 - POSTURE SANITISE ON EXIT. Same pattern as the mount/minion/ornament teardown:
         // clear any posture the player is in (whether inherited from origin or acquired during the
         // session) so it doesn't leak through Revert. Without this, a chair-sit acquired during HMS
         // persists → actor at origin in InPositionLoop with no furniture anchor → sunk into floor,
@@ -1767,14 +1768,14 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // Covers both InPositionLoop (sit/groundsit/sleep) and EmoteLoop (lean/dance/cheers).
         SanitiseLocalPosture("exit");
 
-        // v0.7.448 — MAP-REVEAL SANITISE ON EXIT. Restore every map we auto-revealed this session to its
-        // recorded original discovery bytes (restore-to-snapshot, never to zero — genuine progress is
+        // v0.7.448 - MAP-REVEAL SANITISE ON EXIT. Restore every map we auto-revealed this session to its
+        // recorded original discovery bytes (restore-to-snapshot, never to zero - genuine progress is
         // preserved), and delete the crash-recovery file. All stop/leave paths funnel here, so a clean exit
         // always sanitises; only a hard crash bypasses it, which the on-load crash-recovery sweep handles.
         SanitiseRevealedMaps();
 
-        // v0.7.419 — release any locked gaze. DriveGazeSlot's release path (LookMode=0) fires in the
-        // per-frame loop, but Stop() killed that loop above — so a Locked gaze that was on at Stop()
+        // v0.7.419 - release any locked gaze. DriveGazeSlot's release path (LookMode=0) fires in the
+        // per-frame loop, but Stop() killed that loop above - so a Locked gaze that was on at Stop()
         // never gets its release call. ClearAll resets the static flags so the next session starts clean
         // and the zone reload's DrawObject rebuild doesn't inherit a stale look-at target.
         FaceControlState.ClearAll();
@@ -1799,10 +1800,10 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         }
     }
 
-    // /hms stop — slash-command ONLY (never wired to the GUI), so it's always a deliberate keystroke. For the HOST
+    // /hms stop - slash-command ONLY (never wired to the GUI), so it's always a deliberate keystroke. For the HOST
     // this now TERMINATES the session for EVERYONE: it emits the SessionEnd control frame (every peer receives it and
     // runs DoLeaveInternal → "Host ended the session"), then tears down locally. For a non-host (or solo) it's just a
-    // leave — same as the GUI button and /hms leave. The GUI's leave/stop button stays DoLeave (you leave, session
+    // leave - same as the GUI button and /hms leave. The GUI's leave/stop button stays DoLeave (you leave, session
     // lives on; if you were host, relay auto-transfers to the next peer). This gives the host a deliberate, explicit
     // "end it for all" lever that a stray button-tap can't trigger.
     private void DoStop()
@@ -1811,7 +1812,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         if (relay.IsConnected && relay.IsHost)
         {
             chat.Print("[HMSync] Ending the session for everyone…");
-            // Send SessionEnd and let it flush BEFORE local teardown — DoLeaveInternal calls Disconnect(), which
+            // Send SessionEnd and let it flush BEFORE local teardown - DoLeaveInternal calls Disconnect(), which
             // closes the socket, so a fire-and-forget SessionEnd could be dropped before peers receive it. Chain the
             // teardown onto the send's completion (back on the main thread). Bounded: SendSessionEnd is best-effort.
             _ = relay.SendSessionEnd().ContinueWith(_ => RunOnMainThread(() => DoLeaveInternal(silent: false)));
@@ -1820,31 +1821,31 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         DoLeaveInternal(silent: false);   // non-host / solo → plain leave (same as the GUI button and /hms leave)
     }
 
-    // Movement modes (fly / noclip / carpet) may only be ENABLED with a zone loaded (except in debug) — flying or
+    // Movement modes (fly / noclip / carpet) may only be ENABLED with a zone loaded (except in debug) - flying or
     // noclipping on an un-loaded real map is the open anti-cheat exposure. Disabling is always allowed. Gated at the
     // command layer so both the /hms commands and the UI pills (which route through it) hit the same gate.
-    // v0.7.262: movement (fly/noclip/carpet) is gated on an ACTIVE SESSION or debug — the packet filter that a session
+    // v0.7.262: movement (fly/noclip/carpet) is gated on an ACTIVE SESSION or debug - the packet filter that a session
     // brings up is what makes movement safe; a merely-loaded zone outside a session is real-server exposure. Previously
     // this was IsZoneLoaded||debug, and because each button re-implemented its own check, the carpet button added in the
     // redesign inherited the weaker zone-loaded gate. Now there's ONE capability gate and every button routes through it.
     private bool MovementEnableAllowed() => relay.IsSessionActive || config.ShowDebugCommands;
 
     // v0.7.445: fly / noclip / carpet are all movement affordances that, on the LIVE real zone, amount
-    // to a teleport-to-target cheat (start any session — solo, host, or joined — and before loading a
+    // to a teleport-to-target cheat (start any session - solo, host, or joined - and before loading a
     // map you're standing on the real world; toggling movement then stopping lands you at the targeted
     // position; carpet is the same, just slower). So all three gate together on whether HMS has actually
     // loaded an environment. IsZoneLoaded is true for a loaded map AND for a cutscene swap stage (both
-    // go through the LoadZone path — a cutscene is an HMS environment via a donor territory), so
+    // go through the LoadZone path - a cutscene is an HMS environment via a donor territory), so
     // cutscenes get movement freely, exactly like a loaded map. When NOT on an HMS environment (i.e. the
     // live zone), movement is allowed only under the second-tier research mode (/hms debug, itself only
-    // reachable with the Config debug checkbox on) — so leaving the checkbox on isn't enough to stumble
+    // reachable with the Config debug checkbox on) - so leaving the checkbox on isn't enough to stumble
     // onto a movement cheat. Replaces the old "in a session OR debug checkbox" gate, which leaked because
     // any session (including solo) satisfied it while still on the live map.
     private bool MovementResearchAllowed() => zoneLoad.IsZoneLoaded || zoneLoad.ResearchMode;
 
     private void DoToggleFly()
     {
-        // v0.7.445: allowed on an HMS-loaded environment (map or cutscene) or under research mode —
+        // v0.7.445: allowed on an HMS-loaded environment (map or cutscene) or under research mode -
         // never on the bare live zone. Mirrors MovementResearchAllowed so command, button, and inner
         // toggle all agree.
         if (!MovementResearchAllowed())
@@ -1871,12 +1872,12 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             chat.Print("[HMSync] Noclip OFF");
     }
 
-    // /hms pktcap [opcodes] — toggle inbound-packet capture. With no arg, toggles logging ALL inbound packets (firehose;
+    // /hms pktcap [opcodes] - toggle inbound-packet capture. With no arg, toggles logging ALL inbound packets (firehose;
     // use in an inn). With a comma-list (e.g. "103,356"), logs ONLY those opcodes. Logs (opcode, timestamp, payload hex)
     // to the plugin log; packets are still dropped (behavior unchanged). Lets us learn what specific opcodes carry.
-    // /hms senddiag — toggle the OUTBOUND opcode diagnostic. Logs every outbound opcode + pass/suppress. Reveals the
+    // /hms senddiag - toggle the OUTBOUND opcode diagnostic. Logs every outbound opcode + pass/suppress. Reveals the
     // /say outbound opcode (ChatHandler?) and confirms whether the sender's chat is being dropped before it leaves.
-    // /hms sayfind <text> — the content-correlation say-opcode finder. The standalone command is retired (S328ad), but
+    // /hms sayfind <text> - the content-correlation say-opcode finder. The standalone command is retired (S328ad), but
     // this method is KEPT because the Config-tab re-learn auto-capture calls it (RelearnSayOpcodes → DoSayFind("RELEARN")).
     private void DoSayFind(string? arg)
     {
@@ -1887,7 +1888,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         {
             // Symmetric re-learn: BOTH opcodes can rotate on a patch, and they're found on different hooks by
             // different observers. Outbound (your submission) is captured when YOU say the marker. Inbound (delivery)
-            // is captured when a CO-LOCATED partner says the marker — your own say is local echo, never inbound.
+            // is captured when a CO-LOCATED partner says the marker - your own say is local echo, never inbound.
             var marker = "HMSRELEARN" + Environment.TickCount % 10000;
             relearnGotOut = false;
             relearnGotIn = false;
@@ -1935,7 +1936,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         chat.Print("[HMSync] Say-finder ARMED for '" + arg.Trim() + "'. Now /say " + arg.Trim() + " (out of session). Watch the log for [SAY-FINDER].");
     }
 
-    // S328q — called after each re-learn capture. When BOTH opcodes are captured, verify + re-arm the passthrough.
+    // S328q - called after each re-learn capture. When BOTH opcodes are captured, verify + re-arm the passthrough.
     // If only one is in so far, report what's still needed (the two captures may arrive seconds apart, or the inbound
     // may need a partner). Verifying on outbound-only is allowed as a partial win, but flagged.
     private void RelearnMaybeFinish()
@@ -1979,16 +1980,16 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         }
     }
 
-    // /hms saydiag — toggle the chat diagnostic. Logs every chat message's kind/sender/text via IChatGui (the display
+    // /hms saydiag - toggle the chat diagnostic. Logs every chat message's kind/sender/text via IChatGui (the display
     // layer), to learn where /say actually arrives and whether the firewall drops it. (S328h: repointed from the wrong
-    // HandleSocialPacket hook — that's the friends-list handler, not chat.)
+    // HandleSocialPacket hook - that's the friends-list handler, not chat.)
     // S328ab: map-reveal investigation. Logs the AgentMap current/selected view + the MapDiscoveryManager persistent
     // discovery state for the current map. Run it (a) standing in a real, visited zone, and (b) inside a synthetic HMS
-    // session on an unvisited map — compare. This reveals whether the big-map "blank+blinking" gate reads the TRANSIENT
-    // agent fields (safe to drive) or the PERSISTENT discovery bitmap (contamination risk — must never write). No writes.
+    // session on an unvisited map - compare. This reveals whether the big-map "blank+blinking" gate reads the TRANSIENT
+    // agent fields (safe to drive) or the PERSISTENT discovery bitmap (contamination risk - must never write). No writes.
     // S328ag: relay bandwidth diagnostic. Shows live in/out rates, session totals, and the per-message-type
     // breakdown so we can see whether transforms dominate (they will). Sub: "/hms netdiag reset" zeroes the counters
-    // to start a clean measurement window. (The old "dirty on|off" A/B toggle was removed at release hardening —
+    // to start a clean measurement window. (The old "dirty on|off" A/B toggle was removed at release hardening -
     // change-detection is always on now.)
     private void DoNetDiag(string? arg)
     {
@@ -2034,7 +2035,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             uint mapId = agent->CurrentMapId;
             log.Information("[HMSync] [MAPDIAG] === MapDiscoveryManager (map " + mapId + ") ===");
             log.Information("[HMSync] [MAPDIAG] IsDiscoveryEnabledForMap(" + mapId + ")=" + disc->IsDiscoveryEnabledForMap(mapId));
-            // Probe the first several region indices — the persistent per-region reveal bits. All-false on an unvisited
+            // Probe the first several region indices - the persistent per-region reveal bits. All-false on an unvisited
             // map; some-true once explored. If the HUD shows the map while these stay false, the gate is TRANSIENT (safe).
             var sb = new System.Text.StringBuilder("[HMSync] [MAPDIAG] IsMapRegionDiscovered region0..15: ");
             for (byte r = 0; r < 16; r++) sb.Append(disc->IsMapRegionDiscovered(mapId, r) ? '1' : '0');
@@ -2045,7 +2046,8 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             // bytes should agree with IsMapRegionDiscovered above (1 where discovered). Layout (from CS):
             //   16-region table: base + 0x000, stride 0x10, DiscoveryIndex-indexed, 16 bytes of bool
             //   32-region table: base + 0xA20, stride 0x20, DiscoveryIndex-indexed, 32 bytes of bool
-            if (ResolveDiscoveryTable(mapId, out var tablePtr, out int regionCount, out int discoveryIndex, out bool use16))
+            var dr = ResolveDiscoveryTable(mapId, out var tablePtr, out int regionCount, out int discoveryIndex, out bool use16);
+            if (dr == DiscResolve.Ok)
             {
                 var raw = new System.Text.StringBuilder();
                 for (int i = 0; i < regionCount; i++) raw.Append(((byte*)tablePtr)[i] != 0 ? '1' : '0');
@@ -2054,7 +2056,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             }
             else
             {
-                log.Information("[HMSync] [MAPDIAG] RAW table: DiscoveryIndex is -1 (map has no discovery table) or resolve failed.");
+                log.Information("[HMSync] [MAPDIAG] RAW table: " + DescribeDiscResolve(dr, discoveryIndex, use16) + ".");
             }
             chat.Print("[HMSync] [MAPDIAG] logged AgentMap + discovery state for map " + mapId + ". See the log. Run in a real zone AND in a private session to compare.");
         }
@@ -2065,40 +2067,81 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         }
     }
 
+    // Result of ResolveDiscoveryTable. Was a bool, which collapsed five distinct exits into one caller message
+    // ("DiscoveryIndex -1") - misleading when the real cause is a STALE BUILD (the game's discovery array grew
+    // past our measured bound after a patch). IndexOutOfRange is the case worth naming: reveal would otherwise
+    // write nowhere and the fog would silently stay. See DescribeDiscResolve + docs/mapdiscovery-remeasure.md.
+    private enum DiscResolve
+    {
+        Ok,              // resolved: tablePtr / regionCount / discoveryIndex / use16 are valid
+        ManagerNull,     // MapDiscoveryManager isn't live yet
+        SheetNull,       // the Map sheet is unavailable
+        RowMissing,      // mapId isn't in the Map sheet
+        NoTable,         // DiscoveryIndex == -1: this map legitimately has no fog table
+        IndexOutOfRange, // DiscoveryIndex >= this build's measured array bound: STALE BUILD, re-measure
+    }
+
+    // MapDiscoveryManager array bounds, MEASURED from ffxiv_dx11.exe (recipe: docs/mapdiscovery-remeasure.md).
+    // These are NOT taken from FFXIVClientStructs: as of 7.55 CS still declares Size 0x1024 / FixedSizeArray48,
+    // stale for the current game. Ground truth is the disassembly of MapDiscoveryManager.IsRegionDiscovered.
+    //   _mapsWithUpTo16Regions @0x000, stride 0x10, each = 16 bool
+    //   _mapsWithUpTo32Regions @0xA20, stride 0x20, each = 32 bool
+    private const int Disc16Base = 0x000;
+    private const int Disc16Stride = 0x10;
+    private const int Disc16Count = 162;    // 0xA2 (mov eax, imm32) in 7.55; the Map sheet's max 16-region DiscoveryIndex is 159
+    private const int Disc32Base = 0xA20;   // 0x51 * 0x20
+    private const int Disc32Stride = 0x20;
+    private const int Disc32Count = 49;     // 0x31 (cmp dx, imm8) in 7.55; was 48 - The North Horn (map 1346) uses DiscoveryIndex 48, the 49th slot
+
     // v0.7.447: resolve the raw discovery-table pointer + region count for a map, from the Map sheet's
-    // DiscoveryIndex (which row in the table) and DiscoveryArrayByte (16- vs 32-region table). Layout from
-    // FFXIVClientStructs MapDiscoveryManager (size 0x1024):
-    //   _mapsWithUpTo16Regions @0x000, 162 entries, stride 0x10, each = 16 bool
-    //   _mapsWithUpTo32Regions @0xA20,  48 entries, stride 0x20, each = 32 bool
-    // Returns false if the map has no discovery table (DiscoveryIndex == -1) or the manager is null.
-    // Raw byte access (not the generated FixedSizeArray accessor) per the "prefer offset reads for
-    // unproven bindings" rule — the offsets are documented and stable.
-    private unsafe bool ResolveDiscoveryTable(uint mapId, out void* tablePtr, out int regionCount, out int discoveryIndex, out bool use16)
+    // DiscoveryIndex (which row in the table) and DiscoveryArrayByte (16- vs 32-region table). Raw byte access
+    // (not the generated FixedSizeArray accessor) per the "prefer offset reads for unproven bindings" rule - the
+    // offsets are measured and stable. Returns a DiscResolve describing success or the specific failure class.
+    private unsafe DiscResolve ResolveDiscoveryTable(uint mapId, out void* tablePtr, out int regionCount, out int discoveryIndex, out bool use16)
     {
         tablePtr = null; regionCount = 0; discoveryIndex = -1; use16 = true;
         var disc = FFXIVClientStructs.FFXIV.Client.Game.MapDiscoveryManager.Instance();
-        if (disc == null) return false;
+        if (disc == null) return DiscResolve.ManagerNull;
         var mapSheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.Map>();
-        if (mapSheet == null) return false;
+        if (mapSheet == null) return DiscResolve.SheetNull;
         var row = mapSheet.GetRowOrDefault(mapId);
-        if (row == null) return false;
+        if (row == null) return DiscResolve.RowMissing;
         discoveryIndex = row.Value.DiscoveryIndex;
-        if (discoveryIndex < 0) return false;   // map has no discovery table
+        if (discoveryIndex < 0) return DiscResolve.NoTable;   // map legitimately has no discovery table
         use16 = row.Value.DiscoveryArrayByte;
         byte* baseP = (byte*)disc;
         if (use16)
         {
-            if (discoveryIndex >= 162) return false;
-            tablePtr = baseP + 0x000 + (discoveryIndex * 0x10);
+            if (discoveryIndex >= Disc16Count) return DiscResolve.IndexOutOfRange;
+            tablePtr = baseP + Disc16Base + (discoveryIndex * Disc16Stride);
             regionCount = 16;
         }
         else
         {
-            if (discoveryIndex >= 48) return false;
-            tablePtr = baseP + 0xA20 + (discoveryIndex * 0x20);
+            if (discoveryIndex >= Disc32Count) return DiscResolve.IndexOutOfRange;
+            tablePtr = baseP + Disc32Base + (discoveryIndex * Disc32Stride);
             regionCount = 32;
         }
-        return true;
+        return DiscResolve.Ok;
+    }
+
+    // Human-readable reason for a non-Ok ResolveDiscoveryTable result, for a log/chat line. IndexOutOfRange is the
+    // load-bearing one: it means a game patch grew the discovery array past this build's measured bound, so a
+    // reveal write would land nowhere and the fog would silently persist - we say so and point at the fix.
+    private static string DescribeDiscResolve(DiscResolve r, int discoveryIndex, bool use16)
+    {
+        switch (r)
+        {
+            case DiscResolve.ManagerNull: return "the map-discovery manager isn't live yet";
+            case DiscResolve.SheetNull:   return "the Map sheet is unavailable";
+            case DiscResolve.RowMissing:  return "the map isn't in the Map sheet";
+            case DiscResolve.NoTable:     return "it has no discovery table (DiscoveryIndex -1)";
+            case DiscResolve.IndexOutOfRange:
+                return "it uses DiscoveryIndex " + discoveryIndex + ", but this build measured the "
+                    + (use16 ? "16" : "32") + "-region array as holding only " + (use16 ? Disc16Count : Disc32Count)
+                    + " entries - this build is stale for the current game version; re-measure MapDiscoveryManager (docs/mapdiscovery-remeasure.md)";
+            default: return "resolved";
+        }
     }
 
     // v0.7.447: snapshot of the current map's discovery table, captured by DoMapReveal so DoMapRestore
@@ -2109,7 +2152,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     // v0.7.447: STEP-2 TEST. Snapshot the current map's raw discovery table, then set every region byte to
     // 1 (discovered) and log before/after. You then eyeball whether the HUD map reveals. Undo with
     // /hms maprestore. Research-mode gated (writes memory). The persistence question (does this survive a
-    // relog?) is answered by NOT restoring and relogging — see the test plan.
+    // relog?) is answered by NOT restoring and relogging - see the test plan.
     private unsafe void DoMapReveal()
     {
         if (!zoneLoad.ResearchMode)
@@ -2122,9 +2165,10 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             var agent = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentMap.Instance();
             if (agent == null) { chat.Print("[HMSync] [MAPREVEAL] AgentMap null."); return; }
             uint mapId = agent->CurrentMapId;
-            if (!ResolveDiscoveryTable(mapId, out var tablePtr, out int regionCount, out int discoveryIndex, out bool use16))
+            var dr = ResolveDiscoveryTable(mapId, out var tablePtr, out int regionCount, out int discoveryIndex, out bool use16);
+            if (dr != DiscResolve.Ok)
             {
-                chat.Print("[HMSync] [MAPREVEAL] map " + mapId + " has no discovery table (DiscoveryIndex -1) — nothing to reveal.");
+                chat.Print("[HMSync] [MAPREVEAL] map " + mapId + " not revealed: " + DescribeDiscResolve(dr, discoveryIndex, use16) + ".");
                 return;
             }
             // Snapshot BEFORE writing.
@@ -2141,6 +2185,16 @@ public sealed class HMSyncPlugin : IDalamudPlugin
 
             var after = new System.Text.StringBuilder();
             for (int i = 0; i < regionCount; i++) after.Append(((byte*)tablePtr)[i] != 0 ? '1' : '0');
+
+            // v0.7.479: post-write confirmation. We wrote through a pointer computed from measured constants; this asks
+            // the GAME (via its own mapId->slot resolution) whether region 0 now reads as discovered. It prevents
+            // nothing and gates nothing - if the base offset ever drifts, reveal would write to the wrong slot and the
+            // fog would simply stay with no error, and this line is the difference between "wrong address" and "render
+            // didn't refresh" without an investigation.
+            bool agrees = false;
+            try { var d = FFXIVClientStructs.FFXIV.Client.Game.MapDiscoveryManager.Instance(); if (d != null) agrees = d->IsMapRegionDiscovered(mapId, (byte)0); } catch { }
+            log.Information("[HMSync] [MAPREVEAL] game reads region 0 as "
+                + (agrees ? "discovered - address confirmed" : "UNDISCOVERED - our address may not be the game's slot"));
 
             log.Information("[HMSync] [MAPREVEAL] map=" + mapId + " DiscoveryIndex=" + discoveryIndex + " use16=" + use16
                 + " regions=" + regionCount + " @0x" + ((nint)tablePtr).ToString("X"));
@@ -2163,12 +2217,12 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     {
         if (mapRevealSnapshot == null)
         {
-            chat.Print("[HMSync] [MAPRESTORE] no snapshot — run /hms mapreveal first.");
+            chat.Print("[HMSync] [MAPRESTORE] no snapshot - run /hms mapreveal first.");
             return;
         }
         try
         {
-            if (!ResolveDiscoveryTable(mapRevealSnapshotMapId, out var tablePtr, out int regionCount, out _, out _))
+            if (ResolveDiscoveryTable(mapRevealSnapshotMapId, out var tablePtr, out int regionCount, out _, out _) != DiscResolve.Ok)
             {
                 chat.Print("[HMSync] [MAPRESTORE] could not resolve the table for the snapshotted map " + mapRevealSnapshotMapId + ".");
                 return;
@@ -2193,7 +2247,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     // v0.7.448: AUTOMATIC MAP REVEAL (session-scoped, with crash recovery).
     //
     // On an HMS map load we reveal that map's HUD fog, recording its ORIGINAL discovery bytes first.
-    // On session end (DoLeaveInternal — the stop/leave/crash-cleanup chokepoint) we write those originals
+    // On session end (DoLeaveInternal - the stop/leave/crash-cleanup chokepoint) we write those originals
     // back, so nothing artificial persists past the session. Because a hard game CRASH bypasses that
     // chokepoint, the same original bytes are mirrored to a small JSON file on each reveal; on the next
     // plugin load we replay any pending restores (deferred until MapDiscoveryManager is live), cleaning up
@@ -2201,7 +2255,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     //
     // SAFETY: we snapshot-before-reveal and restore-to-SNAPSHOT, never restore-to-zero. A map the player
     // genuinely explored either is never revealed by us (so untouched) or, if revealed, its snapshot
-    // already holds the real bits — so restore preserves genuine progress. First-snapshot-wins: re-revealing
+    // already holds the real bits - so restore preserves genuine progress. First-snapshot-wins: re-revealing
     // a map already recorded this session does NOT overwrite its original snapshot with revealed bytes.
     // ============================================================================================
 
@@ -2215,8 +2269,16 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         try
         {
             if (mapId == 0) return;
-            if (!ResolveDiscoveryTable(mapId, out var tablePtr, out int regionCount, out _, out _))
-                return;   // map has no discovery table — nothing to do
+            var dr = ResolveDiscoveryTable(mapId, out var tablePtr, out int regionCount, out int discoveryIndex, out bool use16);
+            if (dr != DiscResolve.Ok)
+            {
+                // The stale-build case (the game's discovery array outgrew our measured bound) is the one worth
+                // shouting about: auto-reveal would otherwise fail silently and the fog would just stay. Everything
+                // else (no table / manager not live yet) is an ordinary "nothing to do".
+                if (dr == DiscResolve.IndexOutOfRange)
+                    log.Warning("[HMSync] [MAPREVEAL] auto-reveal SKIPPED for map " + mapId + ": " + DescribeDiscResolve(dr, discoveryIndex, use16));
+                return;
+            }
 
             // First-snapshot-wins: only record the original if we haven't already touched this map.
             if (!revealSnapshots.ContainsKey(mapId))
@@ -2225,7 +2287,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 bool anyUnrevealed = false;
                 for (int i = 0; i < regionCount; i++) { snap[i] = ((byte*)tablePtr)[i]; if (snap[i] == 0) anyUnrevealed = true; }
                 // If the map is already fully discovered, there's nothing to reveal and nothing to clean up
-                // later — skip recording it so we don't carry no-op entries (and never risk a needless write).
+                // later - skip recording it so we don't carry no-op entries (and never risk a needless write).
                 if (!anyUnrevealed) return;
                 revealSnapshots[mapId] = snap;
                 PersistPendingReveals();
@@ -2248,7 +2310,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         {
             try
             {
-                if (!ResolveDiscoveryTable(kv.Key, out var tablePtr, out int regionCount, out _, out _)) continue;
+                if (ResolveDiscoveryTable(kv.Key, out var tablePtr, out int regionCount, out _, out _) != DiscResolve.Ok) continue;
                 int n = Math.Min(regionCount, kv.Value.Length);
                 for (int i = 0; i < n; i++) ((byte*)tablePtr)[i] = kv.Value[i];
                 restored++;
@@ -2335,7 +2397,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                     if (!uint.TryParse(kv.Key, out var mapId)) continue;
                     byte[] orig;
                     try { orig = Convert.FromBase64String(kv.Value); } catch { continue; }
-                    if (!ResolveDiscoveryTable(mapId, out var tablePtr, out int regionCount, out _, out _)) continue;
+                    if (ResolveDiscoveryTable(mapId, out var tablePtr, out int regionCount, out _, out _) != DiscResolve.Ok) continue;
                     int n = Math.Min(regionCount, orig.Length);
                     for (int i = 0; i < n; i++) ((byte*)tablePtr)[i] = orig[i];
                     restored++;
@@ -2442,7 +2504,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)player.Address;
         var p = go->Position;
 
-        // v0.7.227: if we're standing in a SWAP cutscene stage, key the capture by its bg path (unique) — NOT by the
+        // v0.7.227: if we're standing in a SWAP cutscene stage, key the capture by its bg path (unique) - NOT by the
         // donor territoryId, which is shared across co-donor stages and would leak this spawn to all of them (the bug).
         var stageBg = zoneLoad.ActiveStageBg;
         if (stageBg != null)
@@ -2496,9 +2558,9 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         var terr = zoneLoad.IsZoneLoaded ? zoneLoad.CurrentLoadedZone : 0;
 
         // Read THREE sources to diagnose the (0,0,0) wrapper result:
-        //  - Dalamud wrapper (player.Position) — what /hms here used before; can read stale/zero
-        //  - native GameObject.Position @0xB0 — the authoritative live position
-        //  - native GameObject.DefaultPosition @0x10 — the game's assigned spawn for this territory
+        //  - Dalamud wrapper (player.Position) - what /hms here used before; can read stale/zero
+        //  - native GameObject.Position @0xB0 - the authoritative live position
+        //  - native GameObject.DefaultPosition @0x10 - the game's assigned spawn for this territory
         var wrap = player.Position;
         var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)player.Address;
         var nat = go->Position;
@@ -2514,7 +2576,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         chat.Print("[HMSync] Wrapper Pos:  X=" + wrap.X.ToString("F4") +
             " Y=" + wrap.Y.ToString("F4") + " Z=" + wrap.Z.ToString("F4"));
         chat.Print("[HMSync] Facing (yaw): " + player.Rotation.ToString("F4"));
-        log.Information("[HMSync] /hms here — terr=" + terr +
+        log.Information("[HMSync] /hms here - terr=" + terr +
             " NATIVE X=" + nat.X.ToString("R") + " Y=" + nat.Y.ToString("R") + " Z=" + nat.Z.ToString("R") +
             " | DEFAULT X=" + def.X.ToString("R") + " Y=" + def.Y.ToString("R") + " Z=" + def.Z.ToString("R") +
             " | WRAPPER X=" + wrap.X.ToString("R") + " Y=" + wrap.Y.ToString("R") + " Z=" + wrap.Z.ToString("R"));
@@ -2529,7 +2591,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         var character = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)player.Address;
 
         // S248: when Glamourer is authoritative, flip from ITS current state (so the click always
-        // matches the badge — no HMS-tracked bool to desync). WeaponState is VISIBILITY (true=shown).
+        // matches the badge - no HMS-tracked bool to desync). WeaponState is VISIBILITY (true=shown).
         if (glamourer.Available && glamourer.TryGetMeta(0, out var curWpnVis, out _, out _))
         {
             glamourer.SetMeta(0, MetaFlag.WeaponState, !curWpnVis);
@@ -2538,7 +2600,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         }
         else
         {
-            // Fallback: no Glamourer — flip OUR tracked intent and write DrawData.
+            // Fallback: no Glamourer - flip OUR tracked intent and write DrawData.
             weaponHidden = !weaponHidden;
             character->DrawData.HideWeapons(weaponHidden);
             chat.Print("[HMSync] Weapons " + (weaponHidden ? "hidden" : "shown") + " when sheathed.");
@@ -2561,7 +2623,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         }
         else
         {
-            // Fallback: method ONLY — HideHeadgear owns the bit; pre-setting no-ops the redraw (S245).
+            // Fallback: method ONLY - HideHeadgear owns the bit; pre-setting no-ops the redraw (S245).
             headgearHidden = !headgearHidden;
             character->DrawData.HideHeadgear(0, headgearHidden);
             chat.Print("[HMSync] Headgear " + (headgearHidden ? "hidden" : "shown") + ".");
@@ -2632,16 +2694,16 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         glamourerBadgesDirty = true;
     }
 
-    // /hms emote <id|name> — play an emote on the local player and sync it to peers.
-    //   • Usable now → AgentEmote.ExecuteEmote — the same agent the in-game emote menu drives, so it owns
+    // /hms emote <id|name> - play an emote on the local player and sync it to peers.
+    //   • Usable now → AgentEmote.ExecuteEmote - the same agent the in-game emote menu drives, so it owns
     //     the full lifecycle (stance, loop mode, movement-cancel) AND natively cancels whatever was already
     //     playing. The resulting state is read by LocalStateDetector → the existing capture→
     //     ApplyEmoteFromSheet pipeline syncs it. (S322a–e tried the lower-level EmoteManager.ExecuteEmote +
     //     a manual mode-clear; the agent path is what finally makes emote→emote transitions clean.)
-    //   • Locked / gated (the RP point — unowned or item-gated emotes the agent won't play) → bypass by
+    //   • Locked / gated (the RP point - unowned or item-gated emotes the agent won't play) → bypass by
     //     driving the emote's ActionTimeline / mode directly (the SAME mechanism the peer side uses on
     //     puppets), first cancelling any active loop so it doesn't dominate the forced animation.
-    // Either path is client-side only (no server roundtrip — correct, peers are in other instances).
+    // Either path is client-side only (no server roundtrip - correct, peers are in other instances).
     // Validated against the Emote sheet first (a bad ID must never reach the game).
     private unsafe void DoEmote(string? arg)
     {
@@ -2736,37 +2798,37 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     // ── v0.7.415: clear the local posture at session engage. QUIETLY. ─────────────────────────────
     //
     // v0.7.413/414 played the get-up timeline (644/655) to make the transition observable to the
-    // detector, so it would emit a StandupEpoch. That worked — the detector saw it — but it was the
+    // detector, so it would emit a StandupEpoch. That worked - the detector saw it - but it was the
     // wrong shape twice over:
     //   • it played a visible stand-up animation nobody asked for, and
     //   • the receiver could not act on the standup anyway: its gate is
     //         if (data.StandupTimelineId > 0 && info.EmoteActive)
-    //     and EmoteActive is set in exactly ONE place — when HMS itself applies an emote. A peer whose
+    //     and EmoteActive is set in exactly ONE place - when HMS itself applies an emote. A peer whose
     //     puppet is seated because the player GENUINELY WAS seated has EmoteActive false, so the
     //     standup is received, the epoch is consumed, and nothing happens.
     //
-    // The real situation: A is not standing up. A is ALREADY STANDING — B just does not know, because
+    // The real situation: A is not standing up. A is ALREADY STANDING - B just does not know, because
     // B's puppet inherited a true seated state from before the session and HMS has no path to clear a
     // pose it did not create. That is a RECEIVER problem, fixed at bind (see
     // StateApplyService.ReconcileInheritedPose), so the sender does not need to perform anything.
     //
     // So this is now the minimum: drop the posture locally, no animation, no broadcast theatre.
-    // v0.7.419 — sanitise the local player's posture to standing/idle. Used at BOTH engage (clear
+    // v0.7.419 - sanitise the local player's posture to standing/idle. Used at BOTH engage (clear
     // origin posture before loading the synthetic zone) and exit (clear any posture acquired during
     // the session before Revert). Covers both posture families:
-    //   • InPositionLoop (ConditionMode 11): Sit, Sit on Ground, Sleep, Stand Up — 15 rows
-    //   • EmoteLoop (ConditionMode 3): dances, cheers, /lean, persistent emotes — 97 rows
+    //   • InPositionLoop (ConditionMode 11): Sit, Sit on Ground, Sleep, Stand Up - 15 rows
+    //   • EmoteLoop (ConditionMode 3): dances, cheers, /lean, persistent emotes - 97 rows
     // Do NOT widen to "any non-Normal mode." Mounted, Crafting, Gathering have their own tested
     // teardown paths (mount sanitise, noclip.Disable). The two loop families are the posture families.
     //
     // When force=true (post-settle), clear Mode/EmoteId/DrawOffset/BaseOverride UNCONDITIONALLY.
     // The zone reload in Revert rebuilds the actor from the client's internal character cache, which
-    // may hold the PRE-SESSION state (seated) even though the entry sanitise cleared it — the entry
+    // may hold the PRE-SESSION state (seated) even though the entry sanitise cleared it - the entry
     // sanitise wrote Mode=Normal onto the live object, but the cache was never updated. So after the
     // reload, Mode can be InPositionLoop again even though the player was standing throughout the
     // session. The post-settle call fires after the rebuild, on the settled actor, and must clear
     // regardless of what the isPosture guard thinks.
-    // v0.7.449 — evictBaseLane: whether to stomp the base lane to idle (PlayTimeline(3)) to evict a
+    // v0.7.449 - evictBaseLane: whether to stomp the base lane to idle (PlayTimeline(3)) to evict a
     // lingering seated/emote pose clip. null = follow isPosture (the default: a real seated/emote posture
     // needs the evict; a plain standing state does not). Callers pass false to force-clear mode/emote/
     // draw-offset over a STANDING cpose without the idle stomp that would flicker folded-arms on exit.
@@ -2794,26 +2856,26 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         ch->Timeline.BaseOverride = 0;
         ((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)player.Address)->SetDrawOffset(0f, 0f, 0f);
 
-        // v0.7.417 — CLEAR THE BASE LANE TOO, or we broadcast a seated emote one frame later.
+        // v0.7.417 - CLEAR THE BASE LANE TOO, or we broadcast a seated emote one frame later.
         //
         // Clearing Mode is instant; the base-lane CLIP is not. TimelineIds[0] keeps holding 3132
-        // (emote/s_pose01_loop — the chair-sit POSE variant) for a frame or two. detector.Reset() has
+        // (emote/s_pose01_loop - the chair-sit POSE variant) for a frame or two. detector.Reset() has
         // just baselined lastTimelineId to that same 3132, so on the next tick:
         //   • timelineChanged is FALSE  -> the standup branch cannot fire, and
         //   • the modeChanged branch finds 3132 in emoteTimelineIds (it belongs to emote 95) and
         //     broadcasts emote 95. Its EmoteMode's ConditionMode is InPositionLoop, so the receiver
-        //     does SetMode(InPositionLoop) — a visible SIT-DOWN animation, and the puppet sticks.
+        //     does SetMode(InPositionLoop) - a visible SIT-DOWN animation, and the puppet sticks.
         // That is the "loads standing, then sits back down" symptom exactly.
         //
         // PlayTimeline(3) = normal/idle. Verified against the sheet: NO emote lists timeline 3 among
-        // its ActionTimelines, so it cannot be misread as an emote — the detector falls through to
+        // its ActionTimelines, so it cannot be misread as an emote - the detector falls through to
         // emoteId = 0. Base-lane eviction is correct here; we are deliberately dropping the pose, and
         // idle is what the game settles on by itself a frame later anyway. No visible animation.
         //
-        // v0.7.449 — but the eviction is only wanted when there's a SEATED/EMOTE clip to evict. When
+        // v0.7.449 - but the eviction is only wanted when there's a SEATED/EMOTE clip to evict. When
         // force-clearing on exit while the player is merely STANDING in a cpose (e.g. folded arms),
         // PlayTimeline(3) pushes neutral idle for one cycle and the game's cpose reasserts folded-arms
-        // the next cycle — a one-cycle arms-drop flicker. A numeric timeline-id gate does NOT work: the
+        // the next cycle - a one-cycle arms-drop flicker. A numeric timeline-id gate does NOT work: the
         // standing cpose clips (idle_sp/*, ids 210…11271) and the seated emote-pose clips (emote/*_pose,
         // ids 1065+) overlap in id space with no clean boundary. So the caller decides: evictBaseLane is
         // passed true only when the posture being cleared is genuinely seated/emote (a real posture, or
@@ -2827,7 +2889,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             (force ? ", forced" : "") + ")");
     }
 
-    // v0.7.420 — SERVER-ACK + ORIGIN RESTORE. Two jobs in one:
+    // v0.7.420 - SERVER-ACK + ORIGIN RESTORE. Two jobs in one:
     // 1. Tell the server we left the origin posture (the filter prevented it hearing the standup).
     // 2. Re-enter the origin posture so the player returns to exactly where they started.
     //
@@ -2836,7 +2898,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     //           InPositionLoop this is a standup → server clears InPositionLoop → both agree standing.
     //   Step 2: re-execute the origin emote (50/52/88) → normal sit-down → server processes it →
     //           both agree seated → player is back where they started.
-    // For EmoteLoop (lean/dance): server doesn't track these — just re-execute the origin emote.
+    // For EmoteLoop (lean/dance): server doesn't track these - just re-execute the origin emote.
     private unsafe void ServerAckStandup()
     {
         try
@@ -2854,19 +2916,19 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 log.Debug("[HMSync] [POSE] server-ack: re-entered " + originMode + "/" + originModeParam);
 
                 agent->ExecuteEmote(50, addToHistory: false);
-                log.Debug("[HMSync] [POSE] server-ack: step 1 — standup (emote 50 toggle)");
+                log.Debug("[HMSync] [POSE] server-ack: step 1 - standup (emote 50 toggle)");
 
                 // Step 2: re-execute the origin emote to restore the pose.
                 // Both sides now agree we're standing, so this is a normal sit-down.
                 if (originEmoteId > 0)
                 {
                     agent->ExecuteEmote(originEmoteId, addToHistory: false);
-                    log.Debug("[HMSync] [POSE] server-ack: step 2 — restore (emote " + originEmoteId + ")");
+                    log.Debug("[HMSync] [POSE] server-ack: step 2 - restore (emote " + originEmoteId + ")");
                 }
             }
             else if (originMode == CharacterModes.EmoteLoop)
             {
-                // EmoteLoop (lean, dance) — server doesn't track these. Just re-execute.
+                // EmoteLoop (lean, dance) - server doesn't track these. Just re-execute.
                 if (originEmoteId > 0)
                 {
                     agent->ExecuteEmote(originEmoteId, addToHistory: false);
@@ -2891,7 +2953,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         if (player == null) { chat.Print("[HMSync] No local player."); return; }
         var character = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)player.Address;
 
-        // Only cancel when an emote is actually running — a loop (EmoteLoop/InPositionLoop) or a persistent/
+        // Only cancel when an emote is actually running - a loop (EmoteLoop/InPositionLoop) or a persistent/
         // one-shot with a live EmoteController.EmoteId. Without this guard, Stop would force Mode=Normal out of
         // an unrelated mode (e.g. mounted) and glitch it. No emote ⇒ no-op.
         bool emoteActive = character->Mode == CharacterModes.EmoteLoop
@@ -2907,7 +2969,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         character->Timeline.BaseOverride = 0;
     }
 
-    // S322: /hms minion <id|name> — summon a minion on yourself (synced to peers in a session). Mirror of
+    // S322: /hms minion <id|name> - summon a minion on yourself (synced to peers in a session). Mirror of
     // DoEmote. Locked minions only summon INSIDE a session (otherwise it just fakes a local unlock); unlocked
     // minions summon anywhere. "0" / "off" / "dismiss" clears it. The detector captures the summon + broadcasts.
     private unsafe void DoMinion(string? arg)
@@ -2973,7 +3035,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     }
 
     // S322: the live summoned minion id (Companion sheet row), or 0 if none is out. Read from the spawned
-    // companion object's BaseId — the same field HaselDebug uses; CompanionData.CompanionId is not the live id.
+    // companion object's BaseId - the same field HaselDebug uses; CompanionData.CompanionId is not the live id.
     private unsafe ushort CurrentMinionId()
     {
         var player = objectTable.LocalPlayer;
@@ -2997,7 +3059,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         return ps != null && ps->IsMountUnlocked(mountId);
     }
 
-    // S322k: /hms accessory <id|name> — equip + sync a fashion accessory (ornament). Direct mirror of DoMinion:
+    // S322k: /hms accessory <id|name> - equip + sync a fashion accessory (ornament). Direct mirror of DoMinion:
     // numeric or name match against the Ornament sheet, repeated-same toggles off, locked ones gated to a
     // session. Ornaments are skeletally attached so they ride the puppet natively once SetupOrnament seats them.
     private unsafe void DoAccessory(string? arg)
@@ -3069,19 +3131,19 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     private void PushMapState(byte? weatherOverride = null)
     {
         // Mirror config → capture holder and bump the epoch. Called by every map* handler after it updates config.
-        // SINGLE-AUTHORITY WEATHER — v0.7.475: BROADCAST REALITY, NOT INTENT.
+        // SINGLE-AUTHORITY WEATHER - v0.7.475: BROADCAST REALITY, NOT INTENT.
         //
         // History, because this reversed twice. Originally the host's raw pick went on the wire; the host's own
         // Reassert legality-gated locally (falling back to native) while peers applied the raw id, so host and peer
-        // diverged — "peers stuck on none/atmospheric while the host sees sunny". v0.7.429 fixed that by resolving
+        // diverged - "peers stuck on none/atmospheric while the host sees sunny". v0.7.429 fixed that by resolving
         // the wire value to a legal, non-zero id. That killed two real features, because it cannot tell
         // `MapWeatherId == 0` = "host picked nothing" from `== 0` = "host explicitly picked None - Atmospheric",
-        // and it discards any id not in the map's legal set — which is precisely the debug-weather case (Fog on
+        // and it discards any id not in the map's legal set - which is precisely the debug-weather case (Fog on
         // 1345, and the cinematic blank the invalid ones fall through to).
         //
         // The real defect was never the wire value: it was host and peer resolving INDEPENDENTLY. So resolve once,
         // on the host, by reading what the engine is actually rendering (EnvManager displayed weather) and shipping
-        // that. Live weather is post-fallback truth — it is whatever the host can SEE:
+        // that. Live weather is post-fallback truth - it is whatever the host can SEE:
         //   • host never picked        → live = the map's native sky   → peers match the host
         //   • host picked None (0)     → live = 0                      → peers render the same cinematic blank
         //   • host picked Fog on 1345  → live = that id                → peers render the same stunning sky
@@ -3090,17 +3152,17 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // path already states: mirror VERBATIM, never resolve independently on both sides.
         //
         // ⚠ 0 IS NOW A LEGITIMATE WIRE VALUE. The old "peers must never receive 0" invariant is deleted, not
-        // relaxed — and the receiver's matching 0-substitution in ApplyMapState had to go with it. Changing one
+        // relaxed - and the receiver's matching 0-substitution in ApplyMapState had to go with it. Changing one
         // end alone is a no-op; that is why this looked like a wire bug and was a pair of independent guards.
-        // ⚠ v0.7.476 — REALITY LAGS THE WRITE. GetActiveWeather reads EnvManager+0x26, the DISPLAYED weather: the
+        // ⚠ v0.7.476 - REALITY LAGS THE WRITE. GetActiveWeather reads EnvManager+0x26, the DISPLAYED weather: the
         // value the engine is rendering, which does not update until at least the next frame. So reading it
-        // immediately after ApplyWeather returns the PREVIOUS sky, and every pick reached peers one weather late —
+        // immediately after ApplyWeather returns the PREVIOUS sky, and every pick reached peers one weather late -
         // cycling the dropdown left peers permanently one behind, and a second click on the same entry "fixed" it
         // only because by then the engine had caught up. Live-read is the right source for a SETTLED state and the
         // wrong one for a state we just changed.
         //
         // So: an explicit pick is passed in and shipped VERBATIM (including 0 = None - Atmospheric, including any
-        // debug id) — we already know the intent, there is nothing to read back. Every other caller (map load,
+        // debug id) - we already know the intent, there is nothing to read back. Every other caller (map load,
         // time, BGM, host succession) pushes state that has been settled for many frames, where the live read is
         // both accurate and the thing that keeps host and peer from resolving independently.
         byte effectiveWeather;
@@ -3125,7 +3187,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         stateCapture.MapState.EorzeaHour = config.MapEorzeaHour;
         stateCapture.MapState.EorzeaMinute = config.MapEorzeaMinute;
         // SINGLE-AUTHORITY BGM: broadcast the RESOLVED effective track, never 0. The host owns "what plays here" and the
-        // peer mirrors this concrete id VERBATIM (no peer-side GetDefaultBgm / live read — that independent resolution
+        // peer mirrors this concrete id VERBATIM (no peer-side GetDefaultBgm / live read - that independent resolution
         // was the desync: host broadcast 0=follow-default, peer re-resolved and drifted). Explicit pick if set, else the
         // loaded zone's resolved default (incl. CFC→InstanceContent for instanced zones).
         uint effectiveBgm = config.MapBgmId != 0 ? config.MapBgmId : mapSettings.GetDefaultBgm(zoneLoad.CurrentLoadedZone);
@@ -3148,7 +3210,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     }
 
     // S327r: map settings apply LIVE when hosting AND a synthetic zone is loaded. (The old gate also required
-    // config.MapSettingsTerritory == the loaded zone — but that field belonged to the REMOVED "pick a territory in a
+    // config.MapSettingsTerritory == the loaded zone - but that field belonged to the REMOVED "pick a territory in a
     // dropdown to pre-configure it" model and is NEVER assigned, so it was permanently 0 → MapApplyLive permanently
     // FALSE → the host's BGM/weather buttons never applied locally. Under the current "configure the map you're standing
     // on, live" model there's no separate edit-target: the loaded map IS the edit target, so the check is just
@@ -3203,8 +3265,8 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         if (!uint.TryParse(a, out var bid)) { chat.Print("[HMSync] Usage: /hms mapbgm <id> | stop  (0/stop = none)."); return; }
         config.MapBgmId = bid;
         PushMapState();
-        if (MapApplyLive) mapSettings.PlayBgm(bid);   // real playback (scene-0 write) — in-session only
-        // No chat notification on BGM change — the Music tab shows the current track; per-change chat lines are noise.
+        if (MapApplyLive) mapSettings.PlayBgm(bid);   // real playback (scene-0 write) - in-session only
+        // No chat notification on BGM change - the Music tab shows the current track; per-change chat lines are noise.
     }
 
     private void DoMapNpc(string? arg)
@@ -3236,7 +3298,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         var rows = new System.Collections.Generic.List<HMSync.UI.HMSyncUI.ParticipantRow>();
         var local = objectTable.LocalPlayer;
 
-        // Entry #1 is always the local player (the host, or yourself if you joined) — full designator, no actions on
+        // Entry #1 is always the local player (the host, or yourself if you joined) - full designator, no actions on
         // self. This replaces the old "just you so far" placeholder text with a real first row.
         if (local != null)
         {
@@ -3287,11 +3349,11 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                     }
                     if (local != null)
                         row.Distance = (local.Position - pc.Position).Length();
-                    // v0.7.430 — camera-relative bearing for the compass arrow (Wholist's formula,
+                    // v0.7.430 - camera-relative bearing for the compass arrow (Wholist's formula,
                     // DataStructures/PlayerInfoSlim.cs CameraRelativeDirection): the vector FROM the peer
                     // TO the local player, atan2(Δz,Δx), rotated into screen space by the active camera's
                     // horizontal angle + π. Camera-relative (not player-facing) so the arrow points the way
-                    // you'd turn the screen to look at them — the intuitive "which way is my friend" readout.
+                    // you'd turn the screen to look at them - the intuitive "which way is my friend" readout.
                     // Works on synthetic maps because peer bodies carry real positions under the firewall.
                     unsafe
                     {
@@ -3350,7 +3412,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     }
 
     // Host summons a peer to their position. NOTE: requires a relay message the peer acts on (teleport-to-coords via
-    // the same SetPosition path). The relay wire for this is NOT yet implemented — this is a stub that reports the
+    // the same SetPosition path). The relay wire for this is NOT yet implemented - this is a stub that reports the
     // intent so the UI is present; the actual summon lands with the relay-side command. (§E session-management.)
     private void DoSummonPeer(string peerId)
     {
@@ -3374,7 +3436,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         if (!relay.IsHost) { chat.Print("[HMSync] Only the host can set a room password."); return; }
         var pw = arg?.Trim() ?? "";
         chat.Print("[HMSync] Room password " + (pw.Length == 0 ? "cleared" : "set") +
-            " — enforcement needs relay support (not yet active).");
+            " - enforcement needs relay support (not yet active).");
         // TODO(§E): relay.SetRoomPassword(pw); server rejects joins without the matching password.
     }
 
@@ -3383,12 +3445,12 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         if (!relay.IsHost) { chat.Print("[HMSync] Only the host can lock the room."); return; }
         var on = (arg?.Trim() ?? "").Equals("on", StringComparison.OrdinalIgnoreCase);
         chat.Print("[HMSync] Room lock " + (on ? "ON" : "OFF") +
-            " — enforcement needs relay support (not yet active).");
+            " - enforcement needs relay support (not yet active).");
         // TODO(§E): relay.SetRoomLocked(on); server refuses new joiners while locked.
     }
 
     // Host hands the session to a specific peer. The relay reassigns the host role and broadcasts HostTransfer; we
-    // drop IsHost when that broadcast returns. (Explicit pick — distinct from leave-driven auto-succession.)
+    // drop IsHost when that broadcast returns. (Explicit pick - distinct from leave-driven auto-succession.)
     private void DoTransferHost(string peerId)
     {
         if (!relay.IsHost) { chat.Print("[HMSync] Only the host can transfer host."); return; }
@@ -3401,14 +3463,14 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         => stateApply.Peers.TryGetValue(peerId, out var pi) && !string.IsNullOrEmpty(pi.CharacterName) ? pi.CharacterName : peerId;
 
     // S322k: the live equipped ornament id (Ornament sheet row), or 0 if none. Read from the spawned object's
-    // OrnamentId — the container-side OrnamentData.OrnamentId reads 0, the same trap as CompanionData.CompanionId.
+    // OrnamentId - the container-side OrnamentData.OrnamentId reads 0, the same trap as CompanionData.CompanionId.
     private unsafe ushort CurrentOrnamentId()
     {
         var player = objectTable.LocalPlayer;
         if (player == null) return 0;
         var character = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)player.Address;
         // S323b: the LIVE worn ornament is the CONTAINER's OrnamentId (@0x18). While equipped, the ornament OBJECT's
-        // own OrnamentId reads 0 (the opposite of intuition) — matching LocalStateDetector's proven read.
+        // own OrnamentId reads 0 (the opposite of intuition) - matching LocalStateDetector's proven read.
         return character->OrnamentData.OrnamentId;
     }
 
@@ -3440,7 +3502,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     }
 
     // Plays the emote on the local player. Three paths, picked by emote kind and current state:
-    //   1. Usable emote from a clean (non-looping) state → AgentEmote.ExecuteEmote, the in-game menu path —
+    //   1. Usable emote from a clean (non-looping) state → AgentEmote.ExecuteEmote, the in-game menu path -
     //      owns the full lifecycle and natively interrupts a prior one-shot (/wave → /point).
     //   2. Anything interrupting a LOOP, or a genuinely locked emote → break the old loop (the receiver's
     //      move-cancel, which also forces Mode=Normal so the detector observes the change) then drive the new
@@ -3458,21 +3520,21 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // Is a looped emote currently running that this new emote has to interrupt? Decided up front because
         // it changes BOTH whether we break the old loop and how we play the new emote.
         //
-        // v0.7.388 — POSTURES ARE NOT LOOPS TO BREAK. This used to include InPositionLoop, which is the mode
+        // v0.7.388 - POSTURES ARE NOT LOOPS TO BREAK. This used to include InPositionLoop, which is the mode
         // the game uses for SITTING, GROUND-SITTING and SLEEPING (EmoteMode.ConditionMode = 11: Sit, Sit on
-        // Ground, Sleep, Stand Up — 15 rows). Treating a posture as an interruptible loop sent every emote
-        // played while seated down the breaker branch, and the breaker forces Mode=Normal — which STANDS THE
+        // Ground, Sleep, Stand Up - 15 rows). Treating a posture as an interruptible loop sent every emote
+        // played while seated down the breaker branch, and the breaker forces Mode=Normal - which STANDS THE
         // CHARACTER UP before playing the standing variant. That is why `/hms emote airquotes` stood you up
         // while the native `/airquotes` correctly played the seated version.
         //
-        // Only ConditionMode = 3 (EmoteLoop — the 97 dances/cheers/persistent emotes) is a genuine loop that
+        // Only ConditionMode = 3 (EmoteLoop - the 97 dances/cheers/persistent emotes) is a genuine loop that
         // the agent cannot interrupt and that therefore needs the breaker. A posture must be PRESERVED: the
         // game plays the emote's seated variant over it and returns to the pose afterwards, which is exactly
-        // what AgentEmote.ExecuteEmote does natively. Ruleset §5.2 — drive the engine's own path rather than
+        // what AgentEmote.ExecuteEmote does natively. Ruleset §5.2 - drive the engine's own path rather than
         // reconstructing the presentation.
         //
         // (This also fixes the posture-variant problem generally: the agent picks the right
-        // ActionTimeline slot for the current posture — ground-sit [2], chair-sit [3], upper-body [4] —
+        // ActionTimeline slot for the current posture - ground-sit [2], chair-sit [3], upper-body [4] -
         // whereas the direct-play branch below only ever knows about slot 0/1.)
         bool interruptingLoop = character->Mode == CharacterModes.EmoteLoop;
 
@@ -3480,24 +3542,24 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         bool usable = agent != null && agent->CanUseEmote(emoteId);
 
         // ── ANIM: replicate the ENGINE's condition restrictions (v0.7.392) ────────────────────────
-        // The direct-play branch below is a deliberate bypass — it is how HMS lets you play emotes you
+        // The direct-play branch below is a deliberate bypass - it is how HMS lets you play emotes you
         // have not unlocked, inside a session. But it bypassed EVERY refusal, not just the unlock one:
         // when CanUseEmote said no for a STATE reason, HMS fell through and forced the emote anyway.
         //
         // That is the Gulp bug. Gridanian/Ul'dahn/Lominsan Gulp (301/302/303) do not fire in the real
-        // game while seated — the engine refuses. HMS forced them, and since those three carry no
+        // game while seated - the engine refuses. HMS forced them, and since those three carry no
         // posture variants at all (ConditionMode 3, slots 0 and 1 only), the standing loop played
         // wherever the body already was, i.e. on top of the chair. The visible symptom looked like a
         // positioning bug; the actual fault was invoking something the game had declined.
         //
-        // Fix: tell the two refusals apart, and let the ENGINE be the authority for the second — no
+        // Fix: tell the two refusals apart, and let the ENGINE be the authority for the second - no
         // hand-tuned condition table, no per-emote special cases.
-        //   UIState.IsEmoteUnlocked(id)        — do you own it
-        //   EmoteManager.CanExecuteEmote(id)   — can you do it RIGHT NOW (engine-level, not the UI agent)
+        //   UIState.IsEmoteUnlocked(id)        - do you own it
+        //   EmoteManager.CanExecuteEmote(id)   - can you do it RIGHT NOW (engine-level, not the UI agent)
         // unlocked && !executable  ->  the game is refusing on state grounds. Refuse too.
         // !unlocked                ->  HMS's in-session bypass stands, exactly as designed.
         //
-        // (Restrictions we may WANT to lift later — mount actions in particular — are a separate case
+        // (Restrictions we may WANT to lift later - mount actions in particular - are a separate case
         // and should be lifted explicitly here, not by leaving the whole gate open.)
         var uiState = FFXIVClientStructs.FFXIV.Client.Game.UI.UIState.Instance();
         var emoteMgr = FFXIVClientStructs.FFXIV.Client.Game.Control.EmoteManager.Instance();
@@ -3516,12 +3578,12 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // play below, which survives the breaker (proven: forced-loop → forced-loop interrupts cleanly).
         // ── v0.7.395: congruency by default, better where we can ──────────────────────────────────
         // The game's own emote window shows each emote's legal conditions, and it is right: Gridanian
-        // Gulp (301) is STANDING-ONLY. Its sheet row has slots 0 and 1 only — no posture variants at
-        // all — so refusing it while seated is correct behaviour, not a bug. Confirmed in the live
+        // Gulp (301) is STANDING-ONLY. Its sheet row has slots 0 and 1 only - no posture variants at
+        // all - so refusing it while seated is correct behaviour, not a bug. Confirmed in the live
         // game: it will not fire seated on a bench or on a chair, HMS session or not.
         //
         // But HMS can do better here, and it costs nothing. Both gulp timelines are
-        // ActionTimeline.Slot=3 — the ADD lane, not the base lane. An additive animation LAYERS OVER a
+        // ActionTimeline.Slot=3 - the ADD lane, not the base lane. An additive animation LAYERS OVER a
         // held pose instead of replacing it, so direct-playing the standing drink while the sit pose
         // holds underneath produces a genuine seated drink. SE authored the motion on a lane that
         // composes; they simply never wired a seated entry point for it.
@@ -3530,12 +3592,12 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         //   in a posture AND the emote has NO posture variant  ->  direct play (layer it over the pose)
         //   otherwise                                          ->  the agent, which picks the right
         //                                                          posture slot when one exists
-        // So 301 seated gains a seated drink, 301 standing is unchanged, and Drink Tea (239) — which
-        // DOES ship a seated form, u_sp39 in slots 2/3/4 — keeps going through the agent so the game's
+        // So 301 seated gains a seated drink, 301 standing is unchanged, and Drink Tea (239) - which
+        // DOES ship a seated form, u_sp39 in slots 2/3/4 - keeps going through the agent so the game's
         // own stock variant is used rather than one we improvised.
         // ── v0.7.397: congruency. `/hms emote X` behaves like `/X`. ───────────────────────────────
         // The game's emote window publishes each emote's legal conditions and it is correct: Gridanian
-        // Gulp (301) is STANDING-ONLY. Its sheet row carries slots 0 and 1 only — no posture variant —
+        // Gulp (301) is STANDING-ONLY. Its sheet row carries slots 0 and 1 only - no posture variant -
         // and the live game refuses it from a bench or a chair, HMS session or not.
         //
         // Neither engine predicate detects this. CanUseEmote and CanExecuteEmote BOTH returned true for
@@ -3545,7 +3607,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         //
         //   in a posture AND no posture variant  ->  refuse, exactly as the slash command does
         //
-        // ⚠ WE CAN DO BETTER THAN THIS, and it is written up — see
+        // ⚠ WE CAN DO BETTER THAN THIS, and it is written up - see
         // "Synthetic emotes via additive-lane compositing" (2026-07-23). These clips are
         // ActionTimeline.Slot=3 (Add lane), so driving them through PlayActionTimeline with NO SetMode
         // layers them over a held pose and yields a seated drink the game never shipped. That was built
@@ -3553,7 +3615,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // TimelineIds[0] and Mode to recognise a one-shot and the layering path deliberately changes
         // neither, so peers see nothing. A synthetic emote only the performer can see is worthless for
         // RP. Re-landing it needs the emote id carried as an epoch event so the receiver can run the
-        // same PlayActionTimeline — a scoped wire change, post-release, tracked as peer visibility.
+        // same PlayActionTimeline - a scoped wire change, post-release, tracked as peer visibility.
         bool inPosture = character->Mode == CharacterModes.InPositionLoop;
         bool hasPostureVariant = false;
         {
@@ -3577,12 +3639,12 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         if (inPosture && !hasPostureVariant)
         {
             // Silent, deliberately. The native slash command says nothing when it refuses either, so a
-            // chat line would be MORE noise than the behaviour we are replicating — and it would double
+            // chat line would be MORE noise than the behaviour we are replicating - and it would double
             // up once the compositing blend lands. The debug line above records it.
             return;
         }
 
-        // Congruency gate for everything the engine itself declines (unlock is exempt — playing locked
+        // Congruency gate for everything the engine itself declines (unlock is exempt - playing locked
         // emotes in-session is the deliberate RP bypass, per DoEmote's own note).
         if (unlocked && !executable)
         {
@@ -3592,12 +3654,12 @@ public sealed class HMSyncPlugin : IDalamudPlugin
 
         if (usable && !interruptingLoop)
         {
-            // addToHistory:false — scripted play, keep it out of the player's recent-emote history.
+            // addToHistory:false - scripted play, keep it out of the player's recent-emote history.
             agent->ExecuteEmote(emoteId, addToHistory: false);
         }
         else
         {
-            // BREAKER: dismiss the running loop before replacing it — the same state reset the game does on
+            // BREAKER: dismiss the running loop before replacing it - the same state reset the game does on
             // move. Clear the emote owner so the game stops re-stamping the mode from EmoteController, reset
             // the mode, release the base override. This is the receiver's proven move-cancel (ApplyEmoteState);
             // a bare SetMode(Normal) is overwritten next frame, leaving the old loop to resume.
@@ -3606,7 +3668,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 character->EmoteController.EmoteId = 0;
                 character->SetMode(CharacterModes.Normal, 0);
                 // Force the mode FIELD to Normal too. LocalStateDetector reads character->Mode directly, and a
-                // one-shot following this sets no mode of its own — so unless Mode reads Normal the detector
+                // one-shot following this sets no mode of its own - so unless Mode reads Normal the detector
                 // treats the new timeline as a sustained pose and never broadcasts it (peer misses the
                 // interrupt). EmoteId=0 above stops the game re-stamping the loop, so this value holds.
                 character->Mode = CharacterModes.Normal;
@@ -3614,7 +3676,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 character->Timeline.BaseOverride = 0;
             }
 
-            // Direct play — genuinely locked emotes, AND any emote interrupting a loop. Mirrors the receiver's
+            // Direct play - genuinely locked emotes, AND any emote interrupting a loop. Mirrors the receiver's
             // ApplyEmoteFromSheet.
             var sheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.Emote>();
             var entry = sheet.GetRow(emoteId);
@@ -3640,18 +3702,18 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             }
             else
             {
-                // One-shot — from idle OR interrupting a loop (the breaker above already returned us to a
+                // One-shot - from idle OR interrupting a loop (the breaker above already returned us to a
                 // clean Normal state, so it's the same case either way).
                 //
-                // v0.7.398 — POSTURE-AWARE SLOT SELECTION.
+                // v0.7.398 - POSTURE-AWARE SLOT SELECTION.
                 // This branch used to play ActionTimeline[0] unconditionally: the STANDING clip. For an
                 // emote with a stock seated form that is simply wrong, and it is why `/hms emote 239`
-                // (Drink Tea) stood the character up — 239 ships 8058 `sp39` standing in slot 0 and 8064
+                // (Drink Tea) stood the character up - 239 ships 8058 `sp39` standing in slot 0 and 8064
                 // `u_sp39` seated in slots 2/3/4, and only slot 0 was ever read.
                 //
                 // Why this branch and not the agent: the agent refuses emotes the character has not
                 // unlocked, which is exactly the RP case HMS exists to serve. So the bypass has to do the
-                // posture selection itself — the agent is not available to do it for us.
+                // posture selection itself - the agent is not available to do it for us.
                 //
                 //   ModeParam is the EmoteMode row: 1 = Sit on Ground -> slot 2 (j_)
                 //                                   2 = Sit (chair)   -> slot 3 (s_)
@@ -3666,19 +3728,19 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                              : 4;
                     postureTl = (ushort)entry.ActionTimeline[slot].RowId;
                     if (postureTl == 0) postureTl = (ushort)entry.ActionTimeline[4].RowId;
-                    if (postureTl == loopTl) postureTl = 0;   // no distinct variant — nothing gained
+                    if (postureTl == loopTl) postureTl = 0;   // no distinct variant - nothing gained
                 }
 
                 if (postureTl != 0)
                 {
                     // The seated/mounted variants are authored to COMPOSE over the held pose, so they go
                     // on the ACTION lane. PlayTimeline would land them in TimelineIds[0] and evict the
-                    // pose — the same base-lane mistake that produced the cpose regression in the visor
+                    // pose - the same base-lane mistake that produced the cpose regression in the visor
                     // arc, and the same one standing the character up here.
                     //
                     // ⚠ TRADE-OFF, deliberate: LocalStateDetector recognises a one-shot by reading
                     // TimelineIds[0], which this path does not touch, so the seated form is LOCAL-ONLY.
-                    // Before this change the emote synced — but synced the WRONG animation, having first
+                    // Before this change the emote synced - but synced the WRONG animation, having first
                     // stood the character up. Correct-and-unsynced beats wrong-and-synced for a pose the
                     // player is deliberately holding. Syncing it properly is the same epoch-carried
                     // emote-id wire change already scoped post-release for the compositing work; both
@@ -3690,7 +3752,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 else
                 {
                     // PlayTimeline both plays the animation AND lands the id in
-                    // TimelineSequencer.TimelineIds[0] — the exact field LocalStateDetector reads to
+                    // TimelineSequencer.TimelineIds[0] - the exact field LocalStateDetector reads to
                     // recognise and broadcast a one-shot, so the peer gets it. (PlayActionTimeline(tl,34)
                     // plays the same animation on the ACTION lane, leaving TimelineIds[0] unchanged, so the
                     // detector never saw it and the peer missed the interrupt. The receiver only needs the
@@ -3707,7 +3769,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     {
         RunOnMainThread(() =>
         {
-            // Register in the roster immediately so the participant list reflects the peer in the LOBBY (pre-load) —
+            // Register in the roster immediately so the participant list reflects the peer in the LOBBY (pre-load) -
             // the roster used to be built only from the transform stream, which no longer flows before zone-load. The
             // relay now stamps identity (ContentId + CharacterName) on PeerJoined, so a co-located lobby peer resolves
             // to their real character (name/world/FC) at once via RegisterPeer's ContentId bind. entityId is derived on
@@ -3716,18 +3778,18 @@ public sealed class HMSyncPlugin : IDalamudPlugin
 
             // S327: binding is now driven by the transform stream (each peer's transforms carry their stable ContentId;
             // StateApplyService creates the peerInfos entry and the per-frame resolve loop binds by ContentId once the
-            // character is in render range). So we no longer guess a body from the object table here — that was the
+            // character is in render range). So we no longer guess a body from the object table here - that was the
             // fragile positional/name path (the residential-district misattribution). Just announce the connection; the
             // participant list will fill in the name once the peer's identity resolves.
             chat.Print("[HMSync] " + (string.IsNullOrEmpty(characterName) ? "A peer" : characterName) + " connected to the session.");
 
             // S331 (late-join signal fix): when a peer joins, re-send our FULL current state once so the newcomer
-            // catches up on everything set-once-static — our Moniker name, held emote/cpose stance, mount, minion,
+            // catches up on everything set-once-static - our Moniker name, held emote/cpose stance, mount, minion,
             // ornament, weapon-drawn, and (if we're the host) map-state. WARM/COLD are strictly change-gated (no
             // heartbeat), so anything we set BEFORE they joined is invisible to them without this re-offer. EVERY peer
-            // does this (not just the host) — a guest's appearance/pose/mount matters to the newcomer too. Existing
+            // does this (not just the host) - a guest's appearance/pose/mount matters to the newcomer too. Existing
             // peers are unaffected (one-shots are epoch-gated, level-states are idempotent). Also re-send the zone
-            // (host only) so the newcomer loads the right map — see RequestZoneResend below.
+            // (host only) so the newcomer loads the right map - see RequestZoneResend below.
             stateCapture.RequestFullResend();
             if (relay.IsHost) RequestZoneResend();
         });
@@ -3735,7 +3797,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
 
     // S331 (late-join signal fix): the host re-broadcasts the CURRENT zone-load so a newcomer loads the right map.
     // Zone-load is a one-shot EVENT (ZoneLoadExecute), not lane state, so it isn't caught by the WARM/COLD/HOST
-    // re-send — it needs its own re-offer. The receiver skip-guard (OnZoneLoadReceived) makes this safe to broadcast:
+    // re-send - it needs its own re-offer. The receiver skip-guard (OnZoneLoadReceived) makes this safe to broadcast:
     // a peer ALREADY in the target zone ignores it (no disruptive reload), while the newcomer (not yet there) loads it.
     private void RequestZoneResend()
     {
@@ -3786,7 +3848,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         });
     }
 
-    // The current host's relay PeerId — tracked so the roster can pin + amber-tint the host on everyone's screen. Set
+    // The current host's relay PeerId - tracked so the roster can pin + amber-tint the host on everyone's screen. Set
     // to self when we hold host and updated on explicit HostTransfer; succession-on-leave and fresh joins fall back to
     // first-by-join-order in BuildParticipantList.
     private string currentHostPeerId = "";
@@ -3799,9 +3861,9 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             if (newHostId == relay.LocalPeerId)
             {
                 // S330c (Stage 2b): INHERIT map-state on promotion. Before becoming host, this client was a guest
-                // applying the old host's HostUpdates. If we now stamp our OWN MapState (which is default/empty — we
+                // applying the old host's HostUpdates. If we now stamp our OWN MapState (which is default/empty - we
                 // never authored map-state as a guest), our first HostUpdate would wipe the scene's weather/time/BGM
-                // AND restart the epoch. So seed our MapState from the last map-state we APPLIED — same values, and
+                // AND restart the epoch. So seed our MapState from the last map-state we APPLIED - same values, and
                 // the epoch continues from where the old host left off (our next change is inheritedEpoch+1).
                 var inherited = stateApply.LastAppliedMapState;
                 if (inherited != null)
@@ -3821,21 +3883,21 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             }
             else
             {
-                // v0.7.431 — DEMOTION: the missing half of the transfer. If we currently hold host and
+                // v0.7.431 - DEMOTION: the missing half of the transfer. If we currently hold host and
                 // the role is moving to someone else, drop authority. Everything downstream (GUI host
                 // view, host-command guards, weather/BGM authority via HasMapAuthority, CanLoad) reads
-                // relay.IsHost live, so they revert to guest behaviour the instant this flips — no
+                // relay.IsHost live, so they revert to guest behaviour the instant this flips - no
                 // per-consumer plumbing. Pure authority swap: no map movement, we keep the zone we're on.
                 // Symmetric with the promotion branch above. Also reset the map-state apply gate: as the
                 // prior host our lastAppliedMapEpoch tracked our OWN outbound epoch, and the new host's
-                // epoch continues that sequence — so its next change could land at an epoch we already
+                // epoch continues that sequence - so its next change could land at an epoch we already
                 // equal and get ignored, leaving our scene stale. ForceMapStateReapply() re-opens the
                 // gate so we mirror the new host's next broadcast.
                 if (relay.IsHost)
                 {
                     relay.IsHost = false;
                     stateApply.ForceMapStateReapply();
-                    log.Information("[HMSync] Demoted from host on transfer — now a guest, mirroring the new host.");
+                    log.Information("[HMSync] Demoted from host on transfer - now a guest, mirroring the new host.");
                 }
 
                 var shortId = newHostId.Length >= 6 ? newHostId[..6] : newHostId;
@@ -3865,7 +3927,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             stateApply.ClearRoster();
             currentHostPeerId = relay.IsHost ? relay.LocalPeerId : "";   // self if we host; else fall back to join order
 
-            // Admission confirmed by the relay (not just connect-ok) — announce the lobby HERE so a refusal
+            // Admission confirmed by the relay (not just connect-ok) - announce the lobby HERE so a refusal
             // (wrong password / no host nearby / already hosting) never prints a false "joined". Host vs peer per
             // the relay's authoritative IsHost.
             if (relay.IsHost)
@@ -3880,7 +3942,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             }
 
             // S327: no positional pairing here anymore. The old code walked the object table and paired the Nth nearby
-            // player with the Nth relay PeerId — random (the orderings are unrelated), stranger-polluted, and it dropped
+            // player with the Nth relay PeerId - random (the orderings are unrelated), stranger-polluted, and it dropped
             // unmatched PeerIds when fewer characters were loaded than peers (exactly the cross-map case). Binding is now
             // driven by the transform stream: each peer's transforms carry their stable ContentId, StateApplyService
             // creates the peerInfos entry, and the per-frame resolve loop binds by ContentId once the character is in
@@ -3897,7 +3959,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                     new FFXIVClientStructs.FFXIV.Common.Math.Vector3(data.SpawnX, data.SpawnY, data.SpawnZ));
                 actorVisibility.Refresh();
                 // S328ab: force the host's map-state (weather/time/BGM) to re-apply once THIS join's zone finishes
-                // loading. Without this, the host's map-state epoch arrives while the joiner's zone is still loading —
+                // loading. Without this, the host's map-state epoch arrives while the joiner's zone is still loading -
                 // ApplyMapState stores the values but SKIPS the live write (gated on IsZoneLoaded) yet still marks the
                 // epoch consumed, so it never re-fires once loaded → the joiner is stuck on the real zone's weather
                 // (None/atmospheric) and clock. The mid-session host-load path already did this; the JOIN path didn't.
@@ -3914,9 +3976,9 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         RunOnMainThread(() =>
         {
             // S331 (late-join signal fix): skip-guard. The host re-broadcasts zone-load when a peer joins (so a
-            // latecomer loads the right map). But that broadcast reaches EVERYONE — and a peer already in the target
+            // latecomer loads the right map). But that broadcast reaches EVERYONE - and a peer already in the target
             // zone must NOT reload (a disruptive flash + re-spawn). If we're already loaded into this territory, this
-            // is a redundant catch-up re-send meant for the newcomer, not us — ignore it. The newcomer (not yet in the
+            // is a redundant catch-up re-send meant for the newcomer, not us - ignore it. The newcomer (not yet in the
             // zone) falls through and loads it. This is what makes the join-time re-broadcast safe to fan to the room.
             // v0.7.332: cutscene stages load via a DONOR territory with a bg-path swap. data.TerritoryId is the donor;
             // data.StageBg (when set) is the actual stage. A stage-aware skip-guard: only skip as a redundant re-send if
@@ -3926,19 +3988,19 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             if (zoneLoad.IsZoneLoaded && zoneLoad.CurrentLoadedZone == data.TerritoryId
                 && (zoneLoad.ActiveStageBg ?? "") == (isStage ? data.StageBg : ""))
             {
-                log.Information("[HMSync] Ignoring zone-load for territory " + data.TerritoryId + " — already loaded (catch-up re-send for a newcomer).");
+                log.Information("[HMSync] Ignoring zone-load for territory " + data.TerritoryId + " - already loaded (catch-up re-send for a newcomer).");
                 return;
             }
 
-            // Print the REAL name — the stage name for a cutscene (the donor's GetZoneName was the "Ingleside Apartment"
+            // Print the REAL name - the stage name for a cutscene (the donor's GetZoneName was the "Ingleside Apartment"
             // lie), the territory name otherwise.
             string zoneName = isStage && data.StageName.Length > 0 ? data.StageName : zoneLoad.GetZoneName(data.TerritoryId);
             chat.Print("[HMSync] Host loading zone: " + zoneName);
 
-            // Guest goes synthetic before loading the host's zone — same filter-first-then-load invariant as the host.
+            // Guest goes synthetic before loading the host's zone - same filter-first-then-load invariant as the host.
             if (!EngageSyntheticSession()) return;
 
-            // v0.7.332: for a cutscene, arm the same bg-swap the host used — set BOTH stage fields before the donor load
+            // v0.7.332: for a cutscene, arm the same bg-swap the host used - set BOTH stage fields before the donor load
             // so the guest's CreateScene detour substitutes the stage bg (mirrors CutsceneStageService.LoadStage).
             if (isStage)
             {
@@ -3951,7 +4013,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 new FFXIVClientStructs.FFXIV.Common.Math.Vector3(data.SpawnX, data.SpawnY, data.SpawnZ));
             actorVisibility.Refresh();
             // S327j: the guest just loaded a fresh map. Force the host's current map-state (esp. a HELD time) to
-            // re-apply on the next transform — otherwise the new map runs on the real clock until the host next edits
+            // re-apply on the next transform - otherwise the new map runs on the real clock until the host next edits
             // time. Deferred a little so the apply lands after the load settles.
             guestMapReapplyCountdown = 120;
             lastAppliedPeerBgm = 0;   // S327l: new zone → clear BGM tracking so its music re-applies fresh (not stale)
@@ -3976,7 +4038,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     // Error(9) → DoLeaveInternal → relay.Disconnect(), and Disconnect() clears IsConnected SYNCHRONOUSLY, so the
     // receive loop's `if (IsConnected)` tail guard is already false and OnDisconnected NEVER FIRES on that path.
     // A bool would therefore latch true forever and silently swallow the message for the next genuine drop. A
-    // timestamp self-expires whether or not the clearing path ever runs — harmless by construction, not by
+    // timestamp self-expires whether or not the clearing path ever runs - harmless by construction, not by
     // remembering to reset.
     private DateTime throttleAnnouncedAt = DateTime.MinValue;
     private bool ThrottleJustAnnounced => (DateTime.UtcNow - throttleAnnouncedAt).TotalSeconds < 10;
@@ -3985,7 +4047,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     {
         RunOnMainThread(() =>
         {
-            // v0.7.464 (RMS QA F3, hard tier): a close carrying 4029 is a throttle disconnect, not a network drop —
+            // v0.7.464 (RMS QA F3, hard tier): a close carrying 4029 is a throttle disconnect, not a network drop -
             // say so, because "lost connection" sends the user hunting a fault that isn't there. The close code is
             // only present when the relay closed CLEANLY; an aborted socket leaves it null and we fall back to the
             // generic line rather than guessing.
@@ -3993,13 +4055,13 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             if (!ThrottleJustAnnounced)
             {
                 if (hardThrottle)
-                    chat.PrintError("[HMSync] Disconnected — the relay throttled this connection for excessive traffic. " +
+                    chat.PrintError("[HMSync] Disconnected - the relay throttled this connection for excessive traffic. " +
                                     "You can reconnect when ready.");
                 else
                     chat.Print("[HMSync] Lost connection to relay.");
             }
             // S193: a hard disconnect must still clear every imposed peer state, or mounts (and
-            // future transients) leak — the puppets are still in our local object table even
+            // future transients) leak - the puppets are still in our local object table even
             // though the relay connection dropped. This was the "mount persists through dc" gap:
             // OnDisconnected printed a message but never ran the sweep. DoLeaveInternal handles
             // the full teardown (sanitize + revert + filter-off + state services), idempotently.
@@ -4009,10 +4071,10 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     }
 
     // v0.7.464 (RMS QA F3, soft tier). The relay is dropping our excess ingress but keeping the socket open, so this
-    // is advisory ONLY — no teardown, no state change, nothing the user must do. Two surfaces, deliberately:
+    // is advisory ONLY - no teardown, no state change, nothing the user must do. Two surfaces, deliberately:
     //   • the status strip lights an amber line for 5 s (re-armed by each notice, so it stays lit through a burst);
     //   • chat gets ONE line at most every 30 s, because the relay may emit up to ~1/3 s and a per-notice print
-    //     would bury the log — the sin the diagnostics-noise pass exists to prevent.
+    //     would bury the log - the sin the diagnostics-noise pass exists to prevent.
     private DateTime lastThrottleChatPrint = DateTime.MinValue;
 
     private void OnRelayRateLimited()
@@ -4022,7 +4084,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             ui.NoteThrottled();
             if ((DateTime.UtcNow - lastThrottleChatPrint).TotalSeconds < 30) return;
             lastThrottleChatPrint = DateTime.UtcNow;
-            chat.Print("[HMSync] The relay is throttling this connection — some updates are being dropped. " +
+            chat.Print("[HMSync] The relay is throttling this connection - some updates are being dropped. " +
                        "The session continues; this clears on its own.");
         });
     }
@@ -4032,38 +4094,38 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         RunOnMainThread(() =>
         {
             // v0.7.464: switched from magic integers to the shared HMSync.Wire.ErrCode constants. The codes used to
-            // live ONLY in the relay's Program.cs while this switch re-implemented them as bare literals — the one
+            // live ONLY in the relay's Program.cs while this switch re-implemented them as bare literals - the one
             // thing both sides must agree on was the one thing the compiler-enforced contract didn't cover. ErrCode
             // now lives in HMSyncWireTypes.cs alongside WireKind, so a code added on one side is visible on the other.
             string msg = code switch
             {
                 HMSync.Wire.ErrCode.RoomNotFound   => "That room has ended.",
-                HMSync.Wire.ErrCode.NotHosting     => "No one nearby is hosting a room — you must be in visual range of the host.",
+                HMSync.Wire.ErrCode.NotHosting     => "No one nearby is hosting a room - you must be in visual range of the host.",
                 HMSync.Wire.ErrCode.RoomFull       => "That room is full.",
                 HMSync.Wire.ErrCode.NotHost        => "Only the host can do that.",
                 HMSync.Wire.ErrCode.Kicked         => "You were removed from the room.",
                 HMSync.Wire.ErrCode.Banned         => "You have been removed from this room.",
                 HMSync.Wire.ErrCode.WrongPassword  => "Incorrect room password.",
-                HMSync.Wire.ErrCode.AlreadyHosting => "You already host a live room — leave it first.",
+                HMSync.Wire.ErrCode.AlreadyHosting => "You already host a live room - leave it first.",
                 // HARD throttle: the relay closes the socket immediately after this. Distinct from the SOFT tier
                 // (WireKind.RateLimited 0x08), which is advisory and leaves the session running.
-                HMSync.Wire.ErrCode.RateLimited    => "The relay is throttling this connection for excessive traffic — " +
+                HMSync.Wire.ErrCode.RateLimited    => "The relay is throttling this connection for excessive traffic - " +
                                                      "the session has ended. You can reconnect when ready.",
                 _ => string.IsNullOrEmpty(relayMsg) ? "Relay error." : relayMsg,
             };
             chat.Print("[HMSync] " + msg);
 
-            // The close frame arrives moments after this — and on this path DoLeaveInternal disconnects us first, so
+            // The close frame arrives moments after this - and on this path DoLeaveInternal disconnects us first, so
             // OnDisconnected may not run at all. Either way the user gets one message for one cause.
             if (code == HMSync.Wire.ErrCode.RateLimited) throttleAnnouncedAt = DateTime.UtcNow;
 
-            // NotHost is action-refused, NOT session-ending — stay connected. Everything else tears down to idle:
+            // NotHost is action-refused, NOT session-ending - stay connected. Everything else tears down to idle:
             // a refused join leaves us connected-but-roomless on the relay, and Kicked is a hard close on their side.
-            // We never auto-retry — retrying into a ban would just bounce back as Banned.
+            // We never auto-retry - retrying into a ban would just bounce back as Banned.
             //
             // ⚠ NOTE FOR ANY FUTURE ERROR CODE: this fallthrough means an UNRECOGNISED code tears the session down.
             // That is the right default for a refusal channel, but it makes ErrorPayload unusable for advisory
-            // signals — a new advisory must ride a new WireKind (which an older client ignores), not a new code.
+            // signals - a new advisory must ride a new WireKind (which an older client ignores), not a new code.
             if (code != HMSync.Wire.ErrCode.NotHost)
             {
                 DoLeaveInternal(silent: true);
@@ -4077,7 +4139,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     private static readonly System.Random pwRng = new System.Random();
 
     // A short, shareable room password when the host leaves the field blank. 5 chars from an unambiguous alphabet
-    // (no 0/O/1/l/I) — easy to read out, and unique enough for a nearby lobby (presence is the real gate, not entropy).
+    // (no 0/O/1/l/I) - easy to read out, and unique enough for a nearby lobby (presence is the real gate, not entropy).
     private static string GenerateShortPassword()
     {
         const string alphabet = "abcdefghjkmnpqrstuvwxyz23456789";
@@ -4096,9 +4158,11 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         pluginInterface.UiBuilder.Draw -= ui.Draw;
         pluginInterface.UiBuilder.Draw -= ui.DrawCarpetOverlay;
         pluginInterface.UiBuilder.Draw -= ui.DrawCarpetBar;
-        pluginInterface.UiBuilder.Draw -= ui.DrawFaceControlBar;   // v0.7.461 (P2, Codex QA): was added (480) but never removed — stale callback on reload
+        pluginInterface.UiBuilder.Draw -= ui.DrawFaceControlBar;   // v0.7.461 (P2, Codex QA): was added (480) but never removed - stale callback on reload
         pluginInterface.UiBuilder.Draw -= ui.DrawMovementBar;       // v0.7.465: paired with the += above
         pluginInterface.UiBuilder.Draw -= ui.DrawAppearanceBar;     // v0.7.465: paired with the += above
+        pluginInterface.UiBuilder.OpenMainUi -= ui.OpenMain;        // paired with the += above
+        pluginInterface.UiBuilder.OpenConfigUi -= ui.OpenConfig;    // paired with the += above
 
         try { mapSettings.DisableTimeOverride(); } catch { }   // S326v: don't leave the clock frozen on unload
 

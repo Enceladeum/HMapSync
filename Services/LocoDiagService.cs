@@ -6,13 +6,13 @@ namespace HMSync.Services;
 
 /// <summary>
 /// S328ai: broad receiver-side locomotion/animation diagnostic. When armed (/hms locodiag), logs per-peer, per-frame,
-/// the animation-resolver's inputs and decisions — so we can read the exact frame-by-frame story of a jump, a
+/// the animation-resolver's inputs and decisions - so we can read the exact frame-by-frame story of a jump, a
 /// dismount, a stop, a turn, etc., and tell whether a misbehavior is SENDER over-reporting a phase across ticks or
 /// the RECEIVER over-sustaining a single report across frames. Built to catch the jump-land / dismount-settle
 /// double-loop, but deliberately broad so any resolver misbehavior (not just jumps) shows up.
 ///
 /// Logging is EDGE-BASED to keep the log readable: it prints a line only when something CHANGES for a peer
-/// (jump phase, move state, mount id, the resolved target timeline, or a PlayTimeline fire) — plus a per-phase
+/// (jump phase, move state, mount id, the resolved target timeline, or a PlayTimeline fire) - plus a per-phase
 /// CONSECUTIVE-FRAME COUNT, which is the key number for the double-loop question (how many frames did the receiver
 /// see JumpLanding, and how many times did it (re)play the land clip).
 ///
@@ -86,7 +86,7 @@ public sealed class LocoDiagService
         }
         else t.PhaseFrameCount++;
 
-        // Move-state transition (walk→idle etc — the walk-stop signal).
+        // Move-state transition (walk→idle etc - the walk-stop signal).
         if (moveState != t.LastMoveState)
         {
             log.Information("[HMSync] [LOCODIAG] " + who + " moveState " + t.LastMoveState + "→" + moveState +
@@ -126,6 +126,6 @@ public sealed class LocoDiagService
         // A 2nd+ fire for the same target is the smoking gun for a re-triggered one-shot.
         if (t.PlayFiresThisTarget >= 2)
             log.Information("[HMSync] [LOCODIAG]   ⚠ PlayTimeline(" + tl + ") RE-FIRED (#" + t.PlayFiresThisTarget +
-                ") for same target — one-shot being re-triggered?");
+                ") for same target - one-shot being re-triggered?");
     }
 }

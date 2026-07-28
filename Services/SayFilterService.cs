@@ -11,10 +11,10 @@ namespace HMSync.Services;
 // PRIVACY: this does NOT collect, store, or transmit any chat. It subscribes to Dalamud's IChatGui.ChatMessage
 // (messages the game is ALREADY about to display), and for /say from a non-session-member it calls PreventOriginal()
 // to stop the game rendering that one line. Nothing is read into HMS state, nothing crosses the relay. It is a pure
-// display filter — "don't show me strangers' /say while I'm in an RP session."
+// display filter - "don't show me strangers' /say while I'm in an RP session."
 //
 // Scope note (the architectural reality): your REAL character receives /say from players physically near your REAL
-// body on the live server — NOT from your room members (their real characters are elsewhere; their session presence is
+// body on the live server - NOT from your room members (their real characters are elsewhere; their session presence is
 // a puppet at a synthetic position). So this filter suppresses real-proximity strangers' /say. It cannot MAKE room
 // members' /say appear (that would require relaying chat content, which HMS deliberately does NOT do). It only hides.
 public sealed class SayFilterService : IDisposable
@@ -22,7 +22,7 @@ public sealed class SayFilterService : IDisposable
     private readonly IChatGui chat;
     private readonly IPluginLog log;
     // Supplies the set of session-member character names (lower-cased) whose /say should be ALLOWED. When the session
-    // ends this returns empty, so the filter has nothing to allow — but it also only ACTS when Enabled, and Enabled is
+    // ends this returns empty, so the filter has nothing to allow - but it also only ACTS when Enabled, and Enabled is
     // cleared on session end, so an empty set never causes over-suppression outside a session.
     private readonly Func<HashSet<string>> sessionMemberNames;
 
@@ -34,7 +34,7 @@ public sealed class SayFilterService : IDisposable
 
     // Active only while a session is running (set at session start, cleared on teardown). When active, the filter both
     // hides non-session /say (you're isolated in a session) AND range-culls members' /say/yell by synthetic distance.
-    // One flag — these aren't independent options, they're the two halves of "spatial chat behaves correctly in-session."
+    // One flag - these aren't independent options, they're the two halves of "spatial chat behaves correctly in-session."
     public bool Active;
 
     // Diagnostic (/hms saydiag): when true, log every chat message's kind/sender/text (observe-only, independent of
@@ -68,7 +68,7 @@ public sealed class SayFilterService : IDisposable
         try
         {
             // Diagnostic (/hms saydiag): log EVERY chat message's kind + sender + text, so we can see whether /say,
-            // /yell, /shout reach the chat display at all — and whether HMS's firewall drops them (nothing logged in
+            // /yell, /shout reach the chat display at all - and whether HMS's firewall drops them (nothing logged in
             // session for a remote sender ⇒ dropped upstream). Logs regardless of Enabled/session; observe-only.
             if (Diag)
             {
@@ -82,7 +82,7 @@ public sealed class SayFilterService : IDisposable
             if (!Active) return;
 
             // Spatial chat only. Say/Yell/Shout are the proximity modes; everything else (tells, party, FC, LS,
-            // system, etc.) is never filtered. Shout is whole-area — never range-culled, but still member-culled.
+            // system, etc.) is never filtered. Shout is whole-area - never range-culled, but still member-culled.
             bool isSay = message.LogKind == XivChatType.Say;
             bool isYell = message.LogKind == XivChatType.Yell;
             bool isShout = message.LogKind == XivChatType.Shout;
@@ -122,7 +122,7 @@ public sealed class SayFilterService : IDisposable
     }
 
     // The Sender SeString often includes server/world glyphs and formatting; reduce to the bare character name for
-    // matching. Names may carry a leading world icon or a party-number prefix — strip non-letter leading noise.
+    // matching. Names may carry a leading world icon or a party-number prefix - strip non-letter leading noise.
     private static string ExtractName(string raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return "";

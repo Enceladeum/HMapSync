@@ -9,7 +9,7 @@ namespace HMSync.Services;
 
 /// <summary>
 /// S248: wrapper over the Glamourer IPC for the cosmetic VISIBILITY toggles
-/// (weapon / hat / visor). Glamourer is AUTHORITATIVE — HMS reads state from it, writes to it,
+/// (weapon / hat / visor). Glamourer is AUTHORITATIVE - HMS reads state from it, writes to it,
 /// and refreshes on its StateChanged event. HMS keeps NO tracked toggle state of its own, so the
 /// HMS badges always reflect real Glamourer state and can never go stale (the S246/S247 stale-bit
 /// bug is structurally impossible here). When Glamourer is absent, the caller falls back to HMS's
@@ -24,7 +24,7 @@ namespace HMSync.Services;
 /// MetaFlag: None, Wetness, HatState, VisorState, WeaponState, EarState.
 ///
 /// DEPLOYMENT: Glamourer.Api.dll MUST ship next to HMSync.dll (PackageReference copies it). Do NOT
-/// use AssemblyLoadContext — IPC crosses the ALC boundary as primitives, so HMS's copy never
+/// use AssemblyLoadContext - IPC crosses the ALC boundary as primitives, so HMS's copy never
 /// conflicts with Glamourer's loaded copy.
 /// </summary>
 public sealed class GlamourerIpc : IDisposable
@@ -82,7 +82,7 @@ public sealed class GlamourerIpc : IDisposable
 
     /// <summary>
     /// Read the three meta-visibility flags from Glamourer for the given actor (0 = local player).
-    /// Returns false if Glamourer is absent, the call fails, or the state can't be parsed — in
+    /// Returns false if Glamourer is absent, the call fails, or the state can't be parsed - in
     /// which case the caller shows an unknown/neutral badge rather than wrong data.
     /// Each out-param is VISIBILITY (true = shown), matching Glamourer's own checkbox sense.
     /// </summary>
@@ -102,7 +102,7 @@ public sealed class GlamourerIpc : IDisposable
     /// <summary>
     /// Parse the meta-toggle booleans out of Glamourer's state JObject.
     ///
-    /// JSON KEY PATHS — read directly from Glamourer's source (DesignBase.SerializeEquipment):
+    /// JSON KEY PATHS - read directly from Glamourer's source (DesignBase.SerializeEquipment):
     ///   root["Equipment"]["Hat"]["Show"]        -> bool   (hat visible;    from IsHatVisible())
     ///   root["Equipment"]["Weapon"]["Show"]     -> bool   (weapon visible; from IsWeaponVisible())
     ///   root["Equipment"]["Visor"]["IsToggled"] -> bool   (visor toggled;  from IsVisorToggled())

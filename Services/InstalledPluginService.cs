@@ -7,12 +7,12 @@ namespace HMSync.Services;
 // v0.7.371: presence detection + one-click open for the Modules panel.
 //
 // Deliberately NOT IPC-based. The Modules panel is display-only ("is this installed?"), and binding IPC just to
-// answer that would mean inventing an IPC contract per module — fine for Moniker (HMS already talks to it for real)
+// answer that would mean inventing an IPC contract per module - fine for Moniker (HMS already talks to it for real)
 // but wrong for HOutfits, which HMS doesn't integrate with at all yet. Dalamud's InstalledPlugins list answers the
 // presence question directly, for any plugin, with no contract at all.
 //
 // It also gives us something better than a slash command for the clickable chip: IExposedPlugin exposes
-// HasMainUi/OpenMainUi(), so the chip opens the plugin's own window directly — no guessing at "/hmoniker" or
+// HasMainUi/OpenMainUi(), so the chip opens the plugin's own window directly - no guessing at "/hmoniker" or
 // "/houtfits", and it keeps working if a module renames its command.
 public sealed class InstalledPluginService
 {
@@ -55,7 +55,7 @@ public sealed class InstalledPluginService
         return p != null && (p.HasMainUi || p.HasConfigUi);
     }
 
-    /// <summary>Open the plugin's own window — main UI if it has one, else its config UI.</summary>
+    /// <summary>Open the plugin's own window - main UI if it has one, else its config UI.</summary>
     public void Open(string name, params string[] aliases)
     {
         var p = Find(name, aliases);
@@ -65,6 +65,6 @@ public sealed class InstalledPluginService
             if (p.HasMainUi) p.OpenMainUi();
             else if (p.HasConfigUi) p.OpenConfigUi();
         }
-        catch { /* a module's own UI threw — not ours to handle */ }
+        catch { /* a module's own UI threw - not ours to handle */ }
     }
 }

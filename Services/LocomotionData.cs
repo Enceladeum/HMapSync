@@ -235,7 +235,7 @@ public static class LocomotionData
         // boundary at 120° is nowhere near a 45° diagonal). If we're already going Forward, demand a touch
         // MORE sideways before switching to a strafe; if we're already strafing, demand a touch more frontal
         // before returning. The dead-band stops a heading sitting on the line from flipping the bin
-        // frame-to-frame and restarting the clip — the leg twitch.
+        // frame-to-frame and restarting the clip - the leg twitch.
         float near = QuadrantNear;
         if (previousDir == DirForward) near += DirHysteresis;
         else if (previousDir == DirLeft || previousDir == DirRight) near -= DirHysteresis;
@@ -263,11 +263,11 @@ public static class LocomotionData
             ModeSwimSurface => GetSwimSurfaceTimeline(speed, direction),
             ModeSwimUnder => GetSwimUnderTimeline(speed, direction),
             ModeFlyMount => GetFlyTimeline(speed, direction),
-            // S197b: GroundMount MOVEMENT uses the on-foot Gnd* timelines (run F/L/R, sprint) — the
+            // S197b: GroundMount MOVEMENT uses the on-foot Gnd* timelines (run F/L/R, sprint) - the
             // receiver PROVED it animates a mounted puppet with these (reverse-mount: full run/strafe/
             // turn). Only the IDLE stays MntIdle, so the stop case applies the seated mount idle rather
-            // than clearing BaseOverride to 0 (which skated/stuck — the S197 regression). This gives
-            // animated movement AND a clean stop. (MntRun 167 was the wrong driver — never animated.)
+            // than clearing BaseOverride to 0 (which skated/stuck - the S197 regression). This gives
+            // animated movement AND a clean stop. (MntRun 167 was the wrong driver - never animated.)
             ModeGroundMount => speed == SpeedIdle
                 ? MntIdle
                 : (armed ? GetBattleTimeline(speed, direction) : GetNormalTimeline(speed, direction)),
@@ -291,7 +291,7 @@ public static class LocomotionData
 
     /// <summary>
     /// S328aj: is this timeline a one-shot LANDING terminal clip (jump/dismount fall→land)? Landing clips must play
-    /// ONCE and release, not be sustained by BaseOverride — sustaining past the clip's natural length re-shows the
+    /// ONCE and release, not be sustained by BaseOverride - sustaining past the clip's natural length re-shows the
     /// end-of-clip knee-bend squat (the "double-squat" glitch). Everything else (walk/run/idle loops) is sustained.
     /// </summary>
     public static bool IsLandingClip(ushort tl) => tl == GndJumpLand || tl == BtlJumpLand || tl == SwmOnJumpLand;

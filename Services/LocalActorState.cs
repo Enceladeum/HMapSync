@@ -49,7 +49,7 @@ public readonly struct LocalActorState
     public readonly uint OrnamentActionEpoch;      // S323g: bumps per new ornament action
     public readonly ushort MountActionTimeline;    // S323j: tl0 of a mount action one-shot (on the MOUNT OBJECT)
     public readonly uint MountActionEpoch;         // S323j: bumps per new mount action
-    public readonly ushort OrnamentTimeline;       // S323n: the sender's LIVE ornament tl0 (idle 7367, parasol-walk 7374, intros, actions) — mirrored on the peer so the accessory renders
+    public readonly ushort OrnamentTimeline;       // S323n: the sender's LIVE ornament tl0 (idle 7367, parasol-walk 7374, intros, actions) - mirrored on the peer so the accessory renders
 
     public LocalActorState(
         ushort emoteId,

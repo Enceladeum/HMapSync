@@ -8,7 +8,7 @@ public static class SyncProtocol
     // changed field meaning, a reorder). Peers compare this on every TransformUpdate and refuse a mismatch with
     // a message rather than half-applying it and desyncing/crashing. This is NOT the plugin version (that bumps
     // every build); it changes only when old and new clients genuinely can't interoperate.
-    public const int Version = 4;   // S331: Stage 4 — binary frame (MessagePack lanes). Retires the JSON monolith.
+    public const int Version = 4;   // S331: Stage 4 - binary frame (MessagePack lanes). Retires the JSON monolith.
                                      // (MinionBehaviour->mnb etc). Renamed keys are a wire-incompatible change: a v2
                                      // peer sends the long key, a v3 peer reads the short key → the field silently
                                      // drops. Bump so mismatched clients refuse rather than half-apply.
@@ -25,18 +25,18 @@ public enum SyncMessageType : byte
     PeerLeft        = 0x05,
     HostTransfer    = 0x06,
 
-    // State (10Hz) — single authoritative actor snapshot
+    // State (10Hz) - single authoritative actor snapshot
     TransformUpdate = 0x10,
 
     // ── SYNC LANES (S329a, Stage 1: DEFINED, NOT YET EMITTED) ──────────────────────────────────────────────
     // The typed-lane replacement for the monolithic TransformUpdate. Stage 2 begins emitting these; Stage 3 retires
-    // TransformUpdate. Until then these values are reserved and unused — the wire still carries 0x10. See SyncLanes.cs
+    // TransformUpdate. Until then these values are reserved and unused - the wire still carries 0x10. See SyncLanes.cs
     // for the field→lane census map that defines what each lane carries.
-    HotUpdate       = 0x11,   // pos/rot/movement/mount-pitch/body-offset — up to 10Hz while moving
-    WarmUpdate      = 0x12,   // emote/pose/mount/minion/ornament/target/weapon/standup — on change
-    ColdUpdate      = 0x13,   // Moniker + cosmetic toggles — session-start + on change
-    HostUpdate      = 0x14,   // map-state block — host only, on change
-    EventPulse      = 0x15,   // fire-and-forget one-shots (future: CosmicClaw VFX, HDM fires) — reserved
+    HotUpdate       = 0x11,   // pos/rot/movement/mount-pitch/body-offset - up to 10Hz while moving
+    WarmUpdate      = 0x12,   // emote/pose/mount/minion/ornament/target/weapon/standup - on change
+    ColdUpdate      = 0x13,   // Moniker + cosmetic toggles - session-start + on change
+    HostUpdate      = 0x14,   // map-state block - host only, on change
+    EventPulse      = 0x15,   // fire-and-forget one-shots (future: CosmicClaw VFX, HDM fires) - reserved
 
     // Zone control (host only)
     ZoneLoadExecute = 0x30,
@@ -71,13 +71,13 @@ public class SyncMessage
 /// <summary>
 /// Unified actor state snapshot sent at 10Hz.
 /// Contains position, movement, emote state, weapon state, and gaze target.
-/// The receiver applies all fields from a single message — no race conditions
+/// The receiver applies all fields from a single message - no race conditions
 /// between separate emote and transform channels.
 /// </summary>
 public class TransformData
 {
     // S327: the sender's STABLE identity (Character.ContentId). Rides every transform so every client learns each
-    // peer's ContentId directly from their packets — no relay change, self-healing (arrives continuously, works for
+    // peer's ContentId directly from their packets - no relay change, self-healing (arrives continuously, works for
     // late joiners + reconnects). This is what binds peerId → the right local object (by matching ContentId), instead
     // of the old positional/name guess. 0 until the sender's own ContentId is readable (in-world).
     [JsonPropertyName("cid")]
@@ -133,11 +133,11 @@ public class TransformData
     [JsonPropertyName("tid")]
     public uint TargetEntityId { get; set; }
 
-    /// <summary>/facecamera fourth-wall stare active. Not broadcast by the game natively — HMS replicates it.</summary>
+    /// <summary>/facecamera fourth-wall stare active. Not broadcast by the game natively - HMS replicates it.</summary>
     [JsonPropertyName("fc")]
     public bool FaceCamera { get; set; }
 
-    /// <summary>Camera eye world point snapshotted at face-camera activation (frozen — held until reset).</summary>
+    /// <summary>Camera eye world point snapshotted at face-camera activation (frozen - held until reset).</summary>
     [JsonPropertyName("fcx")] public float FaceCamX { get; set; }
     [JsonPropertyName("fcy")] public float FaceCamY { get; set; }
     [JsonPropertyName("fcz")] public float FaceCamZ { get; set; }
@@ -185,7 +185,7 @@ public class TransformData
     public ushort TimelineId { get; set; }
 
     /// <summary>
-    /// Emote epoch — increments each time emote state changes on the sender.
+    /// Emote epoch - increments each time emote state changes on the sender.
     /// Used to distinguish stale frames from current state. A transform frame
     /// with a lower epoch than the peer's current epoch cannot cancel an emote.
     /// </summary>
@@ -202,7 +202,7 @@ public class TransformData
     /// <summary>
     /// EmoteController.CPoseState (EmoteController+0x21): the pose index within the
     /// family that /cpose cycles. This is the authoritative pose state the game reads
-    /// to render the seated/standing pose — replicated directly rather than via timeline.
+    /// to render the seated/standing pose - replicated directly rather than via timeline.
     /// </summary>
     [JsonPropertyName("cp")]
     public byte CPoseState { get; set; }
@@ -218,7 +218,7 @@ public class TransformData
     /// <summary>
     /// S148: Mount sheet row ID the sender is riding. >0: receiver spawns this mount on the
     /// puppet via CreateAndSetupMount. 0: not mounted → receiver dismounts. Captured regardless
-    /// of how the sender mounted (game menu or mod UI — dual-track).
+    /// of how the sender mounted (game menu or mod UI - dual-track).
     /// </summary>
     [JsonPropertyName("mnt")]
     public ushort MountId { get; set; }
@@ -232,7 +232,7 @@ public class TransformData
     public ushort MinionId { get; set; }
     [JsonPropertyName("mnb")] public byte MinionBehaviour { get; set; } // S322f: CompanionMove from the sender (3 = Stationary)
     [JsonPropertyName("mna")] public ushort MinionAnim { get; set; }    // S322g: sender's minion base timeline, replayed on the puppet
-    [JsonPropertyName("mox")] public float MinionOffX { get; set; }      // S322h: minion offset from owner — receiver places puppetPos+offset
+    [JsonPropertyName("mox")] public float MinionOffX { get; set; }      // S322h: minion offset from owner - receiver places puppetPos+offset
     [JsonPropertyName("moy")] public float MinionOffY { get; set; }
     [JsonPropertyName("moz")] public float MinionOffZ { get; set; }
     [JsonPropertyName("mnr")] public float MinionRot { get; set; }       // S322h: minion facing
@@ -241,9 +241,9 @@ public class TransformData
     [JsonPropertyName("oae")] public uint OrnamentActionEpoch { get; set; }      // S323g: bumps per new ornament action (one-shot replay gate)
     [JsonPropertyName("mta")] public ushort MountActionTimeline { get; set; }    // S323j: the tl0 of a mount action one-shot (on the mount object)
     [JsonPropertyName("mae")] public uint MountActionEpoch { get; set; }         // S323j: bumps per new mount action (one-shot replay gate)
-    [JsonPropertyName("ort")] public ushort OrnamentTimeline { get; set; }       // S323n: the sender's LIVE ornament tl0 — the peer mirrors it so the accessory stays in its own animation (idle/walk/hold) and renders
+    [JsonPropertyName("ort")] public ushort OrnamentTimeline { get; set; }       // S323n: the sender's LIVE ornament tl0 - the peer mirrors it so the accessory stays in its own animation (idle/walk/hold) and renders
 
-    // S328x — Moniker nameplate integration. The sender's chosen nameplate name (from the Moniker plugin), carried
+    // S328x - Moniker nameplate integration. The sender's chosen nameplate name (from the Moniker plugin), carried
     // always-present so late joiners get it too. Empty = no Moniker name set (peers show the real name). MonikerHideFc
     // mirrors Moniker's "hide FC tag" flag. HMS applies these to the peer's puppet via Moniker's SetCharacterName IPC.
     [JsonPropertyName("mkn")] public string MonikerName { get; set; } = "";
@@ -264,7 +264,7 @@ public class TransformData
     /// S196b: the MOUNT OBJECT's slot-0 ActionTimeline. The mount is a separate Character* whose
     /// own timeline runs the standard Gnd* locomotion (idle 3, turn 7/8, run 22/23/24, sprint 30,
     /// jump 31/32/33) while the rider sits in a seated pose (166/167) on top. ALL mounted movement
-    /// animation — forward/back/strafe/jump/turn-in-place — lives here, not on the rider. The
+    /// animation - forward/back/strafe/jump/turn-in-place - lives here, not on the rider. The
     /// receiver writes this to its puppet's MountObject slot 0 so the mount animates correctly.
     /// 0 when unmounted or mount object absent. (Discovered via [MNTALL]: rider slots only ever held
     /// 166/167 + overlays while the mount object's slot 0 carried 31/32/33 on jump, 23/24 on A/D.)
@@ -275,7 +275,7 @@ public class TransformData
     /// <summary>
     /// Sender-measured visual body offset: the sender's drawn body position minus its
     /// logical position (DrawObject.Position − GameObject.Position), per axis. Nonzero
-    /// whenever the game renders the body at a different place than the actor root —
+    /// whenever the game renders the body at a different place than the actor root -
     /// swimming (vertical), chair-sit (vertical AND horizontal: the seat-snap slides the
     /// body to centre it), and potentially future cases (flight hover, mounts, poses).
     /// Measured against the sender's real skeleton, so correct regardless of race/glamour.
@@ -294,7 +294,7 @@ public class TransformData
     /// <summary>
     /// Increments whenever any body-offset axis changes past a small threshold. The
     /// receiver reacts (updates target + active flag) only on epoch change, then
-    /// maintains the offset every frame while active — so the values ride in every
+    /// maintains the offset every frame while active - so the values ride in every
     /// transform (robust for late joiners / reconnects / packet loss) but only trigger
     /// work when they actually change.
     /// </summary>
@@ -304,7 +304,7 @@ public class TransformData
     // ── Standup channel (S55) ──
     // Separate from the emote channel. The sender sets these when the game's
     // get-up timeline appears on ActionTimeline[0] while still in a seated mode
-    // (InPositionLoop / EmoteLoop) — i.e. at the START of the standup, not the
+    // (InPositionLoop / EmoteLoop) - i.e. at the START of the standup, not the
     // end. The receiver fires the animation immediately, ~0.5-0.7s earlier than
     // the emote-epoch-based detection. The emote channel cannot carry standups
     // (EndEmotes share EmoteMode with StartEmotes → oscillation, S51).
@@ -329,24 +329,24 @@ public class TransformData
     [JsonPropertyName("wd")]
     public bool WeaponDrawn { get; set; }
 
-    // ── Cosmetic display toggles (S244/S245) — synced so peers see the sender's choices. ──
+    // ── Cosmetic display toggles (S244/S245) - synced so peers see the sender's choices. ──
     // Visor flipped up/down (helmets with a visor action).
     [JsonPropertyName("vis")]
     public bool VisorToggled { get; set; }
     // Headgear hidden (the "/displayhead" state).
     [JsonPropertyName("hth")]
     public bool HatHidden { get; set; }
-    // NOTE: weapon hide/show ("/displayarms") is intentionally SENDER-ONLY — not synced.
+    // NOTE: weapon hide/show ("/displayarms") is intentionally SENDER-ONLY - not synced.
 
     /// <summary>
     /// S328ah: does this transform render IDENTICALLY to <paramref name="o"/>? Used by the sender's dirty-check to
-    /// suppress a resend when nothing a peer would SEE has changed. Compares EVERY render field — float fields
+    /// suppress a resend when nothing a peer would SEE has changed. Compares EVERY render field - float fields
     /// (position/rotation/offsets) with epsilon tolerance, all others exact. EXCLUDES Seq (always changes) and Protocol
     /// (constant). 
     ///
     /// This is deliberately a full field-by-field compare rather than a hand-picked subset: a subset silently omits
     /// fields (the S328ah regression was an omitted MoveState → stopped actors kept walking). **If you add a render
-    /// field to TransformData, add it here too** — that is the one maintenance obligation, and it's local + obvious,
+    /// field to TransformData, add it here too** - that is the one maintenance obligation, and it's local + obvious,
     /// unlike a scattered dirty-check field list.
     /// </summary>
     public bool RenderEquals(TransformData o, float posEps, float rotEps)
@@ -354,14 +354,14 @@ public class TransformData
         if (o == null) return false;
         bool FEq(float a, float b, float e) => System.Math.Abs(a - b) <= e;
         return
-            // position / rotation / offsets — epsilon
+            // position / rotation / offsets - epsilon
             FEq(X, o.X, posEps) && FEq(Y, o.Y, posEps) && FEq(Z, o.Z, posEps) &&
             FEq(Rotation, o.Rotation, rotEps) && FEq(MountPitch, o.MountPitch, rotEps) &&
             FEq(MinionOffX, o.MinionOffX, posEps) && FEq(MinionOffY, o.MinionOffY, posEps) &&
             FEq(MinionOffZ, o.MinionOffZ, posEps) && FEq(MinionRot, o.MinionRot, rotEps) &&
             FEq(BodyDrawOffsetX, o.BodyDrawOffsetX, posEps) && FEq(BodyDrawOffsetY, o.BodyDrawOffsetY, posEps) &&
             FEq(BodyDrawOffsetZ, o.BodyDrawOffsetZ, posEps) &&
-            // movement — exact (these are the transition fields the regression missed)
+            // movement - exact (these are the transition fields the regression missed)
             MoveState == o.MoveState && MoveMode == o.MoveMode && JumpPhase == o.JumpPhase && IsTurning == o.IsTurning &&
             // gaze / target
             TargetEntityId == o.TargetEntityId &&
@@ -412,9 +412,9 @@ public class ZoneLoadData
     [JsonPropertyName("sz")]
     public float SpawnZ { get; set; }
 
-    // v0.7.332: cutscene-stage sync. A cutscene stage has no TerritoryType row — it loads via a DONOR territory
+    // v0.7.332: cutscene-stage sync. A cutscene stage has no TerritoryType row - it loads via a DONOR territory
     // (TerritoryId above) with its bg PATH swapped in by the CreateScene hook. So a plain territory-id load gives the
-    // peer only the donor (the origin apartment) — the "peer gets the torn-down apartment instead of the cutscene" bug.
+    // peer only the donor (the origin apartment) - the "peer gets the torn-down apartment instead of the cutscene" bug.
     // StageBg carries the stage's bg path so the peer can run the same donor-load-with-bg-swap; StageName is the real
     // stage name for the load print (the donor's GetZoneName was the "Host loading zone: Ingleside Apartment" lie).
     [JsonPropertyName("stbg")]

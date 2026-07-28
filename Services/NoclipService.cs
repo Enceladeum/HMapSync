@@ -12,16 +12,16 @@ namespace HMSync.Services;
 /// <summary>
 /// Two movement modes:
 ///
-/// 1. Flight (/hms fly) — hooks IsFlightProhibited, game-native smooth flight.
+/// 1. Flight (/hms fly) - hooks IsFlightProhibited, game-native smooth flight.
 ///    Respects collision. Jump to enter flight, WASD to move.
 ///
-/// 2. Noclip (/hms noclip) — manual SetPosition using Win32 GetAsyncKeyState
+/// 2. Noclip (/hms noclip) - manual SetPosition using Win32 GetAsyncKeyState
 ///    for input (bypasses game's input system entirely). Ignores collision.
 ///    WASD moves relative to camera, Space up, Shift down.
 ///    Use to pass through walls, reach blocked areas.
 ///
 /// (Removed: the clamp/altitude-lock, dismounted flight-speed, and flat-flight (W-pitch)
-/// experiments, all of which hooked RMIWalk/RMIFly. None worked — W-forward flight is hard-bound
+/// experiments, all of which hooked RMIWalk/RMIFly. None worked - W-forward flight is hard-bound
 /// to the camera look-vector and could not be flattened via the fly input (Up-injection inverts;
 /// 0x9C is a non-causal pitch cache; DirMode probe inconclusive). The intended replacement is
 /// hot-spawned ground collision under the actor (HCollider) so the engine treats it as grounded.
@@ -36,17 +36,17 @@ public unsafe class NoclipService : IDisposable
     private readonly ISigScanner sigScanner;
     private readonly IGameInteropProvider hookProvider;
 
-    // Flight hook — IsFlightProhibited returns a flight-allowed status (int).
+    // Flight hook - IsFlightProhibited returns a flight-allowed status (int).
     // Returning 0 from the detour forces "flight allowed" while FlightActive.
     private delegate int IsFlightProhibitedDelegate();
     private Hook<IsFlightProhibitedDelegate>? flightHook;
 
     // (Movement-input hooks RMIWalk/RMIFly were used for the removed clamp/altitude-lock, flight-speed,
-    // and flat-flight (W-pitch) experiments — all abandoned. None worked: W-forward flight is hard-bound
+    // and flat-flight (W-pitch) experiments - all abandoned. None worked: W-forward flight is hard-bound
     // to the camera look-vector and could not be flattened via the fly input. Flight is now purely the
     // IsFlightProhibited hook below. The vnavmesh RMIWalk/RMIFly sigs + fly-input struct are journalled
     // if per-frame movement interception is ever revisited; the future direction is hot-spawned ground
-    // collision under the actor (HCollider) so the engine treats the actor as grounded — no input hook.)
+    // collision under the actor (HCollider) so the engine treats the actor as grounded - no input hook.)
 
     // Win32 key state
     [DllImport("user32.dll")]
@@ -73,10 +73,10 @@ public unsafe class NoclipService : IDisposable
     public bool NoclipActive { get; private set; }
     public float NoclipSpeed { get; set; } = 0.5f;
 
-    // Status reporter — set by the plugin so messages print to chat like the slash commands.
+    // Status reporter - set by the plugin so messages print to chat like the slash commands.
     public Action<string>? StatusReport { get; set; }
 
-    // Transition guard predicate — set by the plugin; true while a zone load/revert is in progress.
+    // Transition guard predicate - set by the plugin; true while a zone load/revert is in progress.
     public Func<bool>? TransitionGuard { get; set; }
 
     // Cached game PID (the S234 lesson: don't call GetCurrentProcess() every frame; it allocates).
@@ -121,7 +121,7 @@ public unsafe class NoclipService : IDisposable
     // Flight is just native flight (IsFlightProhibited hook). It does NOT own any return logic: the
     // only "return" in HMS is ZoneLoadService.Revert (reload origin zone + origin coords), which is the
     // inverse of loading a foreign zone. Plain /hms fly with no HMS zone loaded is ordinary flight in
-    // your current zone — stopping it just stops flight where you are, nothing to return from.
+    // your current zone - stopping it just stops flight where you are, nothing to return from.
 
     public void ToggleFlight()
     {
@@ -133,12 +133,12 @@ public unsafe class NoclipService : IDisposable
         else
         {
             FlightActive = true;
-            log.Information("[HMSync] Flight mode ON — jump to fly");
+            log.Information("[HMSync] Flight mode ON - jump to fly");
         }
     }
 
     // S204: idempotent enable/disable for auto-flight-on-mount. Enabling flight-readiness is SAFE on
-    // any mount — FlightActive only makes IsFlightProhibited return 0 (flight-allowed); a ground-only
+    // any mount - FlightActive only makes IsFlightProhibited return 0 (flight-allowed); a ground-only
     // mount can't fly regardless, so it's a no-op there, and a flight-capable mount becomes ready to
     // take off on Space. Called from MountSelf so /hms mount on a flying mount auto-arms flight.
     public void EnableFlight()
@@ -207,34 +207,34 @@ public unsafe class NoclipService : IDisposable
         var native = (GameObject*)player.Address;
         var pos = player.Position;
 
-        // ── #1 (S325): HEADING SOURCE — character, not camera ──────────────────────────────────────────────────────
-        // Classic noclip rotated WASD by the CAMERA heading, so orbiting the camera (LMB) changed your W-direction —
+        // ── #1 (S325): HEADING SOURCE - character, not camera ──────────────────────────────────────────────────────
+        // Classic noclip rotated WASD by the CAMERA heading, so orbiting the camera (LMB) changed your W-direction -
         // disorienting. We want W relative to CHARACTER FACING, exactly like normal locomotion: RMB-steer (which
         // rotates the character) changes your W-direction; LMB-orbit (camera only) does NOT.
         //
-        // ANGLE DERIVATION (not a guess — from the codebase's own convention): StateApplyService (~L1010) computes
+        // ANGLE DERIVATION (not a guess - from the codebase's own convention): StateApplyService (~L1010) computes
         // movement direction as Atan2(dx, dz) and compares it to GameObject.Rotation directly, so the forward vector
-        // is (sin(Rotation), 0, cos(Rotation)) — standard FFXIV facing. RotatePoint does x'=x·cos-z·sin, z'=x·sin+z·cos;
+        // is (sin(Rotation), 0, cos(Rotation)) - standard FFXIV facing. RotatePoint does x'=x·cos-z·sin, z'=x·sin+z·cos;
         // feeding a local +Z step (0,step) rotated by `angle` gives world (-step·sin(angle), step·cos(angle)). For that
         // to equal forward (step·sin(rot), step·cos(rot)) we need angle = -Rotation. So we pass NEGATIVE heading.
         var chara = (Character*)player.Address;
         var heading = -chara->Rotation;
 
-        // NOTE: an "Ignore Walls" (slow/capped noclip-through-walls) mode was explored S325–S325e and REMOVED — it
+        // NOTE: an "Ignore Walls" (slow/capped noclip-through-walls) mode was explored S325–S325e and REMOVED - it
         // never worked and two diagnostic builds crashed the client. Root understanding: noclip is position-teleport
         // (SetPosition, no collision consult) and floor-catch is EMERGENT (the engine re-grounds the actor each tick),
-        // so it's a tug-of-war — classic's big 0.5/frame step out-paces re-grounding and crosses walls, but small cruise
+        // so it's a tug-of-war - classic's big 0.5/frame step out-paces re-grounding and crosses walls, but small cruise
         // steps lose and get blocked. The command/config/UI were stripped; it's a research item in the roadmap (§A / P2).
         // If revived: SUPPRESS the actor's collider (à la the dungeon entry-ring barrier work, SetColliderActive(false))
-        // so SetPosition passes at any speed without the tug-of-war, and decide gravity/floor explicitly — with careful,
+        // so SetPosition passes at any speed without the tug-of-war, and decide gravity/floor explicitly - with careful,
         // crash-safe instrumentation (change-gated + heavily throttled; per-frame gait reads were suspected in the CTDs).
         float step = NoclipSpeed;   // classic free-speed noclip
 
         bool moved = false;
 
-        // Win32 GetAsyncKeyState — reads actual keyboard hardware state, bypasses the game's input system.
+        // Win32 GetAsyncKeyState - reads actual keyboard hardware state, bypasses the game's input system.
 
-        // ── VERTICAL (Space up / Shift down) — classic noclip ──
+        // ── VERTICAL (Space up / Shift down) - classic noclip ──
         if (IsKeyDown(VK_SPACE))
         {
             pos.Y += step;
@@ -298,7 +298,7 @@ public unsafe class NoclipService : IDisposable
     public bool IsActive => FlightActive || NoclipActive;
 
     // S285: full movement-state sanitize. Called on every return (stop/leave/disconnect) so NO session
-    // condition leaks into the next session. Resets EVERY toggleable/settable movement state here —
+    // condition leaks into the next session. Resets EVERY toggleable/settable movement state here -
     // when a new movement condition is added, it MUST be reset here too (single sanitize point). The
     // OnNoclipUpdate handler is detached.
     public void Disable()

@@ -27,7 +27,7 @@ public unsafe class ZoneLoadService : IDisposable
     private readonly IObjectTable objectTable;
 
     // S286: optional chat sink so origin/return diagnostics reach the USER (not just /xllog, which the
-    // user can't see). Set by the plugin to chat.Print. Null-safe — log always fires regardless.
+    // user can't see). Set by the plugin to chat.Print. Null-safe - log always fires regardless.
     public Action<string>? StatusReport { get; set; }
     private void Report(string msg) { log.Information(msg); StatusReport?.Invoke(msg); }
     // v0.7.259: notification hygiene. Non-essential status (saved origin, map hop, internal restore diagnostics) is
@@ -37,18 +37,18 @@ public unsafe class ZoneLoadService : IDisposable
     private void ReportDebug(string msg) { log.Information(msg); if (DebugMode) StatusReport?.Invoke(msg); }
 
     // S291: fired by the deferred home-restore poll the moment the home position is locked in. The
-    // plugin uses this to disable the packet filter AFTER the actor is settled at home — NOT during the
+    // plugin uses this to disable the packet filter AFTER the actor is settled at home - NOT during the
     // reload. This mirrors Hyperborea, which keeps its packet firewall up through the entire revert and
     // only drops it once home; opening the filter mid-restore lets the SERVER's stale foreign-zone
     // position flood back and snap the actor away from home (the air-stop fling: the server never saw
     // the local flight, so its authoritative position is the pre-flight spot, far from where we landed).
     public System.Action? OnHomeRestoreComplete { get; set; }
 
-    // S286: on-demand origin readout for /hms origin — prints the currently-recorded return target.
+    // S286: on-demand origin readout for /hms origin - prints the currently-recorded return target.
     public string DescribeOrigin()
     {
         if (savedZoneId == null)
-            return "[HMSync] No origin recorded (not in an HMS session — nothing to return to).";
+            return "[HMSync] No origin recorded (not in an HMS session - nothing to return to).";
         var p = savedPosition.HasValue
             ? $"({savedPosition.Value.X:F2}, {savedPosition.Value.Y:F2}, {savedPosition.Value.Z:F2})"
             : "NULL (!)";
@@ -63,24 +63,24 @@ public unsafe class ZoneLoadService : IDisposable
     private delegate nint LoadZoneDelegate(nint a1, uint a2, int a3, byte a4, byte a5, byte a6);
     private Hook<LoadZoneDelegate>? loadZoneHook;
 
-    // S320: fired the instant ANY zone change begins — the HMS-driven LoadZone (/hms load), the
+    // S320: fired the instant ANY zone change begins - the HMS-driven LoadZone (/hms load), the
     // load detour (a normal teleport / zone line / login), so subscribers can sanitise state that
     // must not carry across a zone load. The carpet subscribes its Disable() here. HMS-lifecycle
-    // driven by design — NOT the Dalamud TerritoryChanged event (which fires after the fact).
+    // driven by design - NOT the Dalamud TerritoryChanged event (which fires after the fact).
     public event System.Action? ZoneWillChange;
 
     private delegate nint SetupTerritoryTypeDelegate(void* eventFramework, ushort territoryType);
     private nint setupTerritoryTypeAddr;
-    // Cutscene direct-load (Strategy B1b — TitleEdit's CreateScene seam). CreateScene(path, ...) builds a walkable
+    // Cutscene direct-load (Strategy B1b - TitleEdit's CreateScene seam). CreateScene(path, ...) builds a walkable
     // scene from a level path; you override the scene by swapping the path arg (exactly TitleEdit's one-liner). We
-    // hook the FUNCTION — resolved from the call-site's rel32 so it catches in-game callers, not just the lobby —
+    // hook the FUNCTION - resolved from the call-site's rel32 so it catches in-game callers, not just the lobby -
     // and while a stage load is in flight, substitute the stage bg for the path. Consume-once. No file redirect.
     private delegate int CreateSceneDelegate(string territoryPath, uint territoryId, nint p3, uint layerFilterKey, nint festivals, int p6, uint cfcId);
     private Hook<CreateSceneDelegate>? createSceneHook;
     public string? PendingStageBg;
     // v0.7.227: the swap stage currently live, kept AFTER the load (unlike PendingStageBg, which is consumed+nulled by
     // the CreateScene detour). This is the persistent "which stage are we in" record the spawn resolver and user-capture
-    // key on — swap stages share a donor territory id, so CurrentLoadedZone is the DONOR, not the stage. Keying spawns by
+    // key on - swap stages share a donor territory id, so CurrentLoadedZone is the DONOR, not the stage. Keying spawns by
     // CurrentLoadedZone leaked one stage's spawn to every co-donor stage (the bug). Set by LoadStage on a swap load,
     // cleared to null on a real (non-swap) load and on Revert. bg-string identity is unique per stage.
     public string? ActiveStageBg;
@@ -91,7 +91,7 @@ public unsafe class ZoneLoadService : IDisposable
         if (!string.IsNullOrEmpty(PendingStageBg))
         {
             var stageBg = PendingStageBg!;
-            PendingStageBg = null;   // consume-once — keep origin's territoryId/layerFilterKey so layer resolution stays sane
+            PendingStageBg = null;   // consume-once - keep origin's territoryId/layerFilterKey so layer resolution stays sane
             cutsceneSceneActive = true;
             log.Information("[CSS] CreateScene swap: " + territoryPath + " -> " + stageBg + " (terr=" + territoryId + " lfk=" + layerFilterKey + ")");
             return createSceneHook!.Original(stageBg, territoryId, p3, layerFilterKey, festivals, p6, cfcId);
@@ -119,7 +119,7 @@ public unsafe class ZoneLoadService : IDisposable
     // S132: RE-ENABLED with the GetGraphics leaf-render-flag approach (no SetActive).
     // S128-S130 crashed because ILayoutInstance.SetActive corrupts instance lifecycle
     // (Deinit AV). S132 instead reaches the instance's REAL graphics object via
-    // GetGraphics() and flips only DrawObject.IsVisible — a leaf render bit with no
+    // GetGraphics() and flips only DrawObject.IsVisible - a leaf render bit with no
     // lifecycle bookkeeping. Structurally cannot trip the teardown path that crashed.
     // Still gated so it can be killed instantly if testing shows any instability.
     private const bool EnableFurnitureDeDraw = true;
@@ -130,18 +130,18 @@ public unsafe class ZoneLoadService : IDisposable
     // GOAL: learn WHY the decoration layer (wallpaper/flooring materials, light level)
     // doesn't visually return on our faux Revert, by comparing the housing system's state
     // on a REAL entry vs. what our faux revert produces. We do NOT write any housing values
-    // (that would only work on our own property and would mean writing onto a peer's apt —
+    // (that would only work on our own property and would mean writing onto a peer's apt -
     // out of scope). The fix we're hunting is "trigger the game's OWN re-apply path," so
     // first we must SEE that path. This is pure observation.
     //
     // The decoration layer lives in TWO places, both readable:
-    //   1. DATA:   LayoutManager.IndoorAreaData (IndoorAreaLayoutData) — Floor0/1/2 part IDs
+    //   1. DATA:   LayoutManager.IndoorAreaData (IndoorAreaLayoutData) - Floor0/1/2 part IDs
     //              (= wallpaper + flooring), Exterior (windows/door) + stains, and LightLevel.
     //   2. RENDER: IndoorTerritory.Brightness* (Current/Target/SavedInverted) + the furniture
     //              manager's 1462 HousingFurniture slots (Id/Position/Rotation/Stain/Index).
     // If DATA is empty after our revert, the EXD-load step (HousingTerritory vf3-vf5) didn't
     // run. If DATA is populated but RENDER is default, an apply/push step didn't run. Either
-    // way the dump tells us exactly where the chain breaks — and which game call to trigger.
+    // way the dump tells us exactly where the chain breaks - and which game call to trigger.
     //
     // USAGE: run "/hms housingdiag" (read-only; command-gated, no recompile flag needed),
     // then perform the test sequence. Dumps a labelled snapshot every PollInterval frames
@@ -164,17 +164,17 @@ public unsafe class ZoneLoadService : IDisposable
     // S322: settle delay before the FIRST de-draw. Furniture streams in over several seconds on load, and
     // its collision/textures lag the geometry; firing the instant any furniture is visible could catch the
     // zone half-loaded and leave it stripped with missing collision/textures (a rare load-race that wiped the
-    // host's own apartment; a re-entry — i.e. a clean load — fixed it). Hold the initial fire until the zone
+    // host's own apartment; a re-entry - i.e. a clean load - fixed it). Hold the initial fire until the zone
     // has had time to populate. Only gates the FIRST fire; late waves and the persistent scan re-fire as
     // before, so nothing that streams in afterwards is missed.
     private int deDrawSettleFrames;
-    private const int DeDrawSettleFrames = 300;   // S329: MAX backstop (~5s) — only used if furniture never settles/shows
+    private const int DeDrawSettleFrames = 300;   // S329: MAX backstop (~5s) - only used if furniture never settles/shows
     private int deDrawFloorFrames;                 // short hard floor before the first fire (collision/texture lag)
     private const int DeDrawFloorFrames = 30;      // ~0.5s minimum before we'll fire (guards the half-loaded strip)
     private int deDrawStablePresent;               // frames furniture has been CONTINUOUSLY visible (stability signal)
     private const int DeDrawStableFrames = 15;     // ~0.25s of sustained-visible = the wave has arrived + settled
     // S314: after the initial post-load window lapses, the poll stays armed for the whole session but
-    // scans on a throttled cadence (catches furniture that streams in by proximity long after load —
+    // scans on a throttled cadence (catches furniture that streams in by proximity long after load -
     // e.g. leaked apartment furniture anchored far from the dungeon spawn). ~0.5s between scans.
     private int persistentScanTick;
     private bool quietDeDraw;              // v0.7.427: suppress per-pass diag dumps on cadence runs
@@ -186,7 +186,7 @@ public unsafe class ZoneLoadService : IDisposable
     private int housingDiagFrameCounter;
     private int housingDiagSnapshotsLeft;
     private const int HousingDiagPollInterval = 30; // ~0.5s between snapshots at 60fps
-    private const int HousingDiagMaxSnapshots = 120;  // S160: ~60s — time to walk to the door + exit
+    private const int HousingDiagMaxSnapshots = 120;  // S160: ~60s - time to walk to the door + exit
     private string housingDiagLastSig = "";          // only dump when something CHANGED
 
     // S125/S128: track what we hid so Revert/ReloadZone can restore it.
@@ -194,10 +194,10 @@ public unsafe class ZoneLoadService : IDisposable
     private readonly List<nint> hiddenLayoutInstances = new();
     // S166: orphan re-hide. The census (S165) proved a partition hidden on 1011 (addr
     // 2570890093472) survives the hop to 1012 as the SAME live pointer, still rendering, with its
-    // IsVisible reset by the transition — and it's unreachable via 1012's layout walk, so the
+    // IsVisible reset by the transition - and it's unreachable via 1012's layout walk, so the
     // per-zone de-draw misses it. We carry the PREVIOUS load's hidden pointers forward exactly ONE
     // hop and re-assert IsVisible=false on them. One hop only because testing shows the orphan's
-    // lifetime is a single transition (e.g. 1011→1012 carries it; the next hop frees/hides it) —
+    // lifetime is a single transition (e.g. 1011→1012 carries it; the next hop frees/hides it) -
     // holding pointers longer risks dereferencing a freed instance (the streaming-zone AV the S146
     // restore path was written to avoid). Deref is guarded, but we also bound the lifetime so a
     // stale pointer is never carried past the one frame where it's known-live.
@@ -213,38 +213,38 @@ public unsafe class ZoneLoadService : IDisposable
     private readonly List<(ushort idx, byte flags)> untargetedObjects = new();
     private Vector3? savedPosition;
     // S284: return state is just savedZoneId + savedPosition (captured at first LoadZone). Return =
-    // reload savedZoneId + restore savedPosition. (The old EntrySpawn foreign-zone anchor was removed —
+    // reload savedZoneId + restore savedPosition. (The old EntrySpawn foreign-zone anchor was removed -
     // see Revert; it was redundant with this and caused the OOB-on-stop bug.)
     private float? savedRotation;
 
     public bool IsZoneLoaded { get; private set; }
     // True while LoadZone or Revert is actively running (objects may be mid-
     // teardown/rebuild). Consumers that write to actor/world state each frame
-    // should stay inert while this is set. IsZoneLoaded is NOT sufficient — it
+    // should stay inert while this is set. IsZoneLoaded is NOT sufficient - it
     // stays true through most of Revert's teardown.
     public bool IsTransitioning { get; private set; }
     public uint CurrentLoadedZone { get; private set; }
 
-    // S262: development/research mode (off by default, toggled at runtime via /hms debug — NO
+    // S262: development/research mode (off by default, toggled at runtime via /hms debug - NO
     // recompile needed). When ON, LoadZone sets up the InstanceContentDirector (SetupInstanceContentForZone)
     // before the native load, exactly as the old shipping path did. This re-enables the MapEffect /
     // director-update machinery for live investigation of the explorer-mode scenario-walk (the parked
     // research track). When OFF (default, the shipping behaviour) the director is NOT created, so the
     // "Duty Information" HUD never appears and the map loads clean. The director setup is preserved (sig
-    // resolution intact); this flag is the documented switch that arms it. Default false. Not persisted —
+    // resolution intact); this flag is the documented switch that arms it. Default false. Not persisted -
     // a fresh session always starts in the clean shipping mode; you opt into research per-session.
     public bool ResearchMode { get; set; } = false;
 
     // S288: deferred home-position restore. The synchronous SetPosition inside Revert is CLOBBERED by
-    // the zone-load's ASYNC settle (which fires a few frames AFTER Revert returns — confirmed: the
+    // the zone-load's ASYNC settle (which fires a few frames AFTER Revert returns - confirmed: the
     // post-write readback was correct, but /hms here moments later showed the actor flung back to the
     // foreign coords). So instead we ARM a poll that waits until the actor has actually settled in the
-    // home territory, THEN writes the home position — and reasserts it for a short window to win against
+    // home territory, THEN writes the home position - and reasserts it for a short window to win against
     // any late settle write. This is the real fix; ordering inside Revert was a red herring.
     private bool homeRestoreArmed;
     // S301: lets the leave/stop path know whether the deferred restore poll is live and will own the
     // filter-disable (via OnHomeRestoreComplete). When it's NOT armed, the caller must disable the
-    // filter inline — otherwise a re-entrant leave can orphan the filter UP (the double-stop bug).
+    // filter inline - otherwise a re-entrant leave can orphan the filter UP (the double-stop bug).
     public bool HomeRestoreArmed => homeRestoreArmed;
     private int homeRestoreTicks;
     private uint homeRestoreZone;
@@ -254,44 +254,44 @@ public unsafe class ZoneLoadService : IDisposable
     private int homeRestoreStable; // S293: consecutive frames the home write has HELD (drift < 1y)
 
     // S287: gated diagnostic logging. The [WRECK]/[FURNMGR]/[HOUSINGIDS]/[GFXRESOLVE] traces are
-    // development noise (hundreds of lines per load) — emit them ONLY in research mode. Errors are NOT
+    // development noise (hundreds of lines per load) - emit them ONLY in research mode. Errors are NOT
     // routed through this (they always fire via log.Error). Toggle with /hms debug.
     private void DiagLog(string msg) { if (ResearchMode) log.Information(msg); }
 
-    // Curated spawn points from Hyperborea's data — loaded at init
+    // Curated spawn points from Hyperborea's data - loaded at init
     // For Phase 2 we embed a small set; later read from data.yaml
     // v0.7.242: territories whose LGB PopRange is OOB but which have a good arena-bounding volume (MapRange /
-    // CollisionBox) — for these, skip the OOB PopRange and use the arena centre (curation-by-reference: points at
+    // CollisionBox) - for these, skip the OOB PopRange and use the arena centre (curation-by-reference: points at
     // authored arena data instead of hardcoded coords, so it survives map updates). Populate as V confirms them
     // in-game (the system can't cheaply tell an OOB PopRange from a valid one without raycast machinery). The arena
     // centre XZ centres you in the arena; the engine ground-clamp settles Y on first movement.
     private readonly HashSet<uint> preferArenaCenter = new() { 824, 369, 128, 181, 409, 474 };
-    // v0.7.244: 128/181/409/474 = Limsa Lominsa Upper Decks (s1t1) cluster — the entrance discriminator was matching a
+    // v0.7.244: 128/181/409/474 = Limsa Lominsa Upper Decks (s1t1) cluster - the entrance discriminator was matching a
     // table-adjacent EventObject (the "spawn on the table" bug). Comb for a MapRange/CollisionBox centre instead.
     // NOTE: cities have many MapRanges, so the combed spot may need checking; if it's bad, these get a hardcode.
-    // (v0.7.246: 1144 moved to a hardcode — multiple boss arenas meant arena-centre grabbed the wrong cylinder.)
+    // (v0.7.246: 1144 moved to a hardcode - multiple boss arenas meant arena-centre grabbed the wrong cylinder.)
 
     private readonly Dictionary<uint, Vector3> curatedSpawns = new()
     {
         // S264: 1345 (The Clyteum). The LGB ENTRANCE EventObject reads Y=0.0, but that's ankle-deep
-        // in a small snow mound at the entrance — the true collision surface is Y=0.3 (the char
+        // in a small snow mound at the entrance - the true collision surface is Y=0.3 (the char
         // reasserts to 0.3 on first movement). Curate it so you spawn ON the pile, not in it.
         { 1345, new Vector3(-805.0f, 0.3f, 864.1f) },
         // v0.7.236: flagship / art hand-curates (coords supplied by V in GUI X,Z,Y order → stored X,Y,Z here).
         // v0.7.240: 670 reset to resolver default (the fringes were the wrong map). The royal airship landing is 679.
-        { 679,  new Vector3(0.0f, -380.0f, 0.0f) },      // royal airship landing platform — X/Z both 0, Y -380
+        { 679,  new Vector3(0.0f, -380.0f, 0.0f) },      // royal airship landing platform - X/Z both 0, Y -380
         { 338,  new Vector3(678.0f, 0.297f, -675.0f) },  // two-segment map; real entry across the void (tunnel↔arena)
-        { 1010, new Vector3(2.7f, 0.2f, -128.0f) },      // Magna Glacies — manual curate (also needs collision-wall teardown)
-        { 1012, new Vector3(2.7f, 0.2f, -128.0f) },      // 1010's layer-twin — same curated spawn
-        { 898,  new Vector3(-100.0f, 103.6f, 360.0f) },  // Anamnesis Anyder — confirmed good
+        { 1010, new Vector3(2.7f, 0.2f, -128.0f) },      // Magna Glacies - manual curate (also needs collision-wall teardown)
+        { 1012, new Vector3(2.7f, 0.2f, -128.0f) },      // 1010's layer-twin - same curated spawn
+        { 898,  new Vector3(-100.0f, 103.6f, 360.0f) },  // Anamnesis Anyder - confirmed good
         // v0.7.244: batch from testing. Coords supplied in GUI X,Z,Y order → stored X,Y,Z.
         { 1295, new Vector3(100.0f, -410.0f, -100.0f) },  // very OOB → hardcode
         { 151,  new Vector3(0.0f, 1.0f, 460.0f) },        // huge map, spawn relocated
         { 1097, new Vector3(-23.0f, 389.154f, -640.0f) }, // boring boss arena → better spot
-        { 1119, new Vector3(-23.0f, 389.154f, -640.0f) }, // 1097's twin — same spot
+        { 1119, new Vector3(-23.0f, 389.154f, -640.0f) }, // 1097's twin - same spot
         { 1021, new Vector3(-70.0f, 32.057f, -390.0f) },  // weird spawn → hardcode
-        { 1144, new Vector3(345.0f, 16.751f, 145.0f) },   // e3d3 — multiple boss arenas, hardcode the entry
-        // HoH floors — parked from resolver (procedural, no authored spawn), but V supplied usable coords:
+        { 1144, new Vector3(345.0f, 16.751f, 145.0f) },   // e3d3 - multiple boss arenas, hardcode the entry
+        // HoH floors - parked from resolver (procedural, no authored spawn), but V supplied usable coords:
         { 773,  new Vector3(300.0f, 0.0f, 300.0f) },      // Heaven-on-High floor
         { 784,  new Vector3(300.0f, 0.0f, 300.0f) },      // HoH floor (shares 773's template spot)
         { 774,  new Vector3(244.0f, 0.0f, -181.0f) },     // HoH floor
@@ -327,7 +327,7 @@ public unsafe class ZoneLoadService : IDisposable
             loadZoneHook.Enable();
             try
             {
-                // HookFromSignature resolves the call itself — no hand rel32 arithmetic (that was the crash).
+                // HookFromSignature resolves the call itself - no hand rel32 arithmetic (that was the crash).
                 createSceneHook = hookProvider.HookFromSignature<CreateSceneDelegate>("E8 ?? ?? ?? ?? 66 89 3D ?? ?? ?? ?? E9", CreateSceneDetour);
                 createSceneHook.Enable();
                 log.Information("[HMSync] CreateScene hooked via signature");
@@ -360,11 +360,11 @@ public unsafe class ZoneLoadService : IDisposable
 
         try
         {
-            // S225b: MapEffect apply function. CORRECTION from S223 — the prior sig was actually
+            // S225b: MapEffect apply function. CORRECTION from S223 - the prior sig was actually
             // TargetSystem_InteractWithObject (byte-identical, wrong line grabbed from Hyperborea).
             // This is the REAL MapEffect sig, verified against ECommons MapEffect.cs (the
             // ProcessMapEffect function: long(long module, uint layoutId, ushort state, ushort flags),
-            // resolved directly via ScanText — no call-following).
+            // resolved directly via ScanText - no call-following).
             mapEffectAddr = sigScanner.ScanText(
                 "48 89 5C 24 ?? 48 89 6C 24 ?? 48 89 74 24 ?? 57 48 83 EC 20 8B FA 41 0F B7 E8");
             log.Information("[HMSync] MapEffect: resolved=0x" + mapEffectAddr.ToString("X") +
@@ -377,7 +377,7 @@ public unsafe class ZoneLoadService : IDisposable
 
         try
         {
-            // S225b: SetupInstanceContent. CORRECTION from S224 CTD — verified against ECommons
+            // S225b: SetupInstanceContent. CORRECTION from S224 CTD - verified against ECommons
             // EzHook/EzDelegate source: the EzHook bool flag is `autoEnable`, NOT "call-site". ECommons
             // uses ScanText(sig) DIRECTLY as the function address (Marshal.GetDelegateForFunctionPointer
             // on the raw match). S224's +5+rel32 "call-site resolution" was invented and produced a
@@ -394,7 +394,7 @@ public unsafe class ZoneLoadService : IDisposable
 
         try
         {
-            // S224: FinalizeInstanceContent — direct function sig (Hyperborea).
+            // S224: FinalizeInstanceContent - direct function sig (Hyperborea).
             finalizeInstanceContentAddr = sigScanner.ScanText(
                 "48 89 5C 24 ?? 48 89 6C 24 ?? 48 89 74 24 ?? 57 48 83 EC 70 48 8D B1");
             log.Information("[HMSync] FinalizeInstanceContent resolved");
@@ -534,11 +534,11 @@ public unsafe class ZoneLoadService : IDisposable
         var lgbFile = dataManager.GetFile<Lumina.Data.Files.LgbFile>(planEventPath);
         // Fall through to planmap.lgb (the dungeon spawn source) when planevent is missing, fully empty, OR has no
         // PopRange of its own. v0.7.243: the last condition is the _re / duty-support fix. Stone Vigil r1d1_re (1042)
-        // has a planevent.lgb with a single stray EventObject at (-7.8,9.5,-285.7) — OOB, behind a wall — and NO
+        // has a planevent.lgb with a single stray EventObject at (-7.8,9.5,-285.7) - OOB, behind a wall - and NO
         // PopRange, while planmap.lgb holds the 9 real dungeon PopRanges including the entry pen at (0,0,118). The old
         // "all layers empty" test saw the 1 stray object, treated planevent as valid, and never opened planmap. Now:
         // if planevent carries no PopRange but planmap does, planmap wins. Event instances (PopRange in planevent) are
-        // unaffected — they keep using planevent. Likely also fixes the HoH floors and other _re OOB maps.
+        // unaffected - they keep using planevent. Likely also fixes the HoH floors and other _re OOB maps.
         bool PlanevHasPop(Lumina.Data.Files.LgbFile? f) => f != null && f.Layers.Any(l => l.InstanceObjects != null
             && l.InstanceObjects.Any(o => o.AssetType == Lumina.Data.Parsing.Layer.LayerEntryType.PopRange));
         bool planevEmpty = lgbFile == null || lgbFile.Layers.All(l => l.InstanceObjects == null || l.InstanceObjects.Length == 0);
@@ -546,13 +546,13 @@ public unsafe class ZoneLoadService : IDisposable
         {
             var planMap = dataManager.GetFile<Lumina.Data.Files.LgbFile>(planMapPath);
             // Switch to planmap only if it's non-empty AND (when planevent had something non-PopRange) actually has a
-            // PopRange to offer — otherwise there's nothing better there and we keep planevent's data.
+            // PopRange to offer - otherwise there's nothing better there and we keep planevent's data.
             bool planMapUsable = planMap != null && planMap.Layers.Any(l => l.InstanceObjects != null && l.InstanceObjects.Length > 0)
                 && (planevEmpty || PlanevHasPop(planMap));
             if (planMapUsable)
             {
                 log.Debug("[HMSync] planevent " + (planevEmpty ? "empty/missing" : "has no PopRange") +
-                    " — using planmap.lgb (dungeon spawn source)");
+                    " - using planmap.lgb (dungeon spawn source)");
                 lgbFile = planMap;
             }
         }
@@ -586,11 +586,11 @@ public unsafe class ZoneLoadService : IDisposable
 
         // Priority scan: look for specific entry types that indicate valid spawn points
         // Type IDs in LGB InstanceObjects:
-        //   PopRange (40) — explicit spawn/pop areas
-        //   ExitRange (43/57) — zone exits (near entrances)
-        //   Aetheryte (12) — always walkable
-        //   EventNpc (9) — NPCs standing on floor
-        //   PositionMarker (6) — marked positions
+        //   PopRange (40) - explicit spawn/pop areas
+        //   ExitRange (43/57) - zone exits (near entrances)
+        //   Aetheryte (12) - always walkable
+        //   EventNpc (9) - NPCs standing on floor
+        //   PositionMarker (6) - marked positions
 
         Vector3? popRange = null;
         Vector3? exitRange = null;
@@ -607,18 +607,18 @@ public unsafe class ZoneLoadService : IDisposable
         var allEventRanges = new List<Vector3>();
         var allPopRanges = new List<Vector3>();
         // v0.7.239: PopRanges in a GIMMICK/PHASE layer are authored checkpoints (post-boss respawns, explorer-mode
-        // teleport shortcuts) — in-bounds, correct-Y. PopRanges in Route_Basedata are the OOB-prone stock points behind
+        // teleport shortcuts) - in-bounds, correct-Y. PopRanges in Route_Basedata are the OOB-prone stock points behind
         // the tagged "spawned OOB / under textures" cluster. Bucket gimmick-layer PopRanges separately and prefer them.
         // Field name VERIFIED: LayerCommon.Layer.Name (public string), confirmed against Lumina 7.5.0 source
         // (src/Lumina/Data/Parsing/Layer/LayerCommon.cs, field #2, set via ReadStringOffset) AND the installed 7.5.0 DLL.
         var gimmickPopRanges = new List<Vector3>();
         // v0.7.241: arena-bounding volumes. When a zone has no entrance EventObject and no in-bounds PopRange (the OOB
-        // cluster — PvP maps, boss arenas with only OOB stock PopRanges), the CENTRE of the arena's bounding volume is
+        // cluster - PvP maps, boss arenas with only OOB stock PopRanges), the CENTRE of the arena's bounding volume is
         // a valid on-floor spawn locale (V confirmed in-game: the green MapRange cylinder / the CollisionBox ring frame
         // the playable arena; their centre sits on the walkable floor). XZ centres you in the arena; the Y is the
         // volume origin (may sit above the floor) but the engine's ground-clamp settles you down on first movement,
-        // same as the 1345 case. MapRange ranked above CollisionBox (gameplay bound vs physics volume — MapRange is
-        // more reliably floor-centred; CollisionBox can be a wall). PvP maps have several — first is fine (V confirmed).
+        // same as the 1345 case. MapRange ranked above CollisionBox (gameplay bound vs physics volume - MapRange is
+        // more reliably floor-centred; CollisionBox can be a wall). PvP maps have several - first is fine (V confirmed).
         var mapRanges = new List<Vector3>();
         var collisionBoxes = new List<Vector3>();
 
@@ -672,14 +672,14 @@ public unsafe class ZoneLoadService : IDisposable
                         collisionBoxes.Add(pos);
                         break;
                 }
-                // NOTE: no early-exit — we need the full sets for the entrance discriminator below.
+                // NOTE: no early-exit - we need the full sets for the entrance discriminator below.
             }
         }
 
         // ENTRANCE discriminator (top priority): the EventObject with an EventRange within 25u
         // (its trigger volume) AND no PopRange within 50u (not a boss arena). Matched empirically
-        // to (-805,0,864) on Clyteum = the exact spawn. 2D distance (X/Z) — Y varies by ramp.
-        // v0.7.244: skipped for preferArenaCenter territories — on those (e.g. Limsa s1t1) the entrance discriminator
+        // to (-805,0,864) on Clyteum = the exact spawn. 2D distance (X/Z) - Y varies by ramp.
+        // v0.7.244: skipped for preferArenaCenter territories - on those (e.g. Limsa s1t1) the entrance discriminator
         // matches the wrong EventObject (a table), so we want the arena-centre gate below to handle them instead.
         if (!preferArenaCenter.Contains(territoryId) && allEventObjects.Count > 0 && allEventRanges.Count > 0)
         {
@@ -696,13 +696,13 @@ public unsafe class ZoneLoadService : IDisposable
                     return eo;
                 }
             }
-            log.Debug("[HMSync] no entrance EventObject matched discriminator — falling back to PopRange");
+            log.Debug("[HMSync] no entrance EventObject matched discriminator - falling back to PopRange");
         }
 
         // Return by priority (fallback: event-instances, and zones with no entrance EventObject).
         // v0.7.242: for territories flagged preferArenaCenter, the LGB PopRange is known-OOB (V-confirmed in-game),
         // so skip straight to the arena-bounding-volume centre BEFORE the PopRange grab. MapRange first, else
-        // CollisionBox. Only these specific IDs are affected — every other zone keeps the normal priority chain.
+        // CollisionBox. Only these specific IDs are affected - every other zone keeps the normal priority chain.
         if (preferArenaCenter.Contains(territoryId))
         {
             if (mapRanges.Count > 0)
@@ -721,10 +721,10 @@ public unsafe class ZoneLoadService : IDisposable
                     ") [preferArenaCenter " + territoryId + ": skipping OOB PopRange; ground-clamp settles Y]");
                 return cb;
             }
-            log.Debug("[HMSync] preferArenaCenter " + territoryId + " but no MapRange/CollisionBox — normal chain");
+            log.Debug("[HMSync] preferArenaCenter " + territoryId + " but no MapRange/CollisionBox - normal chain");
         }
         // v0.7.239: prefer a GIMMICK/PHASE-layer PopRange over the plain first-PopRange grab (which takes whatever
-        // PopRange is first in iteration order — often a Route_Basedata stock point that sits OOB / under the mesh).
+        // PopRange is first in iteration order - often a Route_Basedata stock point that sits OOB / under the mesh).
         // Only affects zones that HAVE a gimmick PopRange and no entrance match, so entrance-resolved and
         // single-PopRange zones (the near-flawless majority) are untouched.
         if (gimmickPopRanges.Count > 0)
@@ -741,7 +741,7 @@ public unsafe class ZoneLoadService : IDisposable
         if (eventNpc.HasValue) { log.Debug("[HMSync] Spawn from EventNpc"); return eventNpc; }
         if (posMarker.HasValue) { log.Debug("[HMSync] Spawn from PositionMarker"); return posMarker; }
 
-        // v0.7.241: last resort before giving up — the centre of an arena-bounding volume. Catches zones with NO
+        // v0.7.241: last resort before giving up - the centre of an arena-bounding volume. Catches zones with NO
         // usable point instance at all (PvP maps that are just CollisionBox+EventRange; some arenas). MapRange first
         // (gameplay bound, floor-centred), then CollisionBox. XZ centres you in the arena; ground-clamp fixes Y. This
         // only fires where we would otherwise return null (origin fallback → 0,0,0), so it can't regress any zone that
@@ -773,18 +773,18 @@ public unsafe class ZoneLoadService : IDisposable
     /// De-draw housing furnishings (placed furniture, partitions, doors, etc.) in the
     /// current indoor/outdoor territory.
     ///
-    /// Housing furnishings are NOT in Dalamud's object table — the blanket
+    /// Housing furnishings are NOT in Dalamud's object table - the blanket
     /// `foreach (var obj in objectTable)` de-draw in LoadZone never touches them. They live
     /// in the housing system's own FurnitureManager object array, reached via
     /// HousingManager.CurrentTerritory. This walk mirrors Meddle's LayoutService
     /// (ParseTerritoryFurniture): for each furniture entry, resolve its HousingObject* from
-    /// the manager's object array and DisableDraw() it — the same one-shot DisableDraw the
+    /// the manager's object array and DisableDraw() it - the same one-shot DisableDraw the
     /// object-table loop and Hyperborea use, just over the housing array.
     ///
     /// Entirely best-effort: every pointer is null-checked and the whole walk is wrapped, so
     /// if the housing structs shift between game/CS versions this degrades to "furniture not
     /// hidden" with a log line, never a crash. (FFXIVClientStructs has had breaking changes
-    /// to HousingManager/IndoorTerritory across patches — see 7.2 notes — so the member names
+    /// to HousingManager/IndoorTerritory across patches - see 7.2 notes - so the member names
     /// below are the most likely failure point; a wrong name is a compile error, not a CTD.)
     /// </summary>
     // S153: arm the deferred de-draw. Clears tracking lists ONCE per load (fresh state for
@@ -793,11 +793,11 @@ public unsafe class ZoneLoadService : IDisposable
     // v0.7.320: idempotent guarantee that the de-draw poll is running, WITHOUT resetting the per-load tracking
     // (unlike ArmDeferredDeDraw, which clears state and re-arms the settle window). Called from the plugin tick
     // whenever a session + virtual map is active, so the poll runs on EVERY client regardless of how they loaded
-    // in — a peer pulled into the host's map by any path (not just the LoadZone arm) still gets furniture de-draw.
+    // in - a peer pulled into the host's map by any path (not just the LoadZone arm) still gets furniture de-draw.
     // Because the trigger (AnyVisibleHousingFurniture) is role-agnostic and re-fires on re-streams, once the poll
     // is subscribed the peer catches furniture exactly like the host: fire whenever it's visible, no matter who
-    // approached. Furniture may render one frame before the throttled poll catches it — that's inherent to the
-    // stream-then-react model, same as the host — but it IS caught on every client. Safe to call every frame.
+    // approached. Furniture may render one frame before the throttled poll catches it - that's inherent to the
+    // stream-then-react model, same as the host - but it IS caught on every client. Safe to call every frame.
     public void EnsureDeDrawPollRunning()
     {
         // (EnableFurnitureDeDraw is a compile-time const; when it's flipped off this whole feature is compiled out.)
@@ -806,7 +806,7 @@ public unsafe class ZoneLoadService : IDisposable
             deferredDeDrawArmed = true;
             framework.Update += PollDeferredDeDraw;
             // Give the poll a live initial window so the stability gate behaves like a fresh load (it wasn't armed
-            // by LoadZone on this client). Don't touch the hidden-instance tracking — nothing to preserve yet.
+            // by LoadZone on this client). Don't touch the hidden-instance tracking - nothing to preserve yet.
             deferredDeDrawFrames = 600;
             deDrawSettleFrames = DeDrawSettleFrames;
             deDrawFloorFrames = DeDrawFloorFrames;
@@ -819,11 +819,11 @@ public unsafe class ZoneLoadService : IDisposable
     {
         // S166: snapshot the PREVIOUS load's hidden instances into the one-hop carry BEFORE
         // clearing, so this load's de-draw can re-hide any that persist as orphans (the 1011→1012
-        // partition). Replaced each load (one-hop lifetime — never carried past known-live).
+        // partition). Replaced each load (one-hop lifetime - never carried past known-live).
         prevZoneHiddenInstances.Clear();
         prevZoneHiddenInstances.AddRange(hiddenLayoutInstances);
 
-        // Per-load clear (was per-pass in DeDrawHousingFurniture — see S153 note there).
+        // Per-load clear (was per-pass in DeDrawHousingFurniture - see S153 note there).
         hiddenLayoutInstances.Clear();
         hiddenInstanceKeys.Clear();
         colliderSavedState.Clear();
@@ -850,16 +850,16 @@ public unsafe class ZoneLoadService : IDisposable
     }
 
     // S153/S313/S314/S318: post-load watch. Fire the de-draw whenever housing furniture is VISIBLE in any
-    // resident layout (AnyVisibleHousingFurniture — see below). High-frequency for the initial window, then
+    // resident layout (AnyVisibleHousingFurniture - see below). High-frequency for the initial window, then
     // a throttled persistent scan for the whole session (the leak streams in by proximity long after load).
     // Self-limiting: after a successful hide the signal goes false. Disarmed only on stop/leave.
     private void PollDeferredDeDraw(IFramework fw)
     {
         deferredDeDrawFrames--;
 
-        // v0.7.428 — HOT WINDOW. After any pass that NEWLY hid something (a real catch, not an
+        // v0.7.428 - HOT WINDOW. After any pass that NEWLY hid something (a real catch, not an
         // idempotent re-set), stragglers from the same stream-in cluster tend to bind within the
-        // next few frames (mesh first, flame/smoke ignition after — the VFX-item pattern). Run the
+        // next few frames (mesh first, flame/smoke ignition after - the VFX-item pattern). Run the
         // quiet full hide every 10 frames for ~1s; each further catch re-arms the window. Worst-case
         // visible flash inside a cluster drops from one scan tick (~0.5s) to ~0.17s. Gated on the
         // settle-managed initial fire so it can never pre-empt it.
@@ -870,14 +870,14 @@ public unsafe class ZoneLoadService : IDisposable
             {
                 quietDeDraw = true;
                 try { DeDrawHousingFurniture(); } finally { quietDeDraw = false; }
-                if (newlyHiddenThisPass > 0) hotWindowFrames = 60;   // cluster still active — stay hot
+                if (newlyHiddenThisPass > 0) hotWindowFrames = 60;   // cluster still active - stay hot
             }
             return;
         }
 
         // S322 + S329: settle gate before the FIRST de-draw. Furniture (and its collision/textures) streams in over
         // several seconds; firing mid-stream could strip a half-loaded apartment. The OLD gate was a blind flat ~2s
-        // wait applied to every load — slow on the common case (light maps settle far faster). NEW: a short minimum
+        // wait applied to every load - slow on the common case (light maps settle far faster). NEW: a short minimum
         // floor, then fire once furniture has been CONTINUOUSLY VISIBLE for a brief stability window (streaming
         // brings furniture in progressively, so a sustained-present signal means the wave has arrived and settled).
         // Light maps fire in ~floor+stability (~0.75s) instead of a flat 2s; heavy/slow maps still wait for the
@@ -889,9 +889,9 @@ public unsafe class ZoneLoadService : IDisposable
 
             bool visNow = AnyVisibleHousingFurniture() || AnyVisibleFurnitureManagerObjects();
             if (visNow) deDrawStablePresent++;
-            else { deDrawStablePresent = 0; deDrawSettleFrames--; }       // not settled yet — keep the backstop ticking
+            else { deDrawStablePresent = 0; deDrawSettleFrames--; }       // not settled yet - keep the backstop ticking
 
-            // Fire when furniture has been continuously visible for the stability window — OR the max backstop lapses
+            // Fire when furniture has been continuously visible for the stability window - OR the max backstop lapses
             // (pathological slow stream): fire on whatever's visible then, late waves re-fire the rest.
             bool stableEnough = deDrawStablePresent >= DeDrawStableFrames;
             bool backstopLapsed = deDrawSettleFrames <= 0;
@@ -902,8 +902,8 @@ public unsafe class ZoneLoadService : IDisposable
         // S313/S314/S318: the trigger is "is housing furniture currently VISIBLE in any resident layout".
         // History: S313 widened the de-draw to walk all layouts; S314 made the watch persistent (the leak
         // streams in by proximity long after load, far from spawn); S318 replaced the total-BgPart-count
-        // GROWTH heuristic — which the zone's own streaming geometry masked, causing the intermittent
-        // pillar/door leak — with AnyVisibleHousingFurniture(): housing-path (bgcommon/hou/) only, visible
+        // GROWTH heuristic - which the zone's own streaming geometry masked, causing the intermittent
+        // pillar/door leak - with AnyVisibleHousingFurniture(): housing-path (bgcommon/hou/) only, visible
         // only, recursing SharedGroups so it catches pillars (top-level BgPart) AND doors (nested leaves).
         // Fire the de-draw whenever furniture is visible; after a successful hide the signal goes false, so
         // it self-limits. Persistent phase scans on a throttle; disarmed only on stop/leave.
@@ -919,15 +919,15 @@ public unsafe class ZoneLoadService : IDisposable
         if (!visibleFurniture)
         {
             deDrawRunLogged = false;   // v0.7.454: furniture gone → arm the log for the next real wave's rising edge
-            // v0.7.428 — DETECTION-CLEAN SAFETY PASS. The .427 stove datum: with all six buckets
+            // v0.7.428 - DETECTION-CLEAN SAFETY PASS. The .427 stove datum: with all six buckets
             // AND the FM chain polled, the stove's reappearance was STILL invisible to detection and
             // died only on the blind cadence tick. Its renderable lives on a surface none of our
             // reads return. So in the persistent phase, "detection says clean" no longer means
-            // "do nothing" — it means run the quiet idempotent full hide anyway, every scan tick
+            // "do nothing" - it means run the quiet idempotent full hide anyway, every scan tick
             // (~0.5s). Detection is demoted to a logging/fast-path signal; the safety net runs
             // regardless. Each pass tracks newly-hidden (true→false flips); any catch arms the hot
             // window and emits [CADENCE-CATCH] lines naming the instance type/path/slot detection
-            // missed — the mechanism evidence self-collects during normal play.
+            // missed - the mechanism evidence self-collects during normal play.
             if (inPersistentPhase && deferredDeDrawFiredOnce)
             {
                 quietDeDraw = true;
@@ -956,7 +956,7 @@ public unsafe class ZoneLoadService : IDisposable
     }
 
     // S155 DIAG [BGDUMP]: read-only per-instance-TYPE dump. S154 proved BgPart is hidden
-    // (visible=0) on BOTH the clean and broken hops — so the visible furniture is NOT a BgPart.
+    // (visible=0) on BOTH the clean and broken hops - so the visible furniture is NOT a BgPart.
     // This widens the dump to ALL FOUR types we de-draw (SharedGroup, BgPart, Vfx, Light) and
     // reports visible-count per type, so we see WHICH layer has visible>0 on the broken
     // 1011→1012 hop. inHiddenSet is tracked per instance (keys are shared across our hidden set).
@@ -1005,7 +1005,7 @@ public unsafe class ZoneLoadService : IDisposable
     }
 
     // S312: a zone is instanced content (duty/dungeon/trial) iff it has a ContentFinderCondition
-    // with a non-zero Content row — the SAME discriminator SetupInstanceContentForZone uses (content==0
+    // with a non-zero Content row - the SAME discriminator SetupInstanceContentForZone uses (content==0
     // ⇒ city/overworld/residential). Cities, overworld, and RESIDENTIAL WARDS all return false here.
     // The barrier-drop's direct SharedGroup write only makes sense in instanced content (transient duty
     // geometry); in a streaming residential ward those SharedGroups are estate prefabs that stream in/out,
@@ -1034,21 +1034,21 @@ public unsafe class ZoneLoadService : IDisposable
             if (!IsAddressInMainModule(setupInstanceContentAddr))
             {
                 log.Error("[HMSync] SetupInstanceContent addr 0x" + setupInstanceContentAddr.ToString("X") +
-                    " outside main module — SKIPPING call (bad sig resolution). Barrier release disabled.");
+                    " outside main module - SKIPPING call (bad sig resolution). Barrier release disabled.");
                 return false;
             }
             var sheet = dataManager.GetExcelSheet<TerritoryType>();
             var row = sheet?.GetRowOrDefault(territoryId);
             if (row == null) return false;
             uint content = row.Value.ContentFinderCondition.ValueNullable?.Content.RowId ?? 0;
-            if (content == 0) return false; // not instanced content (city/overworld) — nothing to set up
+            if (content == 0) return false; // not instanced content (city/overworld) - nothing to set up
 
             var setup = Marshal.GetDelegateForFunctionPointer<SetupInstanceContentDelegate>(setupInstanceContentAddr);
 
-            // S259: always raw init (flags=0). The explorer-mode branch was removed — flags=1/Tourism
+            // S259: always raw init (flags=0). The explorer-mode branch was removed - flags=1/Tourism
             // brought up the explorer HUD but never a clean map (the cleared-map state is Lua-sequence
             // driven, not flag-driven; see the architecture doc §14-18). Map load does NOT depend on
-            // this director step — the actual load is loadZoneHook.Original below; this setup exists to
+            // this director step - the actual load is loadZoneHook.Original below; this setup exists to
             // create the InstanceContentDirector + populate MapEffects so barrier release works.
             uint flags = 0;
             setup((nint)EventFramework.Instance(), 0x80030000 + content, content, flags);
@@ -1060,13 +1060,13 @@ public unsafe class ZoneLoadService : IDisposable
     }
 
     // S224: tear down whatever instance content we previously set up (before loading a new zone or
-    // returning home). Idempotent — no-op if we set nothing up.
+    // returning home). Idempotent - no-op if we set nothing up.
     private unsafe void FinalizeCurrentInstanceContent()
     {
         try
         {
             // S262: clear any stale "Duty Information" HUD (name + clock). AnoMech does this same
-            // hide on teardown. One-shot — not a per-frame suppressor; we no longer create a director,
+            // hide on teardown. One-shot - not a per-frame suppressor; we no longer create a director,
             // so this only catches a leftover from an older build or a prior real duty.
             var uiState = FFXIVClientStructs.FFXIV.Client.Game.UI.UIState.Instance();
             if (uiState != null && uiState->DirectorTodo.IsShown)
@@ -1075,7 +1075,7 @@ public unsafe class ZoneLoadService : IDisposable
             if (lastInstanceContentId == null || finalizeInstanceContentAddr == 0) { lastInstanceContentId = null; return; }
             if (!IsAddressInMainModule(finalizeInstanceContentAddr))
             {
-                log.Error("[HMSync] FinalizeInstanceContent addr outside main module — SKIPPING.");
+                log.Error("[HMSync] FinalizeInstanceContent addr outside main module - SKIPPING.");
                 lastInstanceContentId = null; return;
             }
             var fin = Marshal.GetDelegateForFunctionPointer<FinalizeInstanceContentDelegate>(finalizeInstanceContentAddr);
@@ -1089,11 +1089,11 @@ public unsafe class ZoneLoadService : IDisposable
 
 
 
-    // S228: BARRIER DROP via SharedGroup collider deactivation — AnoMech's proven mechanism.
+    // S228: BARRIER DROP via SharedGroup collider deactivation - AnoMech's proven mechanism.
     // The duty pre-pull spawn ring is a set of SharedGroup ILayoutInstances (NOT a MapEffect, NOT a
-    // CollisionBox, NOT a director-update — all ruled out S222-S227). In a real duty the server's
+    // CollisionBox, NOT a director-update - all ruled out S222-S227). In a real duty the server's
     // Commence clears their collision; client-side we do it ourselves: SetColliderActive(false) (vfunc 37,
-    // the physics off-switch). (S312: the old companion `clear PrefabFlags2&0x8` write was removed — see
+    // the physics off-switch). (S312: the old companion `clear PrefabFlags2&0x8` write was removed - see
     // DisableSpawnAreaColliders; direct lifecycle-flag writes corrupt the SharedGroup and crash Deinit.)
     // Returns count disabled. 0 = normal during async streaming (caller retries each frame).
     private unsafe int DisableSpawnAreaColliders(Vector3 center, float radius)
@@ -1118,7 +1118,7 @@ public unsafe class ZoneLoadService : IDisposable
                 if (dx * dx + dz * dz > r2) continue;
 
                 // S312: drop the collider via the game's own vfunc only. The previous
-                // `sg->PrefabFlags2 &= ~0x8u` direct write was removed — writing SharedGroup lifecycle
+                // `sg->PrefabFlags2 &= ~0x8u` direct write was removed - writing SharedGroup lifecycle
                 // fields directly is exactly what tripped the Deinit AV (the S132 de-draw lesson:
                 // touch leaf state via the game's accessors, never the instance's bookkeeping flags).
                 // SetColliderActive(false) (vfunc 37) is the physics off-switch with proper bookkeeping;
@@ -1154,10 +1154,10 @@ public unsafe class ZoneLoadService : IDisposable
     private static readonly string[] BarrierModelMarkers = { "wep01", "wep06" };
 
     // v0.7.277: PRECISION model+collision suppression for a SINGLE instance of a repeated asset. Name/pcb matching
-    // hits ALL instances (all 4 arch gates); to isolate ONE (gate #1 only), match by world POSITION — the same
+    // hits ALL instances (all 4 arch gates); to isolate ONE (gate #1 only), match by world POSITION - the same
     // precision identity the barrier boxes use. Each target hides the BgPart model at its position AND suppresses
     // the collider at that position (both matched within tolerance). Marker disambiguates when assets overlap.
-    // v0.7.278: optional MoveTo — if set, RELOCATE the instance (model + collider together) instead of hiding it.
+    // v0.7.278: optional MoveTo - if set, RELOCATE the instance (model + collider together) instead of hiding it.
     // Gate #1 raised to Y=11 so the grate lifts above head height: gate stays visible, you walk under it.
     private struct PrecisionTarget
     {
@@ -1165,16 +1165,16 @@ public unsafe class ZoneLoadService : IDisposable
         public string Marker;                   // path substring to disambiguate overlapping assets ("" = any)
         public System.Numerics.Vector3? MoveTo; // if set, relocate the MODEL here; else hide the model
         public bool SuppressCollision;          // if true, zero the collider (LayerMask=0) instead of moving it with the model
-        public float? RotateYDeg;               // v0.7.342: if set, rotate the MODEL to this ABSOLUTE Y-axis angle (deg) —
+        public float? RotateYDeg;               // v0.7.342: if set, rotate the MODEL to this ABSOLUTE Y-axis angle (deg) -
                                                 // swings a door open. Cosmetic only; pair with SuppressCollision for passage.
         public float? Radius;                   // v0.7.348: per-target match radius override (default PrecisionMatchRadius).
                                                 // Tight radius needed when a target must discriminate between paired leaves
-                                                // ~1.4-1.7y apart that share an asset — a wide radius grabs the wrong leaf.
+                                                // ~1.4-1.7y apart that share an asset - a wide radius grabs the wrong leaf.
     }
     private static readonly PrecisionTarget[] PrecisionSuppress1345 = new[]
     {
         // Arch gate #1 ONLY (leftmost). Raise the MODEL to Y=11 (gate floats up, visible) but SUPPRESS its
-        // collision (zero LayerMask) rather than move it — moving a flat-grate Mesh collider by translation alone
+        // collision (zero LayerMask) rather than move it - moving a flat-grate Mesh collider by translation alone
         // doesn't reliably relocate the collision geometry (the World matrix wants a full transform rebuild), and
         // suppressing is the clean way to make the doorway passable. Gates 2/3/4 (same arf20 asset) untouched.
         new PrecisionTarget {
@@ -1186,14 +1186,14 @@ public unsafe class ZoneLoadService : IDisposable
     };
     private const float PrecisionMatchRadius = 4.0f;  // 4y so a raised instance (Y 8.1→11 = 2.9y) stays matched for re-apply
 
-    // v0.7.342: o1e1 (ffxiv/ocn_o1/evt/o1e1 — the seaship interior cutscene stage) doors. Rotate each door leaf open
+    // v0.7.342: o1e1 (ffxiv/ocn_o1/evt/o1e1 - the seaship interior cutscene stage) doors. Rotate each door leaf open
     // about its Y axis (cosmetic swing) + suppress its collision (passage). Matched by the shared door mdl
     // (w_sip_002_11a) at each leaf's world position. Gated to the o1e1 stage bg (below) so it never touches 1345.
     private const string O1E1StageBg = "ffxiv/ocn_o1/evt/o1e1/level/o1e1";
     private static readonly PrecisionTarget[] PrecisionDoorsO1E1 = new[]
     {
-        // Door wing 1 — swing to -76°, suppress collision. Position is the ACTUAL GetTranslation value from /hms
-        // doordump (1.360, 10.352, -16.194) — the earlier (0.583,…) was the mdl-space coord, not what the instance
+        // Door wing 1 - swing to -76°, suppress collision. Position is the ACTUAL GetTranslation value from /hms
+        // doordump (1.360, 10.352, -16.194) - the earlier (0.583,…) was the mdl-space coord, not what the instance
         // reports; matching needs the runtime translation.
         new PrecisionTarget {
             Pos = new System.Numerics.Vector3(1.360f, 10.352f, -16.194f),
@@ -1202,7 +1202,7 @@ public unsafe class ZoneLoadService : IDisposable
             SuppressCollision = true,
             Radius = 0.7f,
         },
-        // Door wing 2 (same asset, other leaf) — swing to -107°, suppress collision. Real translation (-1.359, …).
+        // Door wing 2 (same asset, other leaf) - swing to -107°, suppress collision. Real translation (-1.359, …).
         new PrecisionTarget {
             Pos = new System.Numerics.Vector3(-1.359f, 10.352f, -16.194f),
             Marker = "w_sip_002_11a",
@@ -1210,16 +1210,16 @@ public unsafe class ZoneLoadService : IDisposable
             SuppressCollision = true,
             Radius = 0.7f,
         },
-        // v0.7.350: remaining ship doors — positions corrected to the REAL GetTranslation values from /hms doordump
+        // v0.7.350: remaining ship doors - positions corrected to the REAL GetTranslation values from /hms doordump
         // (the earlier gizmo-space coords were ~0.8-1.1y off and missed the 0.7y radius entirely). Each pair faces its
-        // own direction → its own absolute angle. Collision suppressed for passage. Tight radius (0.7y) is safe — the
+        // own direction → its own absolute angle. Collision suppressed for passage. Tight radius (0.7y) is safe - the
         // dump confirmed every wanted leaf is >1.5y from any other w_sip_002_11a instance.
-        // Set A — a full pair (the negative-X pair; the positive-X pair at (2.963/5.681,…) is left closed).
+        // Set A - a full pair (the negative-X pair; the positive-X pair at (2.963/5.681,…) is left closed).
         new PrecisionTarget { Pos = new System.Numerics.Vector3(-2.963f, 7.352f,  7.281f), Marker = "w_sip_002_11a", RotateYDeg =   85f, SuppressCollision = true, Radius = 0.7f },  // left
         new PrecisionTarget { Pos = new System.Numerics.Vector3(-5.682f, 7.352f,  7.281f), Marker = "w_sip_002_11a", RotateYDeg =   98f, SuppressCollision = true, Radius = 0.7f },  // right
-        // Set B — upper deck, RIGHT leaf only (left leaf at (-1.359,11.852,0.896) left closed).
+        // Set B - upper deck, RIGHT leaf only (left leaf at (-1.359,11.852,0.896) left closed).
         new PrecisionTarget { Pos = new System.Numerics.Vector3( 1.360f, 11.852f, 0.896f), Marker = "w_sip_002_11a", RotateYDeg =  -85f, SuppressCollision = true, Radius = 0.7f },
-        // Set C — observation deck, RIGHT leaf only (left leaf at (-1.359,4.613,-25.461) left closed).
+        // Set C - observation deck, RIGHT leaf only (left leaf at (-1.359,4.613,-25.461) left closed).
         new PrecisionTarget { Pos = new System.Numerics.Vector3( 1.359f, 4.613f, -25.461f), Marker = "w_sip_002_11a", RotateYDeg = -100f, SuppressCollision = true, Radius = 0.7f },
     };
     // Restore-on-stop for rotated doors: original quaternion per instance key, and the set of instances we rotated.
@@ -1227,11 +1227,11 @@ public unsafe class ZoneLoadService : IDisposable
     private readonly System.Collections.Generic.HashSet<nint> precisionRotatedInstances = new();
     private bool o1e1DoorsLogged;   // v0.7.342: one-shot "doors applied to N" confirmation in the log
 
-    // v0.7.353: 1345 road-mesh clones — fill the two pit-gaps at the crossroads near spawn by CLONING a nearby road
+    // v0.7.353: 1345 road-mesh clones - fill the two pit-gaps at the crossroads near spawn by CLONING a nearby road
     // mesh's collider (m6d2_a1_flo01.mdl, grooved/varying-elevation) and placing it shifted into each gap. Ported from
     // HCollider's proven CopyMesh flow: read the source ColliderMesh's pcb Resource path + its Translation, then
     // AddColliderMesh(pcbPath, sourceTranslation + shiftDelta, sourceRotation, sourceScale). The groove profile travels
-    // rigidly with a pure translation, so no stretch — just a shift along the road (X) axis.
+    // rigidly with a pure translation, so no stretch - just a shift along the road (X) axis.
     private struct MeshCloneTarget
     {
         public string SourceMdl;                  // the .mdl path substring of the source road mesh
@@ -1240,12 +1240,12 @@ public unsafe class ZoneLoadService : IDisposable
                                                    // E-W lane shift in X; roads on the N-S lane (x≈-805) shift in Z.
     }
     private const uint RoadCloneTerritory = 1345;
-    // v0.7.354: the /hms roaddump census revealed the road is TILED — each 24u segment is its own m6d2_a1_flo01.mdl
+    // v0.7.354: the /hms roaddump census revealed the road is TILED - each 24u segment is its own m6d2_a1_flo01.mdl
     // BgPart, and the two pits are the specific tiles at x=-830 and x=-780 (z=800) that have coll=no-collider (visual
-    // road, but NO collision floor — which is exactly why they block passage). Their immediate neighbors DO carry a
+    // road, but NO collision floor - which is exactly why they block passage). Their immediate neighbors DO carry a
     // Mesh collider. So: clone the Mesh-collider neighbor and shift it one tile (±24u) onto the pit. Sources are matched
     // by mdl-path + being the nearest MESH-collider instance to SourceNear (a no-collider tile at the same spot is
-    // skipped — see the Mesh-only filter in ApplyRoadClones1345).
+    // skipped - see the Mesh-only filter in ApplyRoadClones1345).
     private static readonly MeshCloneTarget[] RoadClones1345 = new[]
     {
         // v0.7.355: bridge the crossroads pits AND extend both road lanes. Grid is a 24u lattice; each target clones a
@@ -1306,7 +1306,7 @@ public unsafe class ZoneLoadService : IDisposable
                     string path = "";
                     try { var cs = inst->GetPrimaryPath(); if (cs.HasValue) path = cs.ToString(); } catch { }
                     if (!path.Contains(tgt.SourceMdl)) continue;
-                    // MUST have a Mesh collider to be a clonable source — the road is tiled and many m6d2_a1_flo01
+                    // MUST have a Mesh collider to be a clonable source - the road is tiled and many m6d2_a1_flo01
                     // instances at the same X/Z are coll=no-collider (visual only). Skip those; only a Mesh tile clones.
                     var bp = (BgPartsLayoutInstance*)inst;
                     if (bp->Collider == null || bp->Collider->GetColliderType() != BGColliderType.Mesh) continue;
@@ -1315,7 +1315,7 @@ public unsafe class ZoneLoadService : IDisposable
                     if (d < bestDist) { bestDist = d; bestInst = inst; }
                 }
             }
-            if (bestInst == null || bestDist > 6f) continue;   // source not streamed yet — retry a later frame (quiet)
+            if (bestInst == null || bestDist > 6f) continue;   // source not streamed yet - retry a later frame (quiet)
 
             var bgp = (BgPartsLayoutInstance*)bestInst;
             var coll = bgp->Collider;
@@ -1411,7 +1411,7 @@ public unsafe class ZoneLoadService : IDisposable
             }
         }
         // Re-dump while weps are matched but not yet hidden (so we see the state AFTER models finish loading).
-        // v0.7.447: per-tick, so route through DiagLog (research-mode gated) — this was flooding the log via
+        // v0.7.447: per-tick, so route through DiagLog (research-mode gated) - this was flooding the log via
         // ReportDebug on every barrier-suppress scan. The one-shot "ALL HIDDEN" line stays informational.
         if (wepMatched > 0 && gfxHidden < wepMatched && (wepDiagTick % 60 == 0 || !wepDiagDumped))
         {
@@ -1430,20 +1430,20 @@ public unsafe class ZoneLoadService : IDisposable
     }
     private bool wepDiagDumped;
 
-    // v0.7.285: 925 Terncliff hidden-city — INVESTIGATION PARKED (see investigation note). Diagnosis: 925 is the
+    // v0.7.285: 925 Terncliff hidden-city - INVESTIGATION PARKED (see investigation note). Diagnosis: 925 is the
     // event/cutscene layout (bg/ex3/01_nvt_n4/evt/n4eb). The loader parses the LGB (18 layers, 1080 instances) but
-    // only INSTANTIATES 162 — the ~918 Visible=0 city models are NOT spawned (live InstancesByType[BgPart] matched=1,
+    // only INSTANTIATES 162 - the ~918 Visible=0 city models are NOT spawned (live InstancesByType[BgPart] matched=1,
     // not ~978). So a visibility flip (IsVisible=true) has nothing to flip. HCollider's collision net is the
     // collision system streaming the .pcb meshes independently of layout instantiation. The real quest cutscene
-    // (planevent QST_LucKyw* scripts) reveals the city via the event/timeline system — NOT replicated by the bg-swap
+    // (planevent QST_LucKyw* scripts) reveals the city via the event/timeline system - NOT replicated by the bg-swap
     // in CutsceneStageService (which only redirects which bg.lgb loads; the file already loads here). Two forward
-    // paths, both deferred: (1) CLONE the models (BgObject.Create per bg.csv entry + collision) — world-editor
-    // instantiation scope; (2) LayerSet ACTIVATION via LayoutManager — a clean toggle IF the city sits in an
+    // paths, both deferred: (1) CLONE the models (BgObject.Create per bg.csv entry + collision) - world-editor
+    // instantiation scope; (2) LayerSet ACTIVATION via LayoutManager - a clean toggle IF the city sits in an
     // inactive instantiate-on-activate layer-set; needs an in-game probe to confirm the mechanism exists.
 
     // v0.7.353b diagnostic (/hms roaddump <term>): why did the road-clone find no source mesh? List every BgPart whose
     // path contains <term> (default "flo01"), with real GetPrimaryPath + GetTranslation + collider type. Reveals the
-    // actual path string + position so the clone match can be fixed — the play that cracked the o1e1 doors.
+    // actual path string + position so the clone match can be fixed - the play that cracked the o1e1 doors.
     public unsafe void DumpRoads1345(string term)
     {
         if (string.IsNullOrEmpty(term)) term = "flo01";
@@ -1474,7 +1474,7 @@ public unsafe class ZoneLoadService : IDisposable
     }
 
     // v0.7.349 diagnostic (/hms doordump): now dumps EVERY w_sip_002_11a instance in the stage with its exact
-    // GetTranslation, and its distance to each of the 6 configured door targets — so we see immediately whether a
+    // GetTranslation, and its distance to each of the 6 configured door targets - so we see immediately whether a
     // non-matching door is (a) at coords offset from the configured target (gizmo-space vs GetTranslation), or (b)
     // present but outside the 0.7y match radius.
     public unsafe void DumpDoorsO1E1()
@@ -1516,13 +1516,13 @@ public unsafe class ZoneLoadService : IDisposable
         log.Information("[HMSync] [DOORDUMP] total w_sip_002_11a instances = " + found);
     }
 
-    // v0.7.277: precision suppress — hide the BgPart model AND suppress the collider at each target's exact world
+    // v0.7.277: precision suppress - hide the BgPart model AND suppress the collider at each target's exact world
     // position (single instance of a repeated asset). Model: walk BgPart, position+marker match → IsVisible=false.
-    // Collision: walk colliders, position match (any kind — the arf20 grate is a thin Mesh) → LayerMask=0 (saved
+    // Collision: walk colliders, position match (any kind - the arf20 grate is a thin Mesh) → LayerMask=0 (saved
     // for restore). Persistent (models re-stream). Returns model-hide count.
     private unsafe int PrecisionSuppress() => PrecisionApply(PrecisionSuppress1345);
 
-    // v0.7.342: generalized precision pass — apply an arbitrary target set (1345 arch gate, o1e1 doors, …). Model:
+    // v0.7.342: generalized precision pass - apply an arbitrary target set (1345 arch gate, o1e1 doors, …). Model:
     // walk BgPart, position+marker match → hide, move, OR rotate-to-angle. Collision: the fused collider → suppress or
     // move. Persistent (models re-stream). Returns model-affected count.
     private unsafe int PrecisionApply(PrecisionTarget[] targets)
@@ -1556,7 +1556,7 @@ public unsafe class ZoneLoadService : IDisposable
                 if (!matched) continue;
 
                 var bgp = (BgPartsLayoutInstance*)inst;
-                var coll = bgp->Collider;        // its own collider (the fusion — same gate's pair)
+                var coll = bgp->Collider;        // its own collider (the fusion - same gate's pair)
                 // Use GetEffectiveGraphics (NOT raw GraphicsObject): it returns null while the model is still
                 // streaming (ModelResourceHandle null or LoadState<7). Calling UpdateTransforms on a not-yet-loaded
                 // model faults inside BGObject.UpdateCulling (the crash). Skip this frame; the poll retries once
@@ -1601,7 +1601,7 @@ public unsafe class ZoneLoadService : IDisposable
                 {
                     if (suppressColl || !moveTo.HasValue)
                     {
-                        // Zero it — the reliable way to clear the doorway (moving a flat-grate Mesh collider by
+                        // Zero it - the reliable way to clear the doorway (moving a flat-grate Mesh collider by
                         // translation alone doesn't relocate the collision geometry). Also the collision half of a
                         // plain hide.
                         uint ownerKey = (uint)(coll->LayoutObjectId & 0xFFFFFFFF);
@@ -1613,7 +1613,7 @@ public unsafe class ZoneLoadService : IDisposable
                     else if (moveTo.HasValue && dgfx != null)
                     {
                         // Move the collider WITH the model. Set all three transform components (like HCollider's
-                        // MoveNativePart) so the collider's World matrix rebuilds — SetTranslation alone can leave
+                        // MoveNativePart) so the collider's World matrix rebuilds - SetTranslation alone can leave
                         // the collision geometry at the old spot.
                         System.Numerics.Vector3 t = moveTo.Value;
                         System.Numerics.Vector3 er; coll->GetRotation(&er);
@@ -1639,7 +1639,7 @@ public unsafe class ZoneLoadService : IDisposable
     private void ArmBarrierSuppress(uint territoryId)
     {
         barrierPassTerritory = territoryId;
-        barrierSuppressFrames = 1800; // ~30s backstop — dungeon collision streams in well after the zone-load event
+        barrierSuppressFrames = 1800; // ~30s backstop - dungeon collision streams in well after the zone-load event
         if (!barrierSuppressArmed) { barrierSuppressArmed = true; framework.Update += PollBarrierSuppress; }
     }
     private unsafe void PollBarrierSuppress(IFramework fw)
@@ -1652,10 +1652,10 @@ public unsafe class ZoneLoadService : IDisposable
         // so a frame with nothing to do costs a map lookup and 13 pointer reads.
         if (lineVfxAuto) { try { SuppressLineVfxCadence(); } catch { } }
         // Initial phase: run every frame to catch barriers + weps as they stream in (~30s backstop).
-        // Persistent phase: throttle, but NEVER disarm — the wep MODELS re-stream / their DrawObject gets
+        // Persistent phase: throttle, but NEVER disarm - the wep MODELS re-stream / their DrawObject gets
         // recreated as the player moves, so IsVisible=false must be re-applied continuously (this is exactly
         // how HCollider keeps a hidden model hidden, and how HMSync's furniture de-draw stays persistent).
-        // The barrier COLLIDERS, once LayerMask=0, stay suppressed — but re-running the suppress is cheap and
+        // The barrier COLLIDERS, once LayerMask=0, stay suppressed - but re-running the suppress is cheap and
         // covers any collider that re-streams, so we keep calling it too.
         if (inPersistentPhase)
         {
@@ -1669,20 +1669,20 @@ public unsafe class ZoneLoadService : IDisposable
             // (qic border curtains); MapSpecificVfxPatterns returns empty for others, so this is safe everywhere.
             HideBarrierVfx(includeMapSpecific: true);
             // Barrier colliders: the Plane-material (0x2400/0x4400) match is UNIVERSAL (self-identifying zone-wide),
-            // so this runs on all instanced content. The Box position-match inside is naturally self-gating — the
-            // 1345 position list only matches in 1345 — so calling it everywhere is safe and adds the barrier-Plane
+            // so this runs on all instanced content. The Box position-match inside is naturally self-gating - the
+            // 1345 position list only matches in 1345 - so calling it everywhere is safe and adds the barrier-Plane
             // drop for every instanced map (e.g. 893's boundary walls).
             SuppressBarrierColliders();
-            // 1345-specific passes (terrain walls, wreck models) — gated to 1345 until each map's data is added.
+            // 1345-specific passes (terrain walls, wreck models) - gated to 1345 until each map's data is added.
             if (barrierPassTerritory == BarrierSuppressTerritory)
             {
                 SuppressTerrainColliders();   // tr* Mesh colliders by pcb-name (1345 navigable walls)
-                HideBarrierModels();          // wep01/wep06 graphics — re-applied every scan (they re-stream)
+                HideBarrierModels();          // wep01/wep06 graphics - re-applied every scan (they re-stream)
                 PrecisionSuppress();          // single-instance model+collision by position (arch gate #1)
                 KillHiddenColliders();        // zero the wep mesh colliders just keyed
                 ApplyRoadClones1345();        // v0.7.353: clone road meshes to bridge the two pit-gaps (once)
             }
-            // v0.7.342: o1e1 seaship-interior doors — gated by the active STAGE bg (cutscene stage, no TT of its own),
+            // v0.7.342: o1e1 seaship-interior doors - gated by the active STAGE bg (cutscene stage, no TT of its own),
             // not territoryId. Rotate the two door leaves open + suppress their collision. Re-applied every scan.
             if ((ActiveStageBg ?? "") == O1E1StageBg)
             {
@@ -1692,7 +1692,7 @@ public unsafe class ZoneLoadService : IDisposable
             }
         }
         catch (Exception ex) { log.Warning("[HMSync] PollBarrierSuppress threw: " + ex.Message); }
-        // No disarm here — the handler runs for the whole session (like PollDeferredDeDraw). Removed on
+        // No disarm here - the handler runs for the whole session (like PollDeferredDeDraw). Removed on
         // stop/leave and Dispose. This keeps re-streamed wep models hidden for the entire session.
     }
     private int persistentBarrierTick;
@@ -1712,13 +1712,13 @@ public unsafe class ZoneLoadService : IDisposable
         {
             framework.Update -= PollBarrierRelease;
             barrierReleaseArmed = false;
-            if (!done) DiagLog("[HMSync] [BARRIERDROP] backstop hit — no SharedGroups found near spawn.");
+            if (!done) DiagLog("[HMSync] [BARRIERDROP] backstop hit - no SharedGroups found near spawn.");
         }
     }
 
-    // that skipped the in-resolve [LGBCBOX] test — 1345 is curated so ResolveFromLgb never ran). Dumps
+    // that skipped the in-resolve [LGBCBOX] test - 1345 is curated so ResolveFromLgb never ran). Dumps
     // all PopRange + CollisionBox + the full type set so we can compare a DUNGEON (OOB PopRange, e.g.
-    // 1345) vs a WORKING zone (inns/Senatus/Command Room — spawn correctly, so their PopRange is sane).
+    // 1345) vs a WORKING zone (inns/Senatus/Command Room - spawn correctly, so their PopRange is sane).
     // The comparison shows whether the fix is "use the CollisionBox" or "pick a better PopRange".
     public void DumpLgb(uint territoryId)
     {
@@ -1734,7 +1734,7 @@ public unsafe class ZoneLoadService : IDisposable
 
             log.Information("[LGBDUMP] === " + territoryId + " (" + bg + ") ===");
             // The data showed dungeon planevent.lgb is EMPTY while event-instances have PopRanges there.
-            // So dungeon spawn/barrier lives in a DIFFERENT level LGB — probe ALL variants.
+            // So dungeon spawn/barrier lives in a DIFFERENT level LGB - probe ALL variants.
             foreach (var variant in new[] { "planevent", "bg", "planmap", "planner", "planlive", "vfx", "sound" })
             {
                 var path = "bg/" + levelPath + "/" + variant + ".lgb";
@@ -1744,7 +1744,7 @@ public unsafe class ZoneLoadService : IDisposable
 
                 var typeCounts = new Dictionary<string, int>();
                 int total = 0;
-                // Spawn-relevant types we want FULL detail on (Name + index + pos) — to find the
+                // Spawn-relevant types we want FULL detail on (Name + index + pos) - to find the
                 // ENTRANCE/EXIT/sub-portal markers distinct from boss-arena PopRanges (V's insight).
                 var detailTypes = new HashSet<string> { "PopRange", "ExitRange", "EventRange",
                     "EventObject", "Aetheryte", "PositionMarker", "MapRange" };
@@ -1812,7 +1812,7 @@ public unsafe class ZoneLoadService : IDisposable
             if (barrierKeys.Count == 0)
             {
                 DiagLog("[HMSync] [BARRIER] no spawn-centered CollisionBox found (none within " +
-                    BarrierRadius + "u) — nothing to disable.");
+                    BarrierRadius + "u) - nothing to disable.");
                 return;
             }
 
@@ -1846,7 +1846,7 @@ public unsafe class ZoneLoadService : IDisposable
     // S156 DIAG [FURNMGR]: the GlobalLayout dump proves GlobalLayout is fully hidden (vis=0) on
     // both clean and broken hops, yet the user sees their APARTMENT furniture at apartment-
     // relative coords on a hop. Hypothesis: the visible pieces are the placed-furniture
-    // GameObjects in HousingFurnitureManager.ObjectManager.ObjectArray — a SEPARATE object set
+    // GameObjects in HousingFurnitureManager.ObjectManager.ObjectArray - a SEPARATE object set
     // from GlobalLayout's ILayoutInstance graph, persisting because the client is still anchored
     // to the apartment as the real territory under the HMS scene. This walks that array and
     // reports, per furniture object: index, ObjectKind, position, DrawObject null?, and if
@@ -1898,7 +1898,7 @@ public unsafe class ZoneLoadService : IDisposable
     // FurnitureManager's ObjectArray AND every GOM slot in the EventObjectManager range (440-500):
     // GOM index, ObjectKind (as raw byte + enum name), address, RenderFlags (raw hex), DrawObject
     // pointer, DrawObject.IsVisible, position. Purpose: the leaked tabletop items render from an
-    // object our sweeps skip — GOMFURNHIDE suppressed only 2 of the manager's 17 (the other 15
+    // object our sweeps skip - GOMFURNHIDE suppressed only 2 of the manager's 17 (the other 15
     // report a DIFFERENT ObjectKind and are skipped by the kind filter). This names the rendering
     // object and its kind, so the fix is a widened filter, not a guess. Read-only; live pointers
     // fetched fresh, nothing stored.
@@ -1929,7 +1929,7 @@ public unsafe class ZoneLoadService : IDisposable
                         if (go == null) continue;
                         var draw = go->DrawObject;
                         var p = go->Position;
-                        // v0.7.424: SGL chain state — the layer the hide actually writes. sgl=null means the
+                        // v0.7.424: SGL chain state - the layer the hide actually writes. sgl=null means the
                         // graphics hang somewhere else entirely (the estate stove/ashtray hypothesis).
                         var sgl = go->SharedGroupLayoutInstance;
                         string sglState = "null";
@@ -1948,7 +1948,7 @@ public unsafe class ZoneLoadService : IDisposable
                             + " draw=" + (draw == null ? "null" : ((nint)draw).ToString("X") + (draw->IsVisible ? "/VISIBLE" : "/hidden"))
                             + " sgl=" + sglState
                             + " pos=(" + p.X.ToString("F1") + "," + p.Y.ToString("F1") + "," + p.Z.ToString("F1") + ")");
-                        // v0.7.426 — three-slot anomaly dump for the bound SGL subtree (SLOT rows).
+                        // v0.7.426 - three-slot anomaly dump for the bound SGL subtree (SLOT rows).
                         if (sgl != null) DumpSglSlotAnomalies(i, (SharedGroupLayoutInstance*)sgl);
                     }
                 }
@@ -1974,11 +1974,11 @@ public unsafe class ZoneLoadService : IDisposable
                     + " pos=(" + p.X.ToString("F1") + "," + p.Y.ToString("F1") + "," + p.Z.ToString("F1") + ")");
                 printed++;
             }
-            DiagLog("[FURNDIAG] done — GOM range printed=" + printed);
+            DiagLog("[FURNDIAG] done - GOM range printed=" + printed);
 
-            // v0.7.425 — FULL-GOM visible-draw sweep. Prints ONLY objects with a non-null, VISIBLE
+            // v0.7.425 - FULL-GOM visible-draw sweep. Prints ONLY objects with a non-null, VISIBLE
             // DrawObject anywhere in the manager (all ~600 slots). Purpose: locate renderers that
-            // are neither layout instances nor furniture-manager SGLs — e.g. aquarium FISH, which
+            // are neither layout instances nor furniture-manager SGLs - e.g. aquarium FISH, which
             // draw per-aquarium from stocked-fish data (models under bgcommon/hou/indoor/gyo/).
             // Output is tiny by construction (players/NPCs plus whatever leaks).
             int visDraws = 0;
@@ -1996,13 +1996,13 @@ public unsafe class ZoneLoadService : IDisposable
                     + " pos=(" + p.X.ToString("F1") + "," + p.Y.ToString("F1") + "," + p.Z.ToString("F1") + ")");
                 visDraws++;
             }
-            DiagLog("[FURNDIAG] visible-draw sweep done — " + visDraws + " object(s)");
+            DiagLog("[FURNDIAG] visible-draw sweep done - " + visDraws + " object(s)");
 
-            // v0.7.426 — PROXIMITY SWEEP: every layout instance within 30u of the player that has ANY
+            // v0.7.426 - PROXIMITY SWEEP: every layout instance within 30u of the player that has ANY
             // visible graphics slot (BgPart field, GetGraphics vf23, GetGraphics2 vf24), regardless of
             // path. Walks all layouts (Global/Active/Prefetch/Loaded) × all six type buckets × the
             // layer hierarchy. Purpose: the five stragglers render on screen while every surface we
-            // read reports "hidden" — this names their ACTUAL renderer, its container, its slot, and
+            // read reports "hidden" - this names their ACTUAL renderer, its container, its slot, and
             // its path in one capture, convicting between the multi-slot, unwalked-container, and
             // path-gate-miss theories.
             try
@@ -2063,7 +2063,7 @@ public unsafe class ZoneLoadService : IDisposable
                             if (hits >= 40) break;
                         }
                     }
-                    DiagLog("[FURNDIAG] proximity sweep done — " + hits + " visible instance(s) within 30u"
+                    DiagLog("[FURNDIAG] proximity sweep done - " + hits + " visible instance(s) within 30u"
                         + (hits >= 40 ? " (CAPPED)" : ""));
                 }
             }
@@ -2072,10 +2072,10 @@ public unsafe class ZoneLoadService : IDisposable
         catch (Exception ex) { log.Error("[FURNDIAG] threw: " + ex.Message); }
     }
 
-    // v0.7.426 DIAG — three-slot subtree dump for a bound SGL. GetEffectiveGraphics returns ONE
+    // v0.7.426 DIAG - three-slot subtree dump for a bound SGL. GetEffectiveGraphics returns ONE
     // graphics object per instance, but an instance can carry THREE: the BgPart GraphicsObject
     // FIELD, GetGraphics() (vf23), and GetGraphics2() (vf24). Both the hide and the detection only
-    // ever touch the first non-null — anything rendering from another slot is invisible to both,
+    // ever touch the first non-null - anything rendering from another slot is invisible to both,
     // with perfectly consistent "hidden" readback (the straggler signature). Prints only anomalous
     // nodes: non-BgPart child types, >1 distinct populated slot, or any visible slot.
     private void DumpSglSlotAnomalies(int fmIndex, SharedGroupLayoutInstance* sg)
@@ -2120,7 +2120,7 @@ public unsafe class ZoneLoadService : IDisposable
                     + " 24=" + (g24 == null ? "-" : ((nint)g24).ToString("X") + (g24->IsVisible ? "/V" : "/h")));
             }
 
-            // Descend SharedGroup-SHAPED children (SharedGroup, IndoorObject, OutdoorObject — the
+            // Descend SharedGroup-SHAPED children (SharedGroup, IndoorObject, OutdoorObject - the
             // .422 finding: type label differs, shape is the same).
             if (inst->Id.Type == InstanceType.SharedGroup || inst->Id.Type == InstanceType.IndoorObject
                 || inst->Id.Type == InstanceType.OutdoorObject)
@@ -2139,9 +2139,9 @@ public unsafe class ZoneLoadService : IDisposable
         catch { }
     }
 
-    // v0.7.426 DIAG — proximity probe: if any of the instance's three graphics slots is visible and
+    // v0.7.426 DIAG - proximity probe: if any of the instance's three graphics slots is visible and
     // its scene position is within 30u of the player, print type/slots/path/address. Path is printed
-    // RAW (no IsHousingPath gate) — a bg/... path here convicts the path-gate-miss theory directly.
+    // RAW (no IsHousingPath gate) - a bg/... path here convicts the path-gate-miss theory directly.
     private int ProxProbe(ILayoutInstance* inst, System.Numerics.Vector3 ppos)
     {
         try
@@ -2194,7 +2194,7 @@ public unsafe class ZoneLoadService : IDisposable
         catch { return 0; }
     }
 
-    // S157 DIAG [LAYOUTS]: FURNMGR proved the visible furniture isn't a furniture-manager    // GameObject (all draw=null shells). The apartment furniture MESHES are ILayoutInstances —
+    // S157 DIAG [LAYOUTS]: FURNMGR proved the visible furniture isn't a furniture-manager    // GameObject (all draw=null shells). The apartment furniture MESHES are ILayoutInstances -
     // and LayoutWorld.LoadedLayouts (StdMap @ 0x080, key=(LvbCrc<<32)|TerritoryTypeId) holds
     // EVERY resident layout, not just GlobalLayout. Hypothesis: on a hop the apartment's
     // LayoutManager lingers in LoadedLayouts (client never tore the apartment down) with its
@@ -2245,17 +2245,17 @@ public unsafe class ZoneLoadService : IDisposable
         catch (Exception ex) { log.Error("[LAYOUTS] (" + when + ") threw: " + ex.Message); }
     }
 
-    // S318: count VISIBLE housing furniture across every resident layout — the reinforcing trigger that
+    // S318: count VISIBLE housing furniture across every resident layout - the reinforcing trigger that
     // replaces the old "total BgPart count growth" heuristic. WHY: total-count growth was masked by the
     // zone's OWN streaming geometry (hundreds of bg/... BgParts churning in/out by proximity), so a
     // handful of bgcommon/hou/ furniture instances streaming in often didn't push the net count past its
     // high-water mark → no fire → the intermittent leak ("circle back and it clears"). This signal is
     // immune to that: it counts ONLY housing-path (bgcommon/hou/) instances that are currently VISIBLE,
     // so zone geometry (bg/ path) never registers, and it catches BOTH pillars (top-level BgPart) and
-    // doors (BgPart leaves nested inside housing SharedGroups — recursed, same as the hide walk). The
+    // doors (BgPart leaves nested inside housing SharedGroups - recursed, same as the hide walk). The
     // poll fires the de-draw whenever this is > 0; after a successful hide the visible count drops to 0,
     // so it self-limits. Short-circuits on the FIRST visible housing instance (cheap in the common case).
-    // Same safe live traversal as WalkLayoutAndHideFurniture — instances fetched fresh from the container
+    // Same safe live traversal as WalkLayoutAndHideFurniture - instances fetched fresh from the container
     // this frame, no held pointers (the S175 AV lesson). `limit` caps work on furniture-less zones.
     private bool AnyVisibleHousingFurniture()
     {
@@ -2278,18 +2278,18 @@ public unsafe class ZoneLoadService : IDisposable
                     if (LayoutHasVisibleHousing(lm)) return true;
                 }
             }
-            catch { /* LoadedLayouts mid-mutation — named-layout result still valid */ }
+            catch { /* LoadedLayouts mid-mutation - named-layout result still valid */ }
         }
         catch { return false; }
         return false;
     }
 
-    // v0.7.423 — True if any furniture-manager object's SharedGroupLayoutInstance GRAPHICS are
+    // v0.7.423 - True if any furniture-manager object's SharedGroupLayoutInstance GRAPHICS are
     // visible. FURNDIAG (two-run diff, visible vs hidden) proved the GameObject layer is byte-for-
     // byte identical in both states: same addresses (no recreation on hop), same RenderFlags (our
-    // 0x2 bit persists everywhere), all draw=null. The respawn is purely graphics-side — the hop
+    // 0x2 bit persists everywhere), all draw=null. The respawn is purely graphics-side - the hop
     // rebuilds the furniture objects' SGL graphics (the S177 path, reached via the furniture
-    // manager, NOT via any layout container — which is also why Meddle/HCollider see nothing) and
+    // manager, NOT via any layout container - which is also why Meddle/HCollider see nothing) and
     // the old IsVisible=false dies with the old graphics. The previous RenderFlags-based check here
     // therefore always returned false after a hop and the re-fire never triggered. This version
     // checks the EXACT chain the hide (HideFurnitureManagerObjects) writes: go->
@@ -2325,7 +2325,7 @@ public unsafe class ZoneLoadService : IDisposable
     // True if this layout has any VISIBLE housing-path instance (BgPart leaf or SharedGroup-nested leaf).
     // v0.7.420: ALSO walks the layer hierarchy (Layers → LayerManager.Instances), not just InstancesByType.
     // Some furniture (tabletop items, crafting stations) lives only in the layer index and is invisible to
-    // the InstancesByType walk — so the re-fire trigger never saw them restream and the persistent guard
+    // the InstancesByType walk - so the re-fire trigger never saw them restream and the persistent guard
     // never fired a re-hide. The hide walk in WalkLayoutAndHideFurniture already covered both paths; the
     // detection was the gap.
     private bool LayoutHasVisibleHousing(LayoutManager* layout)
@@ -2334,8 +2334,8 @@ public unsafe class ZoneLoadService : IDisposable
         try
         {
             // Walk 1: InstancesByType (the flat type-bucketed index)
-            // v0.7.421: IndoorObject/OutdoorObject added — runtime-placed furniture registers here.
-            // v0.7.427: Vfx/Light added — the LAST diff between the hide's type list and this one.
+            // v0.7.421: IndoorObject/OutdoorObject added - runtime-placed furniture registers here.
+            // v0.7.427: Vfx/Light added - the LAST diff between the hide's type list and this one.
             // Detection must mirror every bucket the hide touches (the recurring bug class of this
             // entire arc); the VFX stragglers' flame/smoke renderables live in buckets the hide
             // swept but detection never watched.
@@ -2384,7 +2384,7 @@ public unsafe class ZoneLoadService : IDisposable
                         if (!IsHousingPath(inst->GetPrimaryPath())) continue;
 
                         // v0.7.427: Vfx/Light gfx-checked; IndoorObject/OutdoorObject descended
-                        // (the layer branch previously only handled BgPart + SharedGroup — the
+                        // (the layer branch previously only handled BgPart + SharedGroup - the
                         // same one-family narrowing as everywhere else in this arc).
                         if (inst->Id.Type == InstanceType.BgPart || inst->Id.Type == InstanceType.Vfx
                             || inst->Id.Type == InstanceType.Light)
@@ -2436,7 +2436,7 @@ public unsafe class ZoneLoadService : IDisposable
     // path ("bgcommon/hou/"), distinguishing it from territory world geometry ("bg/<exp>/...").
     // Meddle-confirmed: every placed furnishing (partitions, pillars, chairs, etc.) resolves
     // under bgcommon/hou/..., while lampposts/tiles/walls resolve under bg/ex4|ffxiv|.../...
-    // Byte-span prefix match — no allocation (runs per instance across thousands).
+    // Byte-span prefix match - no allocation (runs per instance across thousands).
     private static ReadOnlySpan<byte> HousingPathPrefix => "bgcommon/hou/"u8;
     private static bool IsHousingPath(CStringPointer path)
     {
@@ -2482,11 +2482,11 @@ public unsafe class ZoneLoadService : IDisposable
         catch { }
     }
 
-    // v0.7.428 — the single hide primitive: flips IsVisible=false and tracks whether this was a
+    // v0.7.428 - the single hide primitive: flips IsVisible=false and tracks whether this was a
     // REAL catch (flag was true) vs an idempotent re-set. On quiet passes, a real catch is exactly
     // the evidence we've been hunting: a renderable that detection had just declared clean. Emit a
     // capped [CADENCE-CATCH] line naming the instance type, which slot the graphics came from
-    // (F=BgPart field, 23/24=vfuncs), and its raw path — the mechanism answer self-collects.
+    // (F=BgPart field, 23/24=vfuncs), and its raw path - the mechanism answer self-collects.
     private void HideGfx(DrawObject* gfx, ILayoutInstance* inst, string site)
     {
         if (gfx == null) return;
@@ -2538,7 +2538,7 @@ public unsafe class ZoneLoadService : IDisposable
                 if (childInst == null) continue;
 
                 // Hide this child's graphics (the furniture mesh leaf). S177: use the full
-                // GetEffectiveGraphics (vfuncs → BgParts GraphicsObject field, validity-gated) — the
+                // GetEffectiveGraphics (vfuncs → BgParts GraphicsObject field, validity-gated) - the
                 // partition/pillar leaves are BgPart instances whose vfuncs return null and whose
                 // renderable is in the GraphicsObject field (the whole S173 finding). childInst is
                 // fresh from the live SharedGroup vector this frame (safe).
@@ -2572,10 +2572,10 @@ public unsafe class ZoneLoadService : IDisposable
     {
         if (inst == null) return null;
         // S182: for BgPart, PREFER the concrete GraphicsObject FIELD over GetGraphics() (vfunc 23).
-        // The tree dump proved there's exactly ONE BgPart per furniture position and we hide it —
+        // The tree dump proved there's exactly ONE BgPart per furniture position and we hide it -
         // yet it renders and Meddle reads it Visible. Meddle reads bgPart->GraphicsObject (the
         // FIELD); we were writing to GetGraphics()'s RETURN (vf23 tag in the diag). On field-like
-        // maps these DIVERGE — vfunc returns one object, the field holds the one that actually
+        // maps these DIVERGE - vfunc returns one object, the field holds the one that actually
         // renders. So write to the field for BgPart; fall back to the vfuncs only for non-BgPart.
         if (inst->Id.Type == InstanceType.BgPart)
         {
@@ -2623,11 +2623,11 @@ public unsafe class ZoneLoadService : IDisposable
                 }
             }
             // S128: hide furniture through the LAYOUT ENGINE, not GameObjects. Furniture
-            // proved every furniture GameObject has DrawObject==null — the GameObject is
+            // proved every furniture GameObject has DrawObject==null - the GameObject is
             // a logic shell; the actual rendered mesh is an ILayoutInstance owned by the
             // layout engine. Walk LayoutWorld->ActiveLayout->InstancesByType for the
             // SharedGroup (furniture) + BgPart (room box/fixtures) instances and
-            // SetActive(false) — the engine's own API, so it isn't reasserted. Collider
+            // SetActive(false) - the engine's own API, so it isn't reasserted. Collider
             // is a SEPARATE toggle (SetColliderActive) left untouched here: no phantom
             // walls, no change to current collision behavior.
             var layoutWorld = LayoutWorld.Instance();
@@ -2637,21 +2637,21 @@ public unsafe class ZoneLoadService : IDisposable
             // the host's APARTMENT furniture persists in ActiveLayout, which stays bound to the
             // real home territory (the log showed Active{HousingType=2 Terr=999=apartment} while
             // Global{Terr=<HMS map>}). The furniture is durable + position-anchored at apartment
-            // (0,0) — it never tears down, it just renders wherever apt-origin lands in the new
+            // (0,0) - it never tears down, it just renders wherever apt-origin lands in the new
             // map (usually underground/in terrain, but on 1012 it lands in the open → visible).
             // Our de-draw walked only GlobalLayout (correct for event-map furniture in S132), so
             // it never touched the apartment furniture in ActiveLayout → the 1012 leak. Walking
             // both layers catches it. The bgcommon/hou/ housing-path gate (and HavePrimary for
-            // GlobalLayout's own furniture) keeps us from hiding apartment STRUCTURE/world geo —
+            // GlobalLayout's own furniture) keeps us from hiding apartment STRUCTURE/world geo -
             // we only hide furniture-class instances. De-dupe across layers is automatic: the
             // hidden-sets are HashSets keyed by instance, and re-hiding an already-hidden leaf is
             // idempotent.
             int hidden = 0;
-            // S163: walk EVERY LayoutManager in LoadedLayouts — not just GlobalLayout/ActiveLayout.
+            // S163: walk EVERY LayoutManager in LoadedLayouts - not just GlobalLayout/ActiveLayout.
             // Meddle's LayoutService enumerates layoutWorld->LoadedLayouts (all members) and parses
             // each one's Layers; that's how it sees the persistent apartment furniture. On a hop the
             // apartment's LayoutManager persists as its OWN entry in LoadedLayouts, distinct from the
-            // displayed map's GlobalLayout/ActiveLayout — the furniture rides in THAT layout's layers,
+            // displayed map's GlobalLayout/ActiveLayout - the furniture rides in THAT layout's layers,
             // which is why walking only Global+Active (S161/S162) hid extra instances (count jumped
             // 27→89) but left the apartment furniture visible: it's in the third layout we never
             // walked. Iterate them all. De-dup is automatic (HashSet-keyed hidden-sets; idempotent
@@ -2665,12 +2665,12 @@ public unsafe class ZoneLoadService : IDisposable
                 // Named pointers first (in case they're not in LoadedLayouts).
                 if (lwInst->GlobalLayout != null) { seen.Add((nint)lwInst->GlobalLayout); hidden += WalkLayoutAndHideFurniture(lwInst->GlobalLayout, "Global"); }
                 if (lwInst->ActiveLayout != null && seen.Add((nint)lwInst->ActiveLayout)) hidden += WalkLayoutAndHideFurniture(lwInst->ActiveLayout, "Active");
-                // S167: PrefetchLayout (0x030) — the layout the engine streams AHEAD for the next
-                // zone. The orphan furniture "carries across / prefetches into the next map" — its
+                // S167: PrefetchLayout (0x030) - the layout the engine streams AHEAD for the next
+                // zone. The orphan furniture "carries across / prefetches into the next map" - its
                 // census key (4294639619) on 1011 was gone from 1012's GlobalLayout walk, i.e. it
                 // detached from the walked layouts. PrefetchLayout is the un-walked 4th named
                 // pointer and a strong candidate home. Walking it is a SAFE live enumeration (same
-                // as Active) — NO stored-pointer deref (that was the S166 AV). If the orphan rides
+                // as Active) - NO stored-pointer deref (that was the S166 AV). If the orphan rides
                 // here, this hides it crash-free.
                 if (lwInst->PrefetchLayout != null && seen.Add((nint)lwInst->PrefetchLayout)) hidden += WalkLayoutAndHideFurniture(lwInst->PrefetchLayout, "Prefetch");
                 try
@@ -2697,7 +2697,7 @@ public unsafe class ZoneLoadService : IDisposable
                 foreach (var e in housingIdCensus) sb.Append(e).Append(' ');
                 DiagLog("[HMSync] " + sb.ToString());
             }
-            // S176: per-instance graphics-resolution path for every BgPart housing instance — shows
+            // S176: per-instance graphics-resolution path for every BgPart housing instance - shows
             // EXACTLY which render-Visible instances we failed to resolve (NULL = GraphicsObject
             // field also null at walk time → skipped → renders). Cross-ref the @addr against Meddle's
             // Visible partition to confirm which cluster renders and why GetEffectiveGraphics missed it.
@@ -2710,7 +2710,7 @@ public unsafe class ZoneLoadService : IDisposable
             }
             DeDrawFinishColliders(hidden);
 
-            // S164: hide furniture at its OWNING object, via the HousingFurnitureManager — not just
+            // S164: hide furniture at its OWNING object, via the HousingFurnitureManager - not just
             // the layout-index copy. Meddle's ParseTerritoryFurniture reads furniture from
             // FurnitureManager.ObjectManager.ObjectArray.Objects[index], casts each to HousingObject,
             // and uses ->SharedGroupLayoutInstance as the renderable. The persistent bare-Housing
@@ -2737,7 +2737,7 @@ public unsafe class ZoneLoadService : IDisposable
     // This catches the persistent bare-Housing furniture that ignores the layout-index IsVisible.
     // S185: deliberate IndoorTerritory teardown experiment, triggered by /hms teardownhousing.
     // The furniture is ACTIVELY MAINTAINED (S183 proved severing memory just makes it re-instantiate
-    // — manager 9→2 but meshes respawn as a new cluster). So the lever isn't clearing data; it's
+    // - manager 9→2 but meshes respawn as a new cluster). So the lever isn't clearing data; it's
     // stopping the maintainer = releasing the live IndoorTerritory, the way the front-door exit does.
     // HousingTerritory.Dtor (vfunc 0) is the destructor. Staged + logged so a crash pinpoints the line.
     // KNOWN RISK: HousingManager still holds CurrentTerritory/IndoorTerritory pointers; after Dtor they
@@ -2754,7 +2754,7 @@ public unsafe class ZoneLoadService : IDisposable
             log.Information("[HMSync] [TEARDOWN] pre: IndoorTerritory=" + (nint)indoor + " CurrentTerritory=" + (nint)current
                 + " IsInside=" + hm->IsInside());
 
-            if (indoor == null) { log.Warning("[HMSync] [TEARDOWN] IndoorTerritory already null — nothing to tear down"); return; }
+            if (indoor == null) { log.Warning("[HMSync] [TEARDOWN] IndoorTerritory already null - nothing to tear down"); return; }
 
             // Snapshot furniture count before, for confirmation.
             var fmPre = hm->GetFurnitureManager();
@@ -2775,14 +2775,14 @@ public unsafe class ZoneLoadService : IDisposable
             // Now destruct the territory. freeFlags=1 (destruct + free), matching ECommons' Dtor(true).
             log.Information("[HMSync] [TEARDOWN] calling IndoorTerritory->Dtor(1)");
             ((HousingTerritory*)indoor)->Dtor(1);
-            log.Information("[HMSync] [TEARDOWN] Dtor returned — survived. Furniture should be gone.");
+            log.Information("[HMSync] [TEARDOWN] Dtor returned - survived. Furniture should be gone.");
         }
         catch (Exception ex) { log.Error("[HMSync] [TEARDOWN] managed exception: " + ex.Message); }
     }
 
     // S189/S190: keep the target scan arrays empty until the reloaded scene is actually READY,
     // not for a fixed frame count. The crash is the scan calling GetPosition on an object whose
-    // DrawObject is still rebuilding during the reload — so the correct release condition is
+    // DrawObject is still rebuilding during the reload - so the correct release condition is
     // "scene finished rebuilding", detected via the local player's IsReadyToDraw() + non-null
     // DrawObject (the same readiness signal ReEnablePreservedObjects trusts). A fixed window
     // (S189's 90 frames) was too short for dense zones like 128 Limsa (huge aetheryte plaza +
@@ -2791,7 +2791,7 @@ public unsafe class ZoneLoadService : IDisposable
     private int targetScanSuppressCap;
     private bool targetScanSuppressArmed;
     private const int TargetScanSuppressCapFrames = 600; // ~10s backstop only
-    // S241: post-ready settle margin — conditions must hold for this many consecutive frames
+    // S241: post-ready settle margin - conditions must hold for this many consecutive frames
     // before suppression lifts, so the reload's foreign-object teardown is definitely finished.
     private int targetScanSettleHold;
     private const int TargetScanSettleFrames = 30;       // ~0.5s settle past scene-ready
@@ -2824,12 +2824,12 @@ public unsafe class ZoneLoadService : IDisposable
         catch { /* transient during teardown; ignore */ }
 
         // Release when the scene is FULLY ready, or when the safety cap expires.
-        // S241: the old condition released on LOCAL-PLAYER readiness alone — too early. The
+        // S241: the old condition released on LOCAL-PLAYER readiness alone - too early. The
         // GetPosition+0x24 crash is the scan hitting a FOREIGN object (Kugane's Aetheryte) whose
         // DrawObject is mid-teardown during the home reload. The local player can be ready-to-draw
         // while those foreign objects are still being destroyed by the in-flight reload, so the
         // suppressor lifted and the scan resumed straight into a torn Aetheryte. Now we hold until
-        // ALL of: (a) not mid-transition (IsTransitioning false — the Revert/Load call has fully
+        // ALL of: (a) not mid-transition (IsTransitioning false - the Revert/Load call has fully
         // returned), (b) local player ready, AND (c) a short settle hold past that, so the reload's
         // object teardown is definitely complete before the scan is allowed to walk the table again.
         bool playerReady = false;
@@ -2856,7 +2856,7 @@ public unsafe class ZoneLoadService : IDisposable
             targetScanSuppressArmed = false;
             framework.Update -= PollTargetScanSuppress;
             DiagLog("[HMSync] [SANITIZE] target-scan suppression released ("
-                + (capHit ? "SAFETY-CAP — ready signal never arrived, investigate" : "scene-settled") + ")");
+                + (capHit ? "SAFETY-CAP - ready signal never arrived, investigate" : "scene-settled") + ")");
         }
     }
 
@@ -2920,9 +2920,9 @@ public unsafe class ZoneLoadService : IDisposable
 
                 // S168: suppress draw on the furniture GAMEOBJECT itself, not just its layout
                 // instance. The census proved we hide every layout-instance copy (both duplicate
-                // sets) and Meddle reads them "Hidden" — yet the bare-Housing pieces still render.
+                // sets) and Meddle reads them "Hidden" - yet the bare-Housing pieces still render.
                 // So DrawObject.IsVisible on the layout instance is NOT the lever for these. Brio
-                // and Hyperborea suppress GameObject draw via RenderFlags / DisableDraw — a proven
+                // and Hyperborea suppress GameObject draw via RenderFlags / DisableDraw - a proven
                 // lever we never applied to the furniture objects. RenderFlags |= 0x02 hides without
                 // tearing down the DrawObject (gentler than DisableDraw(); avoids a rebuild race).
                 // Safe: re-fetched by index each call (no stored ptr), furniture objects are not
@@ -2946,11 +2946,11 @@ public unsafe class ZoneLoadService : IDisposable
                 }
 
                 // S177: descend the furniture object's SharedGroupLayoutInstance to hide its BgPart
-                // CHILDREN — the actual partition/pillar meshes. Meddle shows the rendering pieces as
+                // CHILDREN - the actual partition/pillar meshes. Meddle shows the rendering pieces as
                 // BgPart[1] instances at addresses NONE of our layout walks encounter (e.g. 134's
                 // visible partitions 1707199432032 / 1705214576224 were absent from both the census
                 // and GFXRESOLVE). They are children of the furniture object's SharedGroup, reached
-                // via the furniture manager — NOT via the layout-instance graph we walk. We were
+                // via the furniture manager - NOT via the layout-instance graph we walk. We were
                 // hiding the SharedGroup's own graphics but never recursing into its BgPart children
                 // here (HideSharedGroupChildren only ran for SharedGroups found in the layout walk).
                 // inst is fresh-from-the-manager this frame (safe, by-index, no stored ptr).
@@ -2966,9 +2966,9 @@ public unsafe class ZoneLoadService : IDisposable
             // objects). The census proved DUPLICATE furniture instance-clusters exist; on 134 the
             // manager's 9 are a NON-rendering copy while a second copy renders (doors included),
             // which is why S168 reported success yet furniture stayed visible underground. Furniture
-            // GameObjects live in GameObjectManager indices 449-488 (EventObjectManager range —
+            // GameObjects live in GameObjectManager indices 449-488 (EventObjectManager range -
             // HousingObject/HousingCombinedObject; this is why they're absent from Dalamud's
-            // IObjectTable). Walking the global manager by index (SAFE — re-fetched each call, no
+            // IObjectTable). Walking the global manager by index (SAFE - re-fetched each call, no
             // stored ptr) catches BOTH clusters. Logs the count: 18 ⇒ two clusters of 9 (theory
             // confirmed); 9 ⇒ rendering copy isn't a separate GameObject (different problem).
             var gom = FFXIVClientStructs.FFXIV.Client.Game.Object.GameObjectManager.Instance();
@@ -2990,11 +2990,11 @@ public unsafe class ZoneLoadService : IDisposable
                     if (!quietDeDraw) DiagLog("[HMSync] [GOMFURNHIDE] global HousingEventObject GameObjects suppressed=" + housingGos);
             }
 
-            // S170 DIAG: dump what the furniture-manager's 9 objects ACTUALLY are on this map —
+            // S170 DIAG: dump what the furniture-manager's 9 objects ACTUALLY are on this map -
             // ObjectKind, DrawObject-null, visible, position. On 134 the manager reports 9 but the
             // GOM has only 2 HousingEventObjects and furniture renders underground despite all
             // levers firing. This shows whether the manager's 9 have DrawObjects / are visible /
-            // where they are — distinguishing "manager owns non-rendering ghosts" from "manager
+            // where they are - distinguishing "manager owns non-rendering ghosts" from "manager
             // owns the real meshes but a flag is overridden by the game's draw loop."
             if (!quietDeDraw) DumpFurnitureManagerObjects("dedraw");
         }
@@ -3007,11 +3007,11 @@ public unsafe class ZoneLoadService : IDisposable
         int hidden = 0;
         try
         {
-            // v0.7.421 — IndoorObject (76) + OutdoorObject (77) added. Runtime-placed furniture
-            // registers in InstancesByType under these keys, NOT under SharedGroup (6) — the
+            // v0.7.421 - IndoorObject (76) + OutdoorObject (77) added. Runtime-placed furniture
+            // registers in InstancesByType under these keys, NOT under SharedGroup (6) - the
             // furniture manager's placed items were invisible to every prior walk (and to Meddle,
-            // which walks the same buckets — hence no dot on the visible stove). The instances are
-            // SharedGroup-SHAPED (FURNMGRHIDE reads go->SharedGroupLayoutInstance and descends it —
+            // which walks the same buckets - hence no dot on the visible stove). The instances are
+            // SharedGroup-SHAPED (FURNMGRHIDE reads go->SharedGroupLayoutInstance and descends it -
             // same object), so they cast and descend like SharedGroups below.
             foreach (var typeKey in new[] { InstanceType.SharedGroup, InstanceType.BgPart,
                                             InstanceType.Vfx, InstanceType.Light,
@@ -3030,7 +3030,7 @@ public unsafe class ZoneLoadService : IDisposable
 
                     // Only the DISPLAYED map's GlobalLayout hides event-map furniture via
                     // HavePrimary. ALL other layouts (Active + every other LoadedLayouts member,
-                    // incl. the persistent apartment) hide ONLY housing assets (bgcommon/hou/) —
+                    // incl. the persistent apartment) hide ONLY housing assets (bgcommon/hou/) -
                     // never their room-box/structure or world geometry. The path gate is what makes
                     // walking foreign layouts safe.
                     bool isHousingAsset = IsHousingPath(inst->GetPrimaryPath());
@@ -3040,14 +3040,14 @@ public unsafe class ZoneLoadService : IDisposable
                     if (hideThis)
                     {
                         // S173/S175: read the REAL renderable via GetEffectiveGraphics (vfuncs, then
-                        // the BgParts GraphicsObject field). Safe here — inst is fresh from the live
-                        // container this frame. If null, skip (no held pointer, no retry — S174 AV).
+                        // the BgParts GraphicsObject field). Safe here - inst is fresh from the live
+                        // container this frame. If null, skip (no held pointer, no retry - S174 AV).
                         // S176 DIAG: record per-instance resolution so we can see EXACTLY which
                         // instances render-Visible-but-unhidden. For each BgPart housing instance,
                         // log address + which path resolved (vfunc23 / vfunc24 / field / NULL).
                         if (inst->Id.Type == InstanceType.BgPart && isHousingAsset)
                         {
-                            // S179: log POSITION (load-stable, comparable to Meddle across loads —
+                            // S179: log POSITION (load-stable, comparable to Meddle across loads -
                             // addresses churn every load via reallocation, which invalidated all
                             // prior address cross-refs). Rendering partitions are always at
                             // (-1.57,0,0.39) and (2.30,0,0.36) per Meddle. If we hide instances at
@@ -3069,7 +3069,7 @@ public unsafe class ZoneLoadService : IDisposable
                     }
 
                     // Descend housing SharedGroups to reach nested furniture meshes (S159).
-                    // v0.7.421: IndoorObject/OutdoorObject instances are SharedGroup-shaped — descend them too.
+                    // v0.7.421: IndoorObject/OutdoorObject instances are SharedGroup-shaped - descend them too.
                     if ((typeKey == InstanceType.SharedGroup || typeKey == InstanceType.IndoorObject
                          || typeKey == InstanceType.OutdoorObject) && isHousingAsset)
                         hidden += HideSharedGroupChildren((SharedGroupLayoutInstance*)inst, 0);
@@ -3081,7 +3081,7 @@ public unsafe class ZoneLoadService : IDisposable
 
             // S162: ALSO walk the LGB LAYER index (LayoutManager.Layers → LayerManager.Instances),
             // not just the flattened InstancesByType. Six InstancesByType walks (both layouts)
-            // never touched the persistent apartment furniture, yet Meddle enumerates it — because
+            // never touched the persistent apartment furniture, yet Meddle enumerates it - because
             // Meddle walks the layer hierarchy. The placed furniture rides in a LayerManager's
             // Instances map (StdMap<uint, ILayoutInstance*>), which InstancesByType doesn't fully
             // reflect. Housing-path gated, so we only hide furniture-class instances. Logs a
@@ -3150,14 +3150,14 @@ public unsafe class ZoneLoadService : IDisposable
     // v0.7.265: RULE-BASED BARRIER SUPPRESSION. Duty checkpoint/boss-arena barriers are Box-kind colliders in the
     // physics scene, parented to gimmick (gmc*) or level-device (w_lvd*) SharedGroups. Confirmed against xivtool
     // collision dumps for 1345: all 11 barriers are Box colliders under gmc/w_lvd parents; the one unparented flat
-    // Box is floor (kept). We zero LayerMask on the matched Box colliders directly (HCollider's mechanism) — this
+    // Box is floor (kept). We zero LayerMask on the matched Box colliders directly (HCollider's mechanism) - this
     // neutralises ONLY that Box, leaving the parent SharedGroup's other colliders (the wreck meshes) intact. No
     // hardcoded coordinates: a structural rule that auto-scales to the whole map (both halves) and other duties with
     // the same SE convention. Saved for restore-on-stop. Territory-gated by the caller.
     private const uint BarrierSuppressTerritory = 1345;   // v0.7.265: gated to 1345 until validated, then scale up
 
     // v0.7.268: match barrier Box colliders by WORLD POSITION, not parent path. The physics scene is a FLAT
-    // collider list — the SharedGroup hierarchy (the gmc/w_lvd parentage visible in the LGB) is NOT preserved at
+    // collider list - the SharedGroup hierarchy (the gmc/w_lvd parentage visible in the LGB) is NOT preserved at
     // runtime, and the collider's LayoutObjectId does not reliably resolve back to the owning group (diagnostic
     // f31: box=43, pathResolved=43, but every barrier box's GetPrimaryPath came back empty). Position is the one
     // thing that round-trips cleanly between the LGB/collision dump and the live scene. These are the 11 barrier
@@ -3201,10 +3201,10 @@ public unsafe class ZoneLoadService : IDisposable
 
                     // v0.7.319: zone-border barrier Planes (per HCollider spec). A Plane/PlaneTwoSided whose
                     // ObjectMaterialValue is an LVD boundary material (0x2400 = boundary|zone-wall, or 0x4400) is a
-                    // hard-boundary barrier — self-identifying by material, NO co-location gate (most barrier planes
+                    // hard-boundary barrier - self-identifying by material, NO co-location gate (most barrier planes
                     // have no visible star-string but still block; gating on a nearby LineVfx missed ~14/19 on 893).
                     // Suppress via LayerMask=0 using the SAME save/restore keying as the Box barriers below. The
-                    // visible glow (LineVfx) is intentionally NOT touched — confirmed not suppressible from the
+                    // visible glow (LineVfx) is intentionally NOT touched - confirmed not suppressible from the
                     // instance (no reachable renderable handle); collision-only, glow stays. Runs on ALL instanced
                     // content (material is definitive zone-wide), not gated to a territory list.
                     if (ctype == BGColliderType.Plane || ctype == BGColliderType.PlaneTwoSided)
@@ -3222,7 +3222,7 @@ public unsafe class ZoneLoadService : IDisposable
                                 hit++;
                             }
                         }
-                        continue;   // handled (or skipped) — a barrier Plane is never a Box position-match
+                        continue;   // handled (or skipped) - a barrier Plane is never a Box position-match
                     }
 
                     if (ctype != BGColliderType.Box) continue;
@@ -3262,7 +3262,7 @@ public unsafe class ZoneLoadService : IDisposable
 
     // v0.7.273: suppress specific terrain (tr*.pcb) colliders by pcb filename. These are Mesh/Terrain-kind
     // colliders (the pcb path is read directly off the collider via ColliderMesh->Resource, no severed-instance
-    // lookup needed). CAUTION: tr* are the floor-welded terrain type — suppressing one removes collision for its
+    // lookup needed). CAUTION: tr* are the floor-welded terrain type - suppressing one removes collision for its
     // whole volume (walls AND floor). Only the pcbs V has manually verified as navigable-if-removed go here.
     // Zeroes LayerMask (restored on stop via barrierSavedState, shared with the Box suppress).
     private static readonly string[] TerrainSuppress1345 = {
@@ -3320,18 +3320,18 @@ public unsafe class ZoneLoadService : IDisposable
     private static readonly string[] VfxHide1345 = { "fireab", "void", "fire" };  // 1345-specific
     private static readonly string[] VfxHide893 = { "qic" };                       // 893 Imperial Palace border curtains
     // v0.7.469: two more cinematic maps whose baked-in ambient effects read as distraction in RP, not atmosphere.
-    // ⚠ "wall" is a BROAD substring — broader than the others here. It is safe only because these lists are
+    // ⚠ "wall" is a BROAD substring - broader than the others here. It is safe only because these lists are
     // MAP-SCOPED (MapSpecificVfxPatterns returns them for 1137 alone), so its blast radius is one territory. If a
     // wanted effect on 1137 ever disappears, this is the first suspect: run `/hms vfxdump wall` there and read
-    // which paths carry MATCH. Do NOT promote "wall" to VfxHideAllMaps — game-wide it would be a shotgun.
-    private static readonly string[] VfxHide1137 = { "wall" };                     // 1137 — *wall*.avfx
-    private static readonly string[] VfxHide1155 = { "maho" };                     // 1155 — *maho*.avfx
-    // All-maps patterns. Plain SUBSTRING matches against the instance's primary .avfx path — there is no
+    // which paths carry MATCH. Do NOT promote "wall" to VfxHideAllMaps - game-wide it would be a shotgun.
+    private static readonly string[] VfxHide1137 = { "wall" };                     // 1137 - *wall*.avfx
+    private static readonly string[] VfxHide1155 = { "maho" };                     // 1155 - *maho*.avfx
+    // All-maps patterns. Plain SUBSTRING matches against the instance's primary .avfx path - there is no
     // glob engine here, so a request for "*eext_y*.avfx" is expressed simply as "eext_y" (the leading and
     // trailing wildcards are implicit in Contains; the .avfx extension is redundant because
     // InstanceType.Vfx only ever yields .avfx paths).
-    //   "dext"   — dungeon exit/entry purple curtain
-    //   "eext_y" — the eext_y* family, every HMS-loaded map
+    //   "dext"   - dungeon exit/entry purple curtain
+    //   "eext_y" - the eext_y* family, every HMS-loaded map
     private static readonly string[] VfxHideAllMaps = { "dext", "eext_y" };
 
     // Map-specific VFX patterns for the CURRENT territory (empty if the map has none). Keeps HideBarrierVfx generic.
@@ -3345,13 +3345,13 @@ public unsafe class ZoneLoadService : IDisposable
     };
 
     // ══════════════════════════════════════════════════════════════════════════════════════════════════════
-    // v0.7.466 — LineVFX (boss-barrier line) SUPPRESSION. InstanceType 59 (0x3B) = LineVfxLayoutInstance: the
+    // v0.7.466 - LineVFX (boss-barrier line) SUPPRESSION. InstanceType 59 (0x3B) = LineVfxLayoutInstance: the
     // red/white and blue "do not cross" curtains with the pulsing stars. HMS already kills their COLLIDERS
-    // (SetColliderActive, vf37 — see DisableSpawnAreaColliders); the visible line is a DIFFERENT object (the
+    // (SetColliderActive, vf37 - see DisableSpawnAreaColliders); the visible line is a DIFFERENT object (the
     // "primary"), which is exactly why collision-off left the curtain drawn.
     //
     // Why the existing VFX machinery can't reach these: HideBarrierVfx sweeps InstanceType.Vfx and matches on
-    // the instance's .avfx path. A LineVfx instance is not type Vfx and carries NO path at all — the client
+    // the instance's .avfx path. A LineVfx instance is not type Vfx and carries NO path at all - the client
     // synthesizes the line procedurally from the instance Transform. So there is nothing for a substring pattern
     // to match, and 893's existing "qic" pattern was never going to catch it.
     //
@@ -3359,36 +3359,36 @@ public unsafe class ZoneLoadService : IDisposable
     // exist and they are NOT equally safe. Which one applies is an empirical question that one scan answers, so
     // the scan ships before any auto-apply:
     //
-    //   1. GetGraphics()->IsVisible = false — HMS's PROVEN lever (S132 / HideGfx). A leaf render bit with no
+    //   1. GetGraphics()->IsVisible = false - HMS's PROVEN lever (S132 / HideGfx). A leaf render bit with no
     //      lifecycle bookkeeping; structurally cannot trip a Deinit teardown. PREFERRED IF THE LEAF EXISTS.
-    //   2. SetActive(false) (vf63) — controls the primary directly. But S128–S130 crashed HMS with an AV in
+    //   2. SetActive(false) (vf63) - controls the primary directly. But S128–S130 crashed HMS with an AV in
     //      SharedGroupLayoutInstance.Deinit calling exactly this. The reconciliation is that the crash was
     //      CONTAINER-specific (a SharedGroup tears down its child hierarchy) and LineVfx is a bare 0xA0 struct
-    //      with one field and no children — a well-supported hypothesis from struct layout, NOT an in-game fact.
-    //   3. DestroyPrimary() (vf28) — drops the graphics object without touching the active flag. Fallback if 2
+    //      with one field and no children - a well-supported hypothesis from struct layout, NOT an in-game fact.
+    //   3. DestroyPrimary() (vf28) - drops the graphics object without touching the active flag. Fallback if 2
     //      crashes.
     //
     // Run `/hms linevfx` (scan) FIRST. If it reports a reachable graphics leaf, mechanism 1 applies and we never
-    // take the SetActive risk at all. If the leaf is null on every instance — which is what the standing note
-    // "LineVfxLayoutInstance has no DrawObject of its own, consumed by an external renderer" predicts — then 2/3
+    // take the SetActive risk at all. If the leaf is null on every instance - which is what the standing note
+    // "LineVfxLayoutInstance has no DrawObject of its own, consumed by an external renderer" predicts - then 2/3
     // are the only options, and `one` exists so the first live SetActive costs ONE call, not thirteen.
     //
     // A perfect negative is data: 0 instances found means the ENUMERATION is wrong (wrong layout, wrong map
     // entry), not that the map has no lines. That's why the scan reports GlobalLayout and ActiveLayout counts
-    // separately AND cross-checks with a Layers walk — three numbers that disagree localise the fault.
+    // separately AND cross-checks with a Layers walk - three numbers that disagree localise the fault.
     private const int LineVfxTypeRaw = 59;
 
-    // Keys we suppressed, so restore can re-enumerate and re-show only what we touched. Keys, never pointers —
+    // Keys we suppressed, so restore can re-enumerate and re-show only what we touched. Keys, never pointers -
     // streaming frees instances, so a stored pointer is a use-after-free waiting for the next map (the same
     // discipline as the VFX/NPC restore paths).
     private readonly HashSet<uint> suppressedLineVfx = new();
 
-    /// <summary>LineStyle @0x70 (Red=1, Blue=2, RedFar=3). RAW OFFSET READ — LineVfxLayoutInstance may not be
+    /// <summary>LineStyle @0x70 (Red=1, Blue=2, RedFar=3). RAW OFFSET READ - LineVfxLayoutInstance may not be
     /// bound in the installed FFXIVClientStructs, and an unproven type cast is worse than a documented offset.
     /// If this returns nonsense, the offset is wrong; it is reported, never acted on.</summary>
     private static unsafe int LineVfxStyle(ILayoutInstance* inst) => *(int*)((byte*)inst + 0x70);
 
-    /// <summary>Transform.Translation — RangeLayoutInstance.Transform @0x30, translation first. Also a raw read,
+    /// <summary>Transform.Translation - RangeLayoutInstance.Transform @0x30, translation first. Also a raw read,
     /// and also only ever REPORTED, so a bad offset shows up as absurd coordinates instead of a silent lie.</summary>
     private static unsafe Vector3 LineVfxPos(ILayoutInstance* inst) => *(Vector3*)((byte*)inst + 0x30);
 
@@ -3403,7 +3403,7 @@ public unsafe class ZoneLoadService : IDisposable
         return n;
     }
 
-    /// <summary>STEP 1 — the instrument. Read-only. Reports per-instance whether a graphics leaf is reachable,
+    /// <summary>STEP 1 - the instrument. Read-only. Reports per-instance whether a graphics leaf is reachable,
     /// whether the primary has streamed in, the LineStyle, and the position; plus the three enumeration counts.
     /// This single dump decides which of the three mechanisms is usable, so it runs before any of them.</summary>
     public unsafe void DumpLineVfx()
@@ -3436,12 +3436,12 @@ public unsafe class ZoneLoadService : IDisposable
                 + " viaLayersWalk=" + viaLayers
                 + "  (893 expected ~13; all three disagreeing localises the fault to the lookup, not the map)");
 
-            // Per-instance detail from whichever layout actually has them — prefer ActiveLayout, fall back to Global.
+            // Per-instance detail from whichever layout actually has them - prefer ActiveLayout, fall back to Global.
             var layout = inActive > 0 ? lw->ActiveLayout : lw->GlobalLayout;
-            if (layout == null) { log.Information("[HMSync] [LINEVFX] no layout holds type 59 — stop here, fix enumeration."); return; }
+            if (layout == null) { log.Information("[HMSync] [LINEVFX] no layout holds type 59 - stop here, fix enumeration."); return; }
             if (!layout->InstancesByType.TryGetValuePointer((InstanceType)LineVfxTypeRaw, out var mm) || mm == null || mm->Value == null)
             {
-                log.Information("[HMSync] [LINEVFX] InstancesByType has no type-59 bucket. PERFECT NEGATIVE — the bucket's "
+                log.Information("[HMSync] [LINEVFX] InstancesByType has no type-59 bucket. PERFECT NEGATIVE - the bucket's "
                     + "absence means this layout never instantiated any, so the suppression target is elsewhere.");
                 return;
             }
@@ -3459,7 +3459,7 @@ public unsafe class ZoneLoadService : IDisposable
                 bool have = false;
                 try { have = inst->HavePrimary(); } catch { }
                 // v0.7.468: the `visible` column is GONE. It was only read when the graphics pointer was
-                // non-null, so on LineVfx — where the leaf is always null — it printed its default `False` and
+                // non-null, so on LineVfx - where the leaf is always null - it printed its default `False` and
                 // read as "this line isn't drawn", which is the opposite of the truth. A field that can only
                 // report one value is not evidence; removing it is better than footnoting it.
                 if (g23 != 0 || g24 != 0) leafReachable++;
@@ -3484,21 +3484,21 @@ public unsafe class ZoneLoadService : IDisposable
             log.Information("[HMSync] [LINEVFX] total=" + i + " withReachableLeaf=" + leafReachable + " withPrimary=" + primaries
                 + " autoCadence=" + (lineVfxAuto ? "ON" : "OFF")
                 + "  →  " + (leafReachable > 0
-                    ? "UNEXPECTED: a reachable leaf on " + leafReachable + "/" + i + " — 893 had none. `/hms linevfx gfx` may work here; report this, it is new."
+                    ? "UNEXPECTED: a reachable leaf on " + leafReachable + "/" + i + " - 893 had none. `/hms linevfx gfx` may work here; report this, it is new."
                     : "Leaf null as expected. DestroyPrimary + the every-frame cadence is the working mechanism; nothing to do if autoCadence=ON."));
             if (primaries == 0 && i > 0)
-                log.Information("[HMSync] [LINEVFX] NOTE: no primaries streamed yet — instances exist but no line has rendered. "
+                log.Information("[HMSync] [LINEVFX] NOTE: no primaries streamed yet - instances exist but no line has rendered. "
                     + "Walk toward a barrier and re-scan to see the leaf appear (that is also the re-assertion test).");
         }
         catch (Exception ex) { log.Error("[HMSync] [LINEVFX] scan threw: " + ex.Message); }
     }
 
-    /// <summary>STEP 2 — suppress. <paramref name="mode"/>: "gfx" (IsVisible=false, proven), "setactive"
+    /// <summary>STEP 2 - suppress. <paramref name="mode"/>: "gfx" (IsVisible=false, proven), "setactive"
     /// (vf63), "destroy" (DestroyPrimary vf28). <paramref name="limit"/> 0 = all, N = at most N instances, so
     /// the first live test of a risky mechanism costs one call. Returns the count acted on.</summary>
     /// <summary>When true, <paramref name="limit"/> selects the instance NEAREST the player rather than the
     /// first in map order. v0.7.468: `one` on 893 hit a line 240 units away, which proved the call didn't crash
-    /// and nothing else — a single-instance test you cannot SEE only answers half the question.</summary>
+    /// and nothing else - a single-instance test you cannot SEE only answers half the question.</summary>
     public unsafe int SuppressLineVfx(string mode, int limit) => SuppressLineVfx(mode, limit, nearest: false);
 
     public unsafe int SuppressLineVfx(string mode, int limit, bool nearest)
@@ -3530,29 +3530,29 @@ public unsafe class ZoneLoadService : IDisposable
                 {
                     case "gfx":
                     {
-                        // Mechanism 1 — the proven leaf-flag hide, routed through the SAME HideGfx primitive the
+                        // Mechanism 1 - the proven leaf-flag hide, routed through the SAME HideGfx primitive the
                         // furniture/VFX passes use so a catch here shows up in [CADENCE-CATCH] like any other.
                         var g = (DrawObject*)inst->GetGraphics();
                         if (g == null) g = (DrawObject*)inst->GetGraphics2();
-                        if (g == null) continue;   // nothing to hide on this instance — not an error, just report via scan
+                        if (g == null) continue;   // nothing to hide on this instance - not an error, just report via scan
                         HideGfx(g, inst, "LINEVFX");
                         break;
                     }
                     case "setactive":
-                        // Mechanism 2 — THE RISKY ONE on first use. If the client dies here it dies inside this
+                        // Mechanism 2 - THE RISKY ONE on first use. If the client dies here it dies inside this
                         // call; a managed try/catch cannot save an access violation, which is exactly why `limit`
                         // exists and why the operator is told to run limit=1 first.
                         inst->SetActive(false);
                         break;
                     case "destroy":
-                        inst->DestroyPrimary();   // Mechanism 3 — fallback; never touches the active flag
+                        inst->DestroyPrimary();   // Mechanism 3 - fallback; never touches the active flag
                         break;
                     default:
                         return 0;
                 }
 
                 suppressedLineVfx.Add(inst->Id.InstanceKey);
-                // Kill the coupled collider too, so the line and its "do not cross" wall go together — this is
+                // Kill the coupled collider too, so the line and its "do not cross" wall go together - this is
                 // the whole point of the comprehensive removal, and it uses the vfunc HMS already trusts.
                 try { inst->SetColliderActive(false); } catch { }
                 acted++;
@@ -3590,22 +3590,22 @@ public unsafe class ZoneLoadService : IDisposable
         return best;
     }
 
-    /// <summary>STEP 4 — the re-assertion cadence. PROVEN NECESSARY on 893: DestroyPrimary removes the line, and
+    /// <summary>STEP 4 - the re-assertion cadence. PROVEN NECESSARY on 893: DestroyPrimary removes the line, and
     /// the layout re-streams it on player movement, so a one-shot pass can't hold. This is the "out-cadence the
     /// untouchable" pattern HMS already uses for wep models and barrier VFX.
     ///
     /// Runs EVERY frame (not on the persistent-phase throttle) because the re-stream is movement-driven: at the
     /// 30-frame throttle a line would be visible for up to half a second each time it came back. It stays cheap
-    /// by gating on HavePrimary() — an instance with no primary is skipped, so a quiet frame costs 13 pointer
+    /// by gating on HavePrimary() - an instance with no primary is skipped, so a quiet frame costs 13 pointer
     /// reads and no calls.
     ///
-    /// MEASURED 2026-07-27 on TT 893: **7800 catches per 600 frames — exactly 13/frame, sustained.** This is
+    /// MEASURED 2026-07-27 on TT 893: **7800 catches per 600 frames - exactly 13/frame, sustained.** This is
     /// CONSTANT CHURN, not a top-up: every frame all 13 have a primary, we destroy all 13, and the layout rebuilds
     /// all 13 before the next tick. ~780 DestroyPrimary + 780 SetColliderActive calls per second.
     ///
     /// ⚠ WHAT THAT MEANS, stated plainly so nobody mis-reads the working result: the barrier is invisible because
     /// our poll lands before the render each frame. That is a race we are winning, NOT a suppression that holds.
-    /// Any frame where this poll is skipped or runs late is a visible flash. It also refutes an easy assumption —
+    /// Any frame where this poll is skipped or runs late is a visible flash. It also refutes an easy assumption -
     /// SetActive(false) is NOT preventing creation, so either the layout re-asserts IsActive on every streaming
     /// update, or IsActive simply doesn't gate primary creation for this type.
     ///
@@ -3616,10 +3616,10 @@ public unsafe class ZoneLoadService : IDisposable
     ///      Comes back true ⇒ the layout re-asserts and the fight is at streaming level. Stays false while the
     ///      primary is rebuilt anyway ⇒ the flag doesn't gate creation and SetActive is the wrong lever entirely.
     ///   2. Dump the suspected StreamingRadiusPerType array read-only and look for a plausible float table with
-    ///      40.0f at/near index 59 (CS notes LineStyle.RedFar bumps the radius to 40.0f — that's the tell). A hit
+    ///      40.0f at/near index 59 (CS notes LineStyle.RedFar bumps the radius to 40.0f - that's the tell). A hit
     ///      confirms the offset empirically and makes zeroing it safe, which would stop the primaries streaming at
     ///      source instead of destroying them 780×/s. A miss costs nothing and proves the offset wrong BEFORE a
-    ///      write. Never write to that offset on the strength of the brief alone — it was flagged unverified.</summary>
+    ///      write. Never write to that offset on the strength of the brief alone - it was flagged unverified.</summary>
     private bool lineVfxAuto = true;
     private int lineVfxWindowCatches;
     private int lineVfxWindowPasses;
@@ -3629,7 +3629,7 @@ public unsafe class ZoneLoadService : IDisposable
         var lw = LayoutWorld.Instance();
         if (lw == null || lw->ActiveLayout == null) return;
         if (!lw->ActiveLayout->InstancesByType.TryGetValuePointer((InstanceType)LineVfxTypeRaw, out var m)
-            || m == null || m->Value == null) return;   // map has no lines — the common case, costs one lookup
+            || m == null || m->Value == null) return;   // map has no lines - the common case, costs one lookup
 
         int caught = 0;
         foreach (var kv in *m->Value)
@@ -3638,7 +3638,7 @@ public unsafe class ZoneLoadService : IDisposable
             if (inst == null) continue;
             bool have = false;
             try { have = inst->HavePrimary(); } catch { }
-            if (!have) continue;   // already clean — this is what makes the every-frame cadence affordable
+            if (!have) continue;   // already clean - this is what makes the every-frame cadence affordable
             inst->DestroyPrimary();
             try { inst->SetColliderActive(false); } catch { }
             suppressedLineVfx.Add(inst->Id.InstanceKey);
@@ -3660,8 +3660,8 @@ public unsafe class ZoneLoadService : IDisposable
     public void SetLineVfxAuto(bool on) => lineVfxAuto = on;
     public bool LineVfxAuto => lineVfxAuto;
 
-    /// <summary>STEP 3 — restore. Re-enumerates and re-shows only the keys we suppressed. Fresh pointers, never
-    /// stored ones. DestroyPrimary is NOT reversible here — a destroyed primary comes back only by streaming, so
+    /// <summary>STEP 3 - restore. Re-enumerates and re-shows only the keys we suppressed. Fresh pointers, never
+    /// stored ones. DestroyPrimary is NOT reversible here - a destroyed primary comes back only by streaming, so
     /// the honest restore for that mode is a map reload, and this says so rather than pretending.</summary>
     public unsafe int RestoreLineVfx()
     {
@@ -3698,16 +3698,16 @@ public unsafe class ZoneLoadService : IDisposable
     // v0.7.380: dump every VFX instance in the LAYOUT GRAPH for the current zone, with whether the current
     // suppression patterns would match it, whether its graphics leaf is reachable, and whether it is visible.
     //
-    // WHAT THIS DISCRIMINATES (handbook §4.3 — "VFX is two different systems, and only one is a layout instance"):
+    // WHAT THIS DISCRIMINATES (handbook §4.3 - "VFX is two different systems, and only one is a layout instance"):
     //   • Effect IS listed        -> layout VFX. Hideable here. If it's listed but not MATCH, the correct
-    //                               substring is in the printed path — that's the pattern to add.
+    //                               substring is in the printed path - that's the pattern to add.
     //   • Effect NOT listed       -> actor/system VFX (VfxManager-driven, bound to actors/abilities). It has NO
     //                               layout-graph presence, so HideBarrierVfx can NEVER hide it, whatever the
     //                               pattern. That is a different mechanism and a separate piece of work.
     //   • Listed but gfx=NULL     -> layout instance whose graphics leaf isn't reachable; IsVisible can't be set,
     //                               so this path can't hide it either. Also reported rather than silently skipped.
     //
-    // Empty-path instances are REPORTED (as "(no path)") rather than skipped — a silent skip would look
+    // Empty-path instances are REPORTED (as "(no path)") rather than skipped - a silent skip would look
     // identical to "not in the layout graph" and would send the next fix down the wrong branch.
     public unsafe void DumpVfxPaths(string term)
     {
@@ -3731,7 +3731,7 @@ public unsafe class ZoneLoadService : IDisposable
                 try { var cs = inst->GetPrimaryPath(); if (cs.HasValue) path = cs.ToString(); } catch { }
                 bool pathless = path.Length == 0;
                 if (pathless) { path = "(no path)"; noPath++; }
-                // A term filter can't match "(no path)", so pathless instances are always shown — they're
+                // A term filter can't match "(no path)", so pathless instances are always shown - they're
                 // exactly the ones that would otherwise disappear and be misread as "not a layout VFX".
                 if (!pathless && !string.IsNullOrEmpty(term) && !path.Contains(term)) continue;
 
@@ -3921,7 +3921,7 @@ public unsafe class ZoneLoadService : IDisposable
     // S152: clear the IsTargetable bit on housing EventObjects (drops the white interaction
     // arrows). Moved out of LoadZone's pre-load loop into the deferred de-draw (see S152 note
     // there). RE-FIRE-SAFE: only records an object's ORIGINAL flags if we haven't already saved
-    // them — otherwise a re-fire (late wave) after suppression would save the already-cleared
+    // them - otherwise a re-fire (late wave) after suppression would save the already-cleared
     // value as "original" and restore would put back 0, permanently breaking targetability.
     // We key the saved-set by object index.
     private void SuppressHousingArrows()
@@ -3986,13 +3986,13 @@ public unsafe class ZoneLoadService : IDisposable
         // transition window so TargetSystem.Update can't walk a freed on-screen object.
         SuppressTargetScanUntilReady();
 
-        // S285: capture ORIGIN state once per session — gated on savedZoneId == null (the direct "no
+        // S285: capture ORIGIN state once per session - gated on savedZoneId == null (the direct "no
         // origin recorded yet" signal), NOT on a rendering flag, so the origin can't be clobbered by a
         // mid-session map hop (2nd+ /hms load finds savedZoneId already set → skips) and can't drift
         // from the IsZoneLoaded flag. This is what guarantees: start in 983 → hop 1345 → hop 1161 →
         // /hms stop returns to 983, not 1161. Position is read from the NATIVE GameObject.Position (the
         // Dalamud wrapper can read stale/zero mid-transition), captured HERE before the foreign zone
-        // load + spawn SetPosition below — so it's your true origin coords while you're still standing
+        // load + spawn SetPosition below - so it's your true origin coords while you're still standing
         // in the origin zone.
         if (savedZoneId == null)
         {
@@ -4006,50 +4006,50 @@ public unsafe class ZoneLoadService : IDisposable
         }
         else
         {
-            ReportDebug("[HMSync] Map hop (origin retained: zone=" + savedZoneId + ") — origin coords NOT updated.");
+            ReportDebug("[HMSync] Map hop (origin retained: zone=" + savedZoneId + ") - origin coords NOT updated.");
         }
         // S153: a map-hop (consecutive /hms load in-session) is now treated IDENTICALLY to a
-        // fresh load — NO restore-before-redraw. Previously we restored the previous map's
+        // fresh load - NO restore-before-redraw. Previously we restored the previous map's
         // furniture first, then re-de-drew. That un-hide/re-hide round-trip was the source of
         // the shared-Bg residual bug: 1011→1012 (different Bg) un-hid, then the new de-draw had
         // to re-catch furniture mid-stream, and in the shared-residency window pieces slipped
-        // through (1011→1012 partial reappearance). A hop never goes "home" — it goes to another
-        // de-drawn map and will hide furniture again immediately — so restoring first is wasted
+        // through (1011→1012 partial reappearance). A hop never goes "home" - it goes to another
+        // de-drawn map and will hide furniture again immediately - so restoring first is wasted
         // work that only creates the race. We restore ONLY on Revert (actual /hms stop / leave).
         // Tracking lists are cleared at the top of each DeDrawHousingFurniture pass, so dropping
         // the hop-restore loses nothing (no list bloat, no orphaned tracking). savedZoneId is
         // preserved on a hop (still in-session; only the displayed map changes).
 
         // Disable draw on everything except self and session peers
-        // S125: track what we hide (by object index) so Revert can restore fixtures —
+        // S125: track what we hide (by object index) so Revert can restore fixtures -
         // house boxes, wall partitions, flooring, lighting, portraits, wallpapers all
         // come through here. The old DisableDraw destroyed their DrawObjects and revert
         // only re-enabled session PEERS, so fixtures came back stripped ("houses
         // unbuilt", blank interiors). RenderFlags hide + flag-clear restore fixes both.
         // Disable draw on everything except self and session peers (NPCs, players,
-        // event objects — these have real DrawObjects and DisableDraw works on them,
+        // event objects - these have real DrawObjects and DisableDraw works on them,
         // as it always did pre-S124). Housing furniture/fixtures are NOT handled here
         // (their GameObjects have null DrawObjects); that's gated off in S131.
         // S152: arrow suppression (the HousingEventObject IsTargetable clear) MOVED OUT of
         // this synchronous pre-load loop into the DEFERRED de-draw (SuppressHousingArrows,
         // called from DeDrawHousingFurniture). Reason: S150/S151 made the furniture MESH
         // de-draw deferred (post-load, wave-aware), but the arrow suppression stayed here
-        // (pre-load) — so on a map-hop they DESYNCED: meshes hidden but the two interactable
+        // (pre-load) - so on a map-hop they DESYNCED: meshes hidden but the two interactable
         // gates' white arrows reappeared (the partial-reappearance bug). Running both in the
         // same deferred pass keeps mesh-hide and arrow-suppress together on settled object
         // state, and the re-fire-on-late-wave catches arrows in later waves too.
-        // S189: hide non-peer objects via DisableDraw — this matches Hyperborea (which uses the
+        // S189: hide non-peer objects via DisableDraw - this matches Hyperborea (which uses the
         // same DisableDraw sweep and does NOT crash), so DisableDraw is NOT the cause of the
         // GetPosition+0x24 UAF. (S188's RenderFlags swap was a mis-diagnosis and is reverted.) The
         // real cause is the target system's per-frame on-screen scan walking an object whose
-        // DrawObject is being torn down during the zone reload — addressed by ClearTargetScan()
+        // DrawObject is being torn down during the zone reload - addressed by ClearTargetScan()
         // at the reload sites, not by changing the hide method here.
         // S191: track every object we DisableDraw() so Revert can re-ENABLE their draw BEFORE the
         // home reload. ROOT CAUSE of the GetPosition+0x24 crashes: DisableDraw destroys an object's
         // DrawObject but leaves it in the live object table; on the stop-reload, EVERY per-frame
         // system that walks the table (TargetSystem, UI3DModule nameplates, …) calls GetPosition on
         // the torn-down object and derefs its null DrawObject. We were suppressing each *reader* one
-        // at a time (target scan, then UI3D, …) — whack-a-mole. The fix is to restore the *objects*
+        // at a time (target scan, then UI3D, …) - whack-a-mole. The fix is to restore the *objects*
         // to a valid drawable state before the reload, so no reader can fault. Hyperborea avoids
         // this only because its revert skips the reload when already home; HMS does a real reload
         // and so must re-enable first.
@@ -4058,11 +4058,11 @@ public unsafe class ZoneLoadService : IDisposable
         // on an Aetheryte, faulting on a garbage DrawObject pointer): DisableDraw() DESTROYS the object's
         // DrawObject but leaves the object live in the table. The "re-enable before reload" scheme meant to
         // undo this was stripped in the S192 lean revert and never reinstated (ReEnablePreservedObjects has
-        // had no caller since), so on a map-hop EVERY non-peer object — Kugane's Aetheryte included — was
+        // had no caller since), so on a map-hop EVERY non-peer object - Kugane's Aetheryte included - was
         // left with a freed DrawObject, and the next per-frame system to walk it (UI3DModule, target scan)
         // dereferenced the dangling pointer on the stop-reload. RenderFlags hiding (bit 0x02) hides the
-        // object WITHOUT tearing down its DrawObject — the exact reason ActorVisibilityService chose it
-        // over DisableDraw — so GetPosition stays valid and no reader can fault. Restored via the existing
+        // object WITHOUT tearing down its DrawObject - the exact reason ActorVisibilityService chose it
+        // over DisableDraw - so GetPosition stays valid and no reader can fault. Restored via the existing
         // RenderFlags restore loop over hiddenObjectIndices in Revert; no draw-rebuild race, nothing to
         // re-enable. (Saving the original flag isn't needed: 0x00 = visible is the universal default for
         // these objects, matching ActorVisibilityService's clear-bit Show().)
@@ -4086,9 +4086,9 @@ public unsafe class ZoneLoadService : IDisposable
         // S149 proved the ordering bug: when LoadZone ran de-draw BEFORE loadZoneHook, on a
         // map-hop GlobalLayout was EMPTY mid-transition (SharedGroup=0 BgPart=0), so de-draw
         // hid nothing; the new map's furniture then streamed in ~40 frames LATER, un-hidden
-        // (visibleBgPart=15 — the "surprise furniture"). The timing varied by map, which is
+        // (visibleBgPart=15 - the "surprise furniture"). The timing varied by map, which is
         // why the respawn was inconsistent (1012/1016/1017 yes, 1018 no). Fix: don't de-draw
-        // here — arm a poll (below, after the load) that fires de-draw the instant furniture
+        // here - arm a poll (below, after the load) that fires de-draw the instant furniture
         // is actually present in GlobalLayout. Correct for ANY streaming speed; also fixes the
         // original intermittent 1010 persist (same root). First-load still works: the poll
         // catches already-resident furniture on frame one.
@@ -4097,12 +4097,12 @@ public unsafe class ZoneLoadService : IDisposable
         var gameMain = GameMain.Instance();
 
         // S262: do NOT set up the InstanceContentDirector. Creating it is what brought up the
-        // "Duty Information" HUD (name + clock) on a fresh load — the HUD keys off an active content
+        // "Duty Information" HUD (name + clock) on a fresh load - the HUD keys off an active content
         // director, not off a Commence. We removed the trigger rather than suppressing the UI.
         // Nothing we ship needs the director: the native load is loadZoneHook.Original below; the
         // AnoMech entry-circle drop (DisableSpawnAreaColliders) and the furniture/wreck de-draw both
         // walk LayoutWorld directly and never touch the director; and the MapEffect-clear path was
-        // abandoned (it drives the barriers, not the wreck — see architecture doc §21). AnoMech
+        // abandoned (it drives the barriers, not the wreck - see architecture doc §21). AnoMech
         // confirms the native LoadZone does not require InitDirector (its Step 3 is skippable).
         // FinalizeCurrentInstanceContent stays: it tears down any LEFTOVER director (from an older
         // build or a real duty) and hides a stale duty-info HUD, one-shot, on load.
@@ -4115,16 +4115,16 @@ public unsafe class ZoneLoadService : IDisposable
         if (ResearchMode)
         {
             SetupInstanceContentForZone(territoryId);
-            log.Information("[HMSync] [RESEARCH] InstanceContentDirector set up (research mode ON) — Duty-Info HUD will show.");
+            log.Information("[HMSync] [RESEARCH] InstanceContentDirector set up (research mode ON) - Duty-Info HUD will show.");
         }
 
-        // S320d CRASH A/C FIX (forward path) — DisableDraw every NON-PEER object immediately before the
+        // S320d CRASH A/C FIX (forward path) - DisableDraw every NON-PEER object immediately before the
         // reload, mirroring the S311 fix already present in Revert. The forward LoadZone previously did ONLY
         // the S310 RenderFlags hide-sweep (which cured crash B by PRESERVING DrawObjects) but NOT the
-        // DisableDraw-before-reload that crash A/C needs — so the foreign-zone teardown could still corrupt a
+        // DisableDraw-before-reload that crash A/C needs - so the foreign-zone teardown could still corrupt a
         // half-live object as the native unload ran with no loading screen to suspend object updates. That is
         // the recurrence of the SharedGroupLayoutInstance.Deinit AV (StandObjectManager.Update → vf19 →
-        // Deinit) seen on a SESSION JOIN from a populated zone under multibox CPU load — same crash class as
+        // Deinit) seen on a SESSION JOIN from a populated zone under multibox CPU load - same crash class as
         // A/C, but on the forward path, which Revert was already hardened against and a sparse solo
         // /hms load never stressed. Removing every DrawObject CLEANLY first leaves the unload nothing
         // half-built to corrupt; the reload rebuilds the whole set immediately after, so there is no
@@ -4156,13 +4156,13 @@ public unsafe class ZoneLoadService : IDisposable
         // Set position. ResolveSpawnPoint is authoritative: curated overrides → planevent.lgb scan
         // (PopRange → ExitRange → Aetheryte → EventNpc → PositionMarker, first valid non-zero wins)
         // → origin. This is what the game itself reads and works for every zone type with no
-        // maintenance for new content. (S209's DefaultPosition read was a regression — it returned
+        // maintenance for new content. (S209's DefaultPosition read was a regression - it returned
         // zero and demoted this working resolver; reverted.)
         var spawn = spawnOverride ?? ResolveSpawnPoint(territoryId);
         var playerNative = (GameObject*)localPlayer.Address;
 
         // S308: ground the actor BEFORE positioning. If we hop zones mid-mount-flight the actor is in
-        // MovementState==Flying, and (proven by the return-bug saga) SetPosition is REJECTED while Flying —
+        // MovementState==Flying, and (proven by the return-bug saga) SetPosition is REJECTED while Flying -
         // so the curated spawn write was silently dropped and the actor kept its flight trajectory into the
         // new zone, snapping out of bounds. Same fix as the stop/return path (S299): briefly mount then
         // instant-dismount to force the native dismount→land transition that exits Flying coherently, so
@@ -4183,18 +4183,18 @@ public unsafe class ZoneLoadService : IDisposable
 
         playerNative->SetPosition(spawn.X, spawn.Y, spawn.Z);
         // Apply the user spawn's saved facing, if any. Same proven mechanism as the home-restore SetRotation
-        // (S288, below) — an immediate write right after the accepted SetPosition. A synced/curated load passes
+        // (S288, below) - an immediate write right after the accepted SetPosition. A synced/curated load passes
         // no facing (null), so behaviour on those paths is unchanged.
         if (facingOverride.HasValue)
             playerNative->SetRotation(facingOverride.Value);
 
 
         // S228: drop the dungeon entry-ring barrier. The ring is SharedGroup colliders near spawn
-        // (AnoMech-proven mechanism — NOT MapEffect/CollisionBox/director-update, all ruled out).
+        // (AnoMech-proven mechanism - NOT MapEffect/CollisionBox/director-update, all ruled out).
         // DEFERRED: they stream in over several frames, so retry each frame near the spawn center
         // until found + dropped (PrefabFlags2 & ~0x8, SetColliderActive(false) vfunc 37).
         // S312: ONLY in instanced content. Residential wards (1010-1012) and overworld have no duty
-        // barrier, and their near-spawn SharedGroups are streaming estate prefabs — writing their
+        // barrier, and their near-spawn SharedGroups are streaming estate prefabs - writing their
         // PrefabFlags2 corrupts the instance lifecycle and crashes Deinit when the plot streams out
         // (the /hms load 1010 crash: StandObjectManager.Update → EventObject.vf19 → SharedGroupLayoutInstance.Deinit).
         if (IsInstancedContent(territoryId))
@@ -4204,15 +4204,15 @@ public unsafe class ZoneLoadService : IDisposable
         // curtain) runs everywhere; the 1345-specific barrier/terrain/model passes self-gate inside the poll by
         // territory. Adding a new map's barriers = adding its data to the per-map tables, no arm change.
         // v0.7.345: ALSO arm for a cutscene swap stage. A cutscene loads via a DONOR territory (often an apartment,
-        // which isn't instanced content), so IsInstancedContent(territoryId) is false and the poll never armed — which
+        // which isn't instanced content), so IsInstancedContent(territoryId) is false and the poll never armed - which
         // is why the o1e1 door pass never ran. The o1e1 branch inside the poll self-gates by ActiveStageBg, so arming
         // it here is safe for every stage.
         // v0.7.380: arm for EVERY HMS-loaded zone, not just instanced content. The VfxHideAllMaps list is
         // meant to apply to any zone HMS loads, but the poll that applies it only armed when
-        // IsInstancedContent — so loading a city or open-world map (which HMS does routinely) never ran
+        // IsInstancedContent - so loading a city or open-world map (which HMS does routinely) never ran
         // HideBarrierVfx and no pattern could match. Still HMS-exclusive: LoadZone is HMS's own loader,
         // reachable only via DoLoad (session-gated) or a relay handler, so this never touches the live world
-        // map during ordinary play — per the Maintenance Manual §1, riskier levers stay confined to
+        // map during ordinary play - per the Maintenance Manual §1, riskier levers stay confined to
         // client-only synthetic maps. Heavier passes inside the poll self-gate (terrain/models by
         // territory==1345, o1e1 by ActiveStageBg).
         ArmBarrierSuppress(territoryId);
@@ -4248,14 +4248,14 @@ public unsafe class ZoneLoadService : IDisposable
         }
         // S146: STREAMING-SAFE restore. Previously this loop dereferenced the saved raw
         // instance pointers in hiddenLayoutInstances and called HavePrimary() on each. That
-        // crashes when the game has freed an instance between hide and restore — which happens
+        // crashes when the game has freed an instance between hide and restore - which happens
         // in OUTDOOR/streaming zones (residential districts stream estate plots in/out by
         // proximity), leaving our saved pointers dangling. HavePrimary() on a freed pointer
         // derefs garbage → CLR AV on /hms stop (the residential-district crash).
         //
         // Fix: never deref a saved pointer. Re-walk the LIVE GlobalLayout by the instance keys
         // we recorded (hiddenInstanceKeys) and re-show only instances STILL PRESENT in the
-        // layout this frame — using freshly-fetched, guaranteed-valid pointers. Instances the
+        // layout this frame - using freshly-fetched, guaranteed-valid pointers. Instances the
         // game has streamed out simply won't be in the walk, so they're skipped (correct: the
         // game owns their visibility now). Mirrors the exact safe walk DeDrawHousingFurniture
         // uses. Makes /hms stop crash-proof in every zone class, streaming or not.
@@ -4287,7 +4287,7 @@ public unsafe class ZoneLoadService : IDisposable
             }
         }
         // S146: STREAMING-SAFE collider restore. Previously wrote saved flags to saved raw
-        // Collider* pointers — a use-after-free WRITE if streaming freed the collider (even
+        // Collider* pointers - a use-after-free WRITE if streaming freed the collider (even
         // worse than a stale read: it corrupts whatever now owns that memory). Now we re-walk
         // the LIVE BGCollision Scene and restore flags only on colliders STILL PRESENT whose
         // owner key we recorded. Freed colliders aren't in the walk → skipped safely.
@@ -4380,7 +4380,7 @@ public unsafe class ZoneLoadService : IDisposable
     /// Revert to original FC room zone.
     /// </summary>
 
-    // P1 recipe-capture: CreateCutSceneController is a FACTORY — retail playback is driven by the EventScene Play task
+    // P1 recipe-capture: CreateCutSceneController is a FACTORY - retail playback is driven by the EventScene Play task
     // (Prepare=8 -> Play=7 -> Post=9), so cold-firing spins. Instead we HOOK the factory and let the game replay a
     // cutscene legitimately (Unending Journey in an inn); the hook records the controller and dumps the banked float
     // candidates during REAL playback, so the clock (advances) and speed (the 1.00 that matters) are found empirically.
@@ -4393,7 +4393,7 @@ public unsafe class ZoneLoadService : IDisposable
     public void FireCutscene(uint id)
     {
         captureTargetId = id;
-        log.Information("[CUT] armed capture for cutscene " + id + " — now REPLAY it (Unending Journey / an inn). The hook dumps [CUT] floats during playback.");
+        log.Information("[CUT] armed capture for cutscene " + id + " - now REPLAY it (Unending Journey / an inn). The hook dumps [CUT] floats during playback.");
     }
 
     private unsafe nint CreateCutDetour(nint self, byte* path, uint id, byte a4)
@@ -4404,12 +4404,12 @@ public unsafe class ZoneLoadService : IDisposable
         {
             capturedController = ctrl; cutDumpFrames = 0;
             framework.Update -= PollCutDump; framework.Update += PollCutDump;
-            log.Information("[CUT] CAPTURED target " + id + " — dumping banked float candidates through playback");
+            log.Information("[CUT] CAPTURED target " + id + " - dumping banked float candidates through playback");
 
             // v0.7.225 (P1 vtable recon): one-shot dump of the controller's vtable so the NEXT build can hook
             // specific slots BY INDEX (the RE-recommended "log every call the game makes on the returned controller").
-            // Raw addresses are session-local (ASLR) — their only job here is (a) confirm a vtable exists, (b) tell us
-            // slot COUNT, (c) let us pick indices to hook next round. We do NOT hook here — capture-and-observe only.
+            // Raw addresses are session-local (ASLR) - their only job here is (a) confirm a vtable exists, (b) tell us
+            // slot COUNT, (c) let us pick indices to hook next round. We do NOT hook here - capture-and-observe only.
             try
             {
                 var vtbl = *(nint*)ctrl;   // first qword of any polymorphic C++ object = vtable pointer
@@ -4424,7 +4424,7 @@ public unsafe class ZoneLoadService : IDisposable
                     }
                     log.Information("[CUT] VTBL ctrl=0x" + ctrl.ToString("X") + " vtbl=0x" + vtbl.ToString("X") + " slots: " + sb);
                 }
-                else log.Information("[CUT] VTBL: controller has no vtable pointer (0x0) — not polymorphic?");
+                else log.Information("[CUT] VTBL: controller has no vtable pointer (0x0) - not polymorphic?");
             }
             catch (Exception ex) { log.Error("[CUT] VTBL dump failed: " + ex.Message); }
         }
@@ -4438,7 +4438,7 @@ public unsafe class ZoneLoadService : IDisposable
         if (sm == null) return;
         var ctrl = sm->CutSceneController;
         sm->CutSceneController = null;                 // unregister first
-        if (ctrl != null) { try { ctrl->Dtor(1); } catch { } }   // vf0 Dtor(1) — dispose the stuck controller
+        if (ctrl != null) { try { ctrl->Dtor(1); } catch { } }   // vf0 Dtor(1) - dispose the stuck controller
         log.Information("[CUT] cutstop: unregistered + disposed controller");
     }
 
@@ -4460,7 +4460,7 @@ public unsafe class ZoneLoadService : IDisposable
         // schedule manager's CutSceneController is registered and whether it's OUR captured pointer. During a legit
         // Unending Journey replay we EXPECT the game to set this to our controller and playing→True (recipe = "the game
         // drives it, we observe"). If it stays null while our pointer is live, the game drives a DIFFERENT controller
-        // than the factory returned — a real finding that redirects the whole approach.
+        // than the factory returned - a real finding that redirects the whole approach.
         nint smCtrl = sm != null ? (nint)sm->CutSceneController : 0;
         string reg = smCtrl == 0 ? "null" : (smCtrl == capturedController ? "OURS" : "other=0x" + smCtrl.ToString("X"));
         // Named clock candidates (RE-banked): four copies of the session clock at creation; expect ONE to advance
@@ -4477,7 +4477,7 @@ public unsafe class ZoneLoadService : IDisposable
 
     public void Revert()
     {
-        ActiveStageBg = null;   // v0.7.227: leaving any swap stage — spawns key by territoryId again
+        ActiveStageBg = null;   // v0.7.227: leaving any swap stage - spawns key by territoryId again
         if (!IsZoneLoaded || savedZoneId == null)
         {
             DiagLog($"[HMSync] [RETURN] Nothing to revert (IsZoneLoaded={IsZoneLoaded}, savedZoneId={(savedZoneId.HasValue ? savedZoneId.Value.ToString() : "null")}).");
@@ -4485,7 +4485,7 @@ public unsafe class ZoneLoadService : IDisposable
         }
 
         IsTransitioning = true;
-        // S284: SINGLE CLEAN RETURN (matched to Hyperborea's Revert) — return = reload the ORIGIN zone
+        // S284: SINGLE CLEAN RETURN (matched to Hyperborea's Revert) - return = reload the ORIGIN zone
         // + restore the ORIGIN coords. Nothing else. The old EntrySpawn mechanism (snap to the foreign
         // zone's in-bounds spawn pre-reload) was removed: it's unnecessary (your foreign-zone position
         // is irrelevant once we reload the origin zone and set origin coords) and it was the source of
@@ -4499,13 +4499,13 @@ public unsafe class ZoneLoadService : IDisposable
             DiagLog($"[HMSync] [RETURN] Revert: cur=({curPos.X:F1},{curPos.Y:F1},{curPos.Z:F1}) → origin zone {savedZoneId} coords " +
                 (savedPosition.HasValue ? $"({savedPosition.Value.X:F1},{savedPosition.Value.Y:F1},{savedPosition.Value.Z:F1})" : "NULL"));
         }
-        // S299: GROUND an on-foot flyer the way the game grounds a MOUNTED flyer — via the native
+        // S299: GROUND an on-foot flyer the way the game grounds a MOUNTED flyer - via the native
         // dismount sequence. Confirmed root cause: while MovementState==Flying, SetPosition is REJECTED
-        // (writes never stick — 10s timeout proved it). Hyperborea has the identical bug and "solves" it
-        // only by dismounting (CreateAndSetupMount(0)) — which works for MOUNTED flight because the
+        // (writes never stick - 10s timeout proved it). Hyperborea has the identical bug and "solves" it
+        // only by dismounting (CreateAndSetupMount(0)) - which works for MOUNTED flight because the
         // dismount runs the coherent flight→ground transition. On foot there's no mount, so dismount is a
         // no-op and we stay Flying forever. Fix: briefly put the player ON a mount, then instant-dismount
-        // (Flags=4) — forcing the native dismount→land transition that exits Flying coherently (state +
+        // (Flags=4) - forcing the native dismount→land transition that exits Flying coherently (state +
         // velocity + flags all cleared by the GAME, no manual poking → no paralysis). Then the reload +
         // SetPosition land cleanly. Only do this if actually airborne.
         try
@@ -4532,7 +4532,7 @@ public unsafe class ZoneLoadService : IDisposable
         }
         catch (Exception ex) { log.Warning("[HMSync] [RETURN] pre-reload grounding threw: " + ex.Message); }
 
-        // S192: LEAN REVERT — matched to Hyperborea's shape, which reverts foreign zones without
+        // S192: LEAN REVERT - matched to Hyperborea's shape, which reverts foreign zones without
         // the GetPosition+0x24 crash and without any EnableDraw gymnastics. Hyperborea's revert is
         // just: (optional) clear mount, SetPosition home, then reload if not already home. The
         // extra object-manipulation HMS did here (re-enable loops, etc.) was the likely source of
@@ -4540,23 +4540,23 @@ public unsafe class ZoneLoadService : IDisposable
         // disarm pending de-draw, the reload + setupTerritory, and position/rotation restore.
         // Stripped: the S191 EnableDraw loop and the per-object churn. The home reload rebuilds the
         // whole object set itself (as it does for Hyperborea), so the DisableDraw'd foreign objects
-        // are destroyed by the zone change — no dangling DrawObjects to fault on.
+        // are destroyed by the zone change - no dangling DrawObjects to fault on.
 
-        // S243 HYPOTHESIS TEST — target-scan suppression REMOVED from revert.
+        // S243 HYPOTHESIS TEST - target-scan suppression REMOVED from revert.
         // New diagnosis: the suppressor may be the CAUSE, not a cure. It zeroes
         // TargetableObjectsOnScreen.Length (and the 3 filter arrays) EVERY FRAME. But Length=0
-        // doesn't mean "skip the scan" — it means "the cached on-screen list is empty, REBUILD
+        // doesn't mean "skip the scan" - it means "the cached on-screen list is empty, REBUILD
         // it", which forces the game's scan to re-walk the ENTIRE live object table through
         // SpaceFilter every frame. During the home-reload's construction window that table
-        // contains mid-construction incoming Aetherytes (destination-density dependent — Limsa's
+        // contains mid-construction incoming Aetherytes (destination-density dependent - Limsa's
         // huge plaza crashes where lighter zones don't), and SpaceFilter's GetPosition derefs
         // their half-built DrawObject → the exact crash. Hyperborea does the SAME DisableDraw and
-        // the SAME SetupTerritory reload but NEVER touches the TargetSystem arrays — and doesn't
+        // the SAME SetupTerritory reload but NEVER touches the TargetSystem arrays - and doesn't
         // crash. So HMS's per-frame Length-zeroing is the likely accelerant: it forces a full
         // re-scan at the worst moment. Old builds crash too because this suppressor is old (S189).
         //
         // Fix-to-test: do NOT arm suppression on revert. Make HMS revert match Hyperborea's shape
-        // exactly — no TargetSystem manipulation — and let the game's natural scan cadence handle
+        // exactly - no TargetSystem manipulation - and let the game's natural scan cadence handle
         // the reload. Also actively DISARM any suppression still running from the load side, so it
         // can't keep zeroing arrays into the reload window. If the suppressor was the accelerant,
         // this fixes it; if not, we've lost nothing (it demonstrably wasn't preventing this crash).
@@ -4566,7 +4566,7 @@ public unsafe class ZoneLoadService : IDisposable
             framework.Update -= PollTargetScanSuppress;
             log.Information("[HMSync] [REVERT] DISARMED target-scan suppression (S243: testing it as the crash accelerant).");
         }
-        // Clear single-target pointer slots once (cheap, safe — does NOT zero array Lengths, so it
+        // Clear single-target pointer slots once (cheap, safe - does NOT zero array Lengths, so it
         // does NOT force a re-scan). This is the Hyperborea-safe subset: null the targets, touch
         // nothing that makes the scan re-walk the table.
         try
@@ -4593,7 +4593,7 @@ public unsafe class ZoneLoadService : IDisposable
             framework.Update -= PollDeferredDeDraw;
         }
 
-        // v0.7.270: disarm the persistent barrier/wep suppress (it no longer self-disarms — it runs the whole
+        // v0.7.270: disarm the persistent barrier/wep suppress (it no longer self-disarms - it runs the whole
         // session to keep re-streamed wep models hidden). Must stop on leave so it doesn't fire in the home zone.
         if (barrierSuppressArmed)
         {
@@ -4604,18 +4604,18 @@ public unsafe class ZoneLoadService : IDisposable
         // Restore RenderFlag-hidden fixtures (cheap, idempotent).
         RestoreHiddenObjects();
 
-        // S242 CRASH FIX — the actual root cause, finally. The GetPosition+0x24 fault is
+        // S242 CRASH FIX - the actual root cause, finally. The GetPosition+0x24 fault is
         // TargetSystem.Update → SpaceFilter (the targeting frustum walk) calling GetPosition on
         // a foreign object whose DrawObject HMS destroyed via DisableDraw on load. The previous
         // theory (target-scan ARRAY suppression) targets the wrong mechanism: SpaceFilter walks
         // the live object table through the targetable filter, NOT the TargetableObjectsOnScreen
-        // array we were zeroing — which is why no amount of array-poking or settle-hold tuning
+        // array we were zeroing - which is why no amount of array-poking or settle-hold tuning
         // stopped it (six builds). The dump's stack (SpaceFilter.vf1 → IsMountOrOrnament →
         // GetPosition, RDI = Aetheryte vtable) makes this explicit.
         // S310: the hide-sweep now uses RenderFlags (restored by RestoreHiddenObjects above), not
-        // DisableDraw — so there is no destroyed-DrawObject state to undo here before the reload.
+        // DisableDraw - so there is no destroyed-DrawObject state to undo here before the reload.
 
-        // The reload — genuine zone load back home. Rebuilds the home territory + object set.
+        // The reload - genuine zone load back home. Rebuilds the home territory + object set.
         var gameMain = GameMain.Instance();
 
         // S224: tear down the dungeon's instance content before returning home (home has no
@@ -4632,15 +4632,15 @@ public unsafe class ZoneLoadService : IDisposable
         Vector3? restorePos = savedPosition;
         float? restoreRot = savedRotation;
 
-        // The reload — genuine zone load back home. Rebuilds the home territory + object set. Normally only if
-        // we're not already in the target zone — BUT a cutscene stage borrows the origin's territory id, so
+        // The reload - genuine zone load back home. Rebuilds the home territory + object set. Normally only if
+        // we're not already in the target zone - BUT a cutscene stage borrows the origin's territory id, so
         // ttBefore == restoreZone even though the live SCENE is the stage. Force the reload in that case so the
         // origin's CreateScene fires and the stage geometry is actually torn down.
         if (ttBefore != restoreZone || cutsceneSceneActive)
         {
             DiagLog("[HMSync] [RETURN] reloading home zone " + restoreZone + " (TT before = " + ttBefore + ")");
 
-            // S311 CRASH A FIX — DisableDraw EVERY object immediately before the reload, exactly as
+            // S311 CRASH A FIX - DisableDraw EVERY object immediately before the reload, exactly as
             // Hyperborea does in Utils.LoadZone. This is the counterpart to the S310 RenderFlags change,
             // and the two solve DIFFERENT crashes:
             //   • Crash B (FIXED by S310): a per-frame READER (UI3DModule/TargetSystem) calling GetPosition
@@ -4654,7 +4654,7 @@ public unsafe class ZoneLoadService : IDisposable
             // The cure is to remove every DrawObject CLEANLY (DisableDraw) right before the teardown, so
             // when GameObjectManager.Update runs vf38 during the unload there is no live draw state left to
             // half-null. RenderFlags-hiding (S310) deliberately PRESERVED the DrawObject, which fixed the
-            // reader crash but left the draw state intact for the unload to corrupt — hence A persisted.
+            // reader crash but left the draw state intact for the unload to corrupt - hence A persisted.
             // DisableDraw here is safe: the reload rebuilds the entire object/draw set immediately after,
             // and the home-restore poll re-establishes the actor; nothing reads these DrawObjects between
             // this call and the rebuild (the readers that caused B run AFTER the rebuild, on fresh objects).
@@ -4670,10 +4670,10 @@ public unsafe class ZoneLoadService : IDisposable
         }
         else
         {
-            DiagLog("[HMSync] [RETURN] already in home zone " + restoreZone + " — no reload needed.");
+            DiagLog("[HMSync] [RETURN] already in home zone " + restoreZone + " - no reload needed.");
         }
 
-        // S288: arm the deferred restore — waits until the actor is settled in restoreZone, then writes
+        // S288: arm the deferred restore - waits until the actor is settled in restoreZone, then writes
         // the home position and reasserts it for a short window to beat the load's late settle write.
         if (restorePos.HasValue)
             ArmHomeRestore(restoreZone, restorePos.Value, restoreRot);
@@ -4687,7 +4687,7 @@ public unsafe class ZoneLoadService : IDisposable
         savedRotation = null;
 
         IsTransitioning = false;
-        DiagLog("[HMSync] [RETURN] reload issued — applying home position once zone settles.");
+        DiagLog("[HMSync] [RETURN] reload issued - applying home position once zone settles.");
     }
 
     // S288: deferred home-position restore. Polls each frame after Revert until the actor has settled in
@@ -4717,7 +4717,7 @@ public unsafe class ZoneLoadService : IDisposable
             homeRestoreWrites = 0;
             homeRestoreStable = 0;
             framework.Update -= PollHomeRestore;
-            ReportDebug($"[HMSync] [RETURN] home-restore TIMED OUT after {homeRestoreTicks}f — writes never stuck (something still pinning position).");
+            ReportDebug($"[HMSync] [RETURN] home-restore TIMED OUT after {homeRestoreTicks}f - writes never stuck (something still pinning position).");
             OnHomeRestoreComplete?.Invoke(); // open the packet filter even on timeout (never leave it stuck on)
             return;
         }
@@ -4728,7 +4728,7 @@ public unsafe class ZoneLoadService : IDisposable
 
         // S299: the pre-reload mount→instant-dismount grounds us coherently (exits Flying). It may take a
         // few frames for the dismount transition to land, so wait for MovementState==Normal (read-only,
-        // never written), THEN SetPosition — write sticks AND controller is healthy (legs work).
+        // never written), THEN SetPosition - write sticks AND controller is healthy (legs work).
         var mv = ((Character*)lp.Address)->MoveController.MovementState;
         if (mv != MovementStateOptions.Normal)
         {
@@ -4766,7 +4766,7 @@ public unsafe class ZoneLoadService : IDisposable
             homeRestoreWrites = 0;
             homeRestoreStable = 0;
             framework.Update -= PollHomeRestore;
-            DiagLog($"[HMSync] [RETURN] home position HELD ({homeRestoreTicks}f, mvState={finalState}) — settled. Opening packet filter.");
+            DiagLog($"[HMSync] [RETURN] home position HELD ({homeRestoreTicks}f, mvState={finalState}) - settled. Opening packet filter.");
             OnHomeRestoreComplete?.Invoke();
         }
     }
@@ -4819,14 +4819,14 @@ public unsafe class ZoneLoadService : IDisposable
     {
         // S320: a zone change NOT initiated by HMS (normal teleport, zone line, login). HMS-driven loads
         // call loadZoneHook.Original directly and bypass this detour, so firing here catches exactly the
-        // external transitions — carpet (and any future carry-across state) gets sanitised before arrival.
+        // external transitions - carpet (and any future carry-across state) gets sanitised before arrival.
         ZoneWillChange?.Invoke();
         return loadZoneHook!.Original(a1, a2, a3, a4, a5, a6);
     }
 
 
     // ──────────────────────────────────────────────────────────────────────────
-    // S145 HOUSINGDIAG [HOUSINGDIAG] — read-only decoration-state dump.
+    // S145 HOUSINGDIAG [HOUSINGDIAG] - read-only decoration-state dump.
     // Call StartHousingDiag() from a command, then walk into the FC room. Polls every
     // HousingDiagPollInterval frames and dumps a labelled snapshot WHEN STATE CHANGES, so
     // the log is a clean timeline of how the housing system populates on a real entry. No
@@ -4878,7 +4878,7 @@ public unsafe class ZoneLoadService : IDisposable
 
     // S160 [TEARDOWN]: focused read-only probe for the front-door-exit teardown question.
     // Logs the indoor-context + furniture-manager state whose BEFORE→AFTER delta across a
-    // REAL front-door exit reveals what the game's teardown actually does — so we can replicate
+    // REAL front-door exit reveals what the game's teardown actually does - so we can replicate
     // that delta on a map-hop instead of intercepting re-spawns. Run /hms housingdiag while
     // standing in the apartment, then walk OUT the front door; the fields that flip are the
     // teardown. Emits only on change (signature) to keep a clean timeline. Grep [TEARDOWN].
@@ -4957,9 +4957,9 @@ public unsafe class ZoneLoadService : IDisposable
 
         // ── DATA layer: IndoorAreaLayoutData (wallpaper/flooring/light level) ──
         // Lives on LayoutManager.IndoorAreaData (pointer @ 0x0B0). We read it from BOTH
-        // ActiveLayout AND GlobalLayout — we don't yet know which carries it after our faux
+        // ActiveLayout AND GlobalLayout - we don't yet know which carries it after our faux
         // reload, and that's exactly what the dump should reveal. Also dump the game's own
-        // HousingLayoutDataUpdatePending flag (@0x104) — that's the signal the game sets when
+        // HousingLayoutDataUpdatePending flag (@0x104) - that's the signal the game sets when
         // housing layout data needs (re)applying; if our revert leaves it false while a real
         // entry sets it true, that flag may BE the lever.
         string dataLine = DumpIndoorAreaData("ActiveLayout", lm);
@@ -4990,9 +4990,9 @@ public unsafe class ZoneLoadService : IDisposable
         // CountInstances enumerated InstancesByType and dereferenced instance pointers; run
         // across /hms stop, it read a VfxLayoutInstance mid-teardown and AV'd (vf60 near-null,
         // native crash straight through the managed try/catch). Instance counts were only a
-        // cross-reference and we already have them from the first HOUSINGDIAG pass — not worth
+        // cross-reference and we already have them from the first HOUSINGDIAG pass - not worth
         // re-walking a volatile collection during the one window it's being freed. We keep only
-        // the dirty-flag, a single bool field read with no traversal — safe at any time.
+        // the dirty-flag, a single bool field read with no traversal - safe at any time.
         string instLine = "GlobalLayout=NULL";
         string sigInst = "i:null";
         if (lw != null && lw->GlobalLayout != null)
@@ -5007,7 +5007,7 @@ public unsafe class ZoneLoadService : IDisposable
         // ActiveLayout->HousingType is unset. So the fixture-replay fix depends entirely on
         // ActiveLayout being the housing layout with HousingType set after revert. This line
         // shows, for BOTH layouts: HousingType (0=none), InitState (7=fully loaded/ready),
-        // and TerritoryTypeId — so we can see which layout is active, whether it's the house,
+        // and TerritoryTypeId - so we can see which layout is active, whether it's the house,
         // and whether SetInteriorFixture would bind or no-op.
         string bindLine = "BIND: (no layouts)";
         string sigBind = "b:null";
@@ -5038,15 +5038,15 @@ public unsafe class ZoneLoadService : IDisposable
         DumpAppearanceContainer();
     }
 
-    // S145c [HOUSINGDIAG]: dump the HousingInteriorAppearance inventory container (25002) —
+    // S145c [HOUSINGDIAG]: dump the HousingInteriorAppearance inventory container (25002) -
     // the PERSISTENT source of interior fixture assignments (walls/windows/door/floor/light
     // per floor). Unlike IndoorAreaData (transient, NULL in steady state), this inventory is
     // resident and stable, so it's the real source to replay from via SetInteriorFixture.
     // This dump confirms the slot→fixture mapping with live data BEFORE we build the replay:
     // we read each slot's ItemId + stain and cross-reference against what's actually on the
-    // walls. Inventory read only — no layout traversal, safe across teardown.
+    // walls. Inventory read only - no layout traversal, safe across teardown.
     // Expected slot layout (to be CONFIRMED by this dump): per floor (Ground/Second/Cellar/
-    // Exterior) the parts Walls/Windows/Door/Floor/Light — matching SetInteriorFixture(floor,part).
+    // Exterior) the parts Walls/Windows/Door/Floor/Light - matching SetInteriorFixture(floor,part).
     private void DumpAppearanceContainer()
     {
         try
@@ -5117,14 +5117,14 @@ public unsafe class ZoneLoadService : IDisposable
     {
         // S220: dungeon spawns now resolve from planmap.lgb via the ENTRANCE EventObject discriminator
         // (near-flawless across tested dungeons). Hand-written dungeon overrides removed.
-        // Cities resolve to semi-random-but-valid in-zone spots (kept — they're fine).
+        // Cities resolve to semi-random-but-valid in-zone spots (kept - they're fine).
         //
         // NOTE: 128 (Limsa Upper Decks) was previously curated for a multi-level wrong-elevation issue.
         // Removed per cleanup; the entrance-EventObject logic is dungeon-targeted, so a multi-level CITY
         // falls through to the PopRange path. VERIFY Limsa Upper Decks spawns sanely; if it regresses to
         // wrong elevation, either re-add this override or improve the city PopRange elevation pick.
         //
-        // (curatedSpawns intentionally left empty — resolver handles all tested zones.)
+        // (curatedSpawns intentionally left empty - resolver handles all tested zones.)
 
         log.Information("[HMSync] Curated spawn overrides: " + curatedSpawns.Count);
     }

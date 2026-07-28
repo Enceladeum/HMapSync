@@ -4,5 +4,6 @@
     "AssemblyVersion": "1.0.0.0",
     "Punchline": "Explore any zone together.",
     "Description": "",
-    "IconUrl": "https://raw.githubusercontent.com/Enceladeum/HMapSync/main/images/icon.png"
+    "IconUrl": "https://raw.githubusercontent.com/Enceladeum/HMapSync/main/images/icon.png",
+    "RepoUrl": "https://github.com/Enceladeum/HMapSync"
 }

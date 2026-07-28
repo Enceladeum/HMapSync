@@ -1,25 +1,25 @@
 using MessagePack;
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════════════
-// HMSync WIRE TYPES — the SHARED CONTRACT (protocol v4)
+// HMSync WIRE TYPES - the SHARED CONTRACT (protocol v4)
 //
 // ⚠ THIS FILE IS SHARED BY THE PLUGIN, THE RELAY AND THE HARNESS. Do not add plugin- or relay-specific
 // dependencies. Pure POCOs + MessagePack attributes only. Namespace is project-neutral (HMSync.Wire).
 //
-// ⚠⚠ THE INVARIANT IS NOT "BYTE-IDENTICAL IN ALL THREE" — that was the old wording and it is FALSE today, in a
+// ⚠⚠ THE INVARIANT IS NOT "BYTE-IDENTICAL IN ALL THREE" - that was the old wording and it is FALSE today, in a
 // way that is CORRECT and must not be "repaired". The real invariant, in two halves:
 //
-//   • CONTROL SURFACE — MUST MATCH BYTE-FOR-BYTE across plugin/relay/harness: WireFormat (magic, options,
+//   • CONTROL SURFACE - MUST MATCH BYTE-FOR-BYTE across plugin/relay/harness: WireFormat (magic, options,
 //     RelaySender), WireKind, ErrCode, FrameHeader, and the control/Join payload types (JoinPayload,
 //     RoomJoinedPayload, PeerJoinedPayload, PeerLeftPayload, HostTransferPayload, KickPeerPayload,
 //     ErrorPayload). The relay ENCODES/DECODES these, so a mismatch is a live protocol break.
 //
-//   • LANE PAYLOADS (Hot/Warm/Cold/Host) — MAY LEGALLY LEAD ON THE CLIENT. The relay never deserializes a lane
+//   • LANE PAYLOADS (Hot/Warm/Cold/Host) - MAY LEGALLY LEAD ON THE CLIENT. The relay never deserializes a lane
 //     payload (control is read, cargo is not), so client-only lane keys cost it nothing. The plugin's copy is
 //     AHEAD by design: WarmPayload Keys 27–49 (face-camera, gaze, skill replay) and ColdPayload Key 5
 //     (MonikerHideName) exist here and NOT in the relay's copy.
 //
-//   ⛔ NEVER "resync" this file by copying the relay's copy over the plugin's — that silently DELETES the five
+//   ⛔ NEVER "resync" this file by copying the relay's copy over the plugin's - that silently DELETES the five
 //      shipped features above. Sync the control surface only; diff the lane blocks by eye, never by overwrite.
 //
 // Authoritative spec: docs/architecture/HMSync-Frame-Format-v4.md. Field ORDER = Key(n) = wire order. NEVER
@@ -29,14 +29,14 @@ using MessagePack;
 // NO LZ4 frame compression. Serialize/deserialize with MessagePackSerializer using StandardOptions (below) so
 // the two codebases can't drift.
 //
-// LANE payloads (Hot/Warm/Cold/Host) are CLIENT-authored — the relay treats them as opaque bytes and never
+// LANE payloads (Hot/Warm/Cold/Host) are CLIENT-authored - the relay treats them as opaque bytes and never
 // encodes/decodes them. CONTROL + Join payloads are the SHARED encode/decode surface (the relay CONSTRUCTS the
 // control ones and READS Join). All live here so the whole wire vocabulary is one file.
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════════════
 
 namespace HMSync.Wire;
 
-/// <summary>Shared MessagePack options — BOTH sides serialize/deserialize with this so encoding can't drift.</summary>
+/// <summary>Shared MessagePack options - BOTH sides serialize/deserialize with this so encoding can't drift.</summary>
 public static class WireFormat
 {
     /// <summary>Protocol version. The frame magic byte encodes this (0xA5 = v4).</summary>
@@ -68,7 +68,7 @@ public static class WireKind
     //
     // 📌 WHY A KIND AND NOT AN ERROR CODE. The client's Error handler tears the session down for every code it
     // doesn't explicitly recognise (`if (code != NotHost) DoLeaveInternal`), so a soft throttle delivered as a
-    // new ErrorPayload code would DISCONNECT any client older than the change — the exact inverse of "soft".
+    // new ErrorPayload code would DISCONNECT any client older than the change - the exact inverse of "soft".
     // An unknown KIND, by contrast, falls through the client's dispatch switch (no `default:`) and is silently
     // ignored. So: unknown kind = inert, unknown code = fatal. Soft signals ride a kind; fatal ones ride a code.
     public const byte RateLimited     = 0x08;
@@ -84,15 +84,15 @@ public static class WireKind
     public const byte Error           = 0xFF;
 }
 
-/// <summary>ErrorPayload.Code values — the client branches on these to show the right message.
+/// <summary>ErrorPayload.Code values - the client branches on these to show the right message.
 ///
 /// MOVED HERE from the relay's Program.cs (was relay-only; the client re-implemented it as magic integers in a
 /// switch, so the ONE thing both sides must agree on was the one thing the shared contract didn't cover). This
-/// is a constants class, not a payload — no wire change, no flag day. Append new codes; never renumber.</summary>
+/// is a constants class, not a payload - no wire change, no flag day. Append new codes; never renumber.</summary>
 public static class ErrCode
 {
     public const uint Generic        = 0;
-    public const uint RoomNotFound   = 1;   // stale cached RoomId — that session has ended
+    public const uint RoomNotFound   = 1;   // stale cached RoomId - that session has ended
     public const uint NotHosting     = 2;   // nobody nearby is in a session
     public const uint RoomFull       = 3;
     public const uint NotHost        = 4;   // host-only action attempted by a guest
@@ -100,7 +100,7 @@ public static class ErrCode
     public const uint Banned         = 6;   // previously kicked from this room
     public const uint WrongPassword  = 7;
     public const uint AlreadyHosting = 8;   // this ContentId already hosts a live room
-    // HARD ingress throttle — sustained saturation. Paired with WebSocket close 4029 "rate_limit_exceeded".
+    // HARD ingress throttle - sustained saturation. Paired with WebSocket close 4029 "rate_limit_exceeded".
     // Fatal by design (unlike the SOFT tier, which rides WireKind.RateLimited 0x08 and leaves the socket up).
     public const uint RateLimited    = 9;
 
@@ -122,7 +122,7 @@ public static class ErrCode
 }
 
 /// <summary>WebSocket close codes the relay uses in the application range (4000–4999, RFC 6455 §7.4.2).
-/// Not a msgpack type — a close-frame status the client reads off the receive result.</summary>
+/// Not a msgpack type - a close-frame status the client reads off the receive result.</summary>
 public static class WireClose
 {
     /// <summary>Hard ingress throttle: sustained flooding. Reason string "rate_limit_exceeded".</summary>
@@ -139,8 +139,8 @@ public class HotPayload
 {
     [Key(0)]  public string SubjectId { get; set; } = "";   // "" = stamped sender (player puppet)
     [Key(1)]  public uint Seq { get; set; }
-    [Key(2)]  public int Protocol { get; set; }             // wire version (rides HOT — always-flowing lane)
-    [Key(3)]  public ulong SenderContentId { get; set; }    // identity-binding key (S327) — rides HOT so puppet binds
+    [Key(2)]  public int Protocol { get; set; }             // wire version (rides HOT - always-flowing lane)
+    [Key(3)]  public ulong SenderContentId { get; set; }    // identity-binding key (S327) - rides HOT so puppet binds
     [Key(4)]  public float X { get; set; }
     [Key(5)]  public float Y { get; set; }
     [Key(6)]  public float Z { get; set; }
@@ -187,11 +187,11 @@ public class WarmPayload
     [Key(24)] public bool WeaponDrawn { get; set; }
     [Key(25)] public ushort StandupTimelineId { get; set; }
     [Key(26)] public uint StandupEpoch { get; set; }
-    [Key(27)] public bool FaceCamera { get; set; }   // /facecamera fourth-wall stare — not broadcast by the game natively
+    [Key(27)] public bool FaceCamera { get; set; }   // /facecamera fourth-wall stare - not broadcast by the game natively
     [Key(28)] public float FaceCamX { get; set; }     // the camera eye world point snapshotted at activation (frozen)
     [Key(29)] public float FaceCamY { get; set; }
     [Key(30)] public float FaceCamZ { get; set; }
-    // Dynamic face control (Brio-style): per-slot (eyes/body/head) look-at target, driven via updateLookAt. WARM —
+    // Dynamic face control (Brio-style): per-slot (eyes/body/head) look-at target, driven via updateLookAt. WARM -
     // same lane and snapshot-and-hold model as /facecamera (which is instant on WARM). Set-once-and-hold per slot;
     // the always-armed UI writes the point atomically on "Set cam" so the change registers cleanly. Per-actor.
     [Key(31)] public bool GazeEyesOn { get; set; }
@@ -206,13 +206,13 @@ public class WarmPayload
     [Key(40)] public float GazeHeadX { get; set; }
     [Key(41)] public float GazeHeadY { get; set; }
     [Key(42)] public float GazeHeadZ { get; set; }
-    // COSM_1_016 skills — cosmetic action replay. Fire-and-forget on an epoch, exactly like MountAction/Standup: the
+    // COSM_1_016 skills - cosmetic action replay. Fire-and-forget on an epoch, exactly like MountAction/Standup: the
     // receiver replays only when ActionEpoch CHANGES, so a held value never re-fires. The caster's own client already
     // presents its cast natively (the firewall only stops the SERVER hearing it), so this lane exists purely to let
-    // PEERS see it. Replayed via ActionEffectHandler.Receive with zero targets — presentation only, never an effect.
+    // PEERS see it. Replayed via ActionEffectHandler.Receive with zero targets - presentation only, never an effect.
     [Key(43)] public uint ActionId { get; set; }        // the action cast (0 = none)
     [Key(44)] public byte ActionType { get; set; }      // ActionType enum (Action/Item/GeneralAction/…)
-    [Key(45)] public uint ActionEpoch { get; set; }     // monotonic — distinguishes a NEW cast from a held value
+    [Key(45)] public uint ActionEpoch { get; set; }     // monotonic - distinguishes a NEW cast from a held value
     [Key(46)] public float ActionTgtX { get; set; }     // area-target position for ground-targeted actions
     [Key(47)] public float ActionTgtY { get; set; }
     [Key(48)] public float ActionTgtZ { get; set; }
@@ -248,9 +248,9 @@ public class HostPayload
 
 // ═══════════════════════ CONTROL + JOIN PAYLOADS (shared encode/decode surface) ═══════════════════════
 // The relay CONSTRUCTS the control ones (RoomJoined/PeerJoined/PeerLeft/HostTransfer/Error) and READS JoinPayload.
-// These MUST encode/decode identically on both sides — that's why this file is shared verbatim.
+// These MUST encode/decode identically on both sides - that's why this file is shared verbatim.
 
-/// <summary>JoinRoom (0x01) payload — client→relay. The relay READS this to register the connection.</summary>
+/// <summary>JoinRoom (0x01) payload - client→relay. The relay READS this to register the connection.</summary>
 [MessagePackObject]
 public class JoinPayload
 {
@@ -258,22 +258,22 @@ public class JoinPayload
     [Key(1)] public ulong ContentId { get; set; }           // the joiner's own stable identity
     [Key(2)] public uint EntityId { get; set; }
     [Key(3)] public string CharacterName { get; set; } = "";
-    [Key(4)] public string? RoomPassword { get; set; }      // NOW REAL — the user's password (relay compares, constant-time)
+    [Key(4)] public string? RoomPassword { get; set; }      // NOW REAL - the user's password (relay compares, constant-time)
     [Key(5)] public bool? CreateIfMissing { get; set; }     // null=legacy (inert), true=Host (create), false=Join/Reconnect
     [Key(6)] public ulong[]? NearbyContentIds { get; set; } // Join: ContentIds you can see; relay resolves the room from these
 }
 
-/// <summary>RoomJoined (0x03) payload — relay→client. Tells the client its assigned id + host status.</summary>
+/// <summary>RoomJoined (0x03) payload - relay→client. Tells the client its assigned id + host status.</summary>
 [MessagePackObject]
 public class RoomJoinedPayload
 {
     [Key(0)] public string AssignedPeerId { get; set; } = "";   // the relay-minted peer id for this connection
     [Key(1)] public bool IsHost { get; set; }                   // first-in-room = host
     [Key(2)] public string RoomId { get; set; } = "";           // opaque relay-generated id; CACHE for reconnect
-    [Key(3)] public int RoomCap { get; set; }                   // NEW — max peers (relay ROOM_CAP), 0 = unlimited/unshown
+    [Key(3)] public int RoomCap { get; set; }                   // NEW - max peers (relay ROOM_CAP), 0 = unlimited/unshown
 }
 
-/// <summary>PeerJoined (0x04) payload — relay→client.</summary>
+/// <summary>PeerJoined (0x04) payload - relay→client.</summary>
 [MessagePackObject]
 public class PeerJoinedPayload
 {
@@ -282,7 +282,7 @@ public class PeerJoinedPayload
     [Key(2)] public string CharacterName { get; set; } = "";
 }
 
-/// <summary>PeerLeft (0x05) payload — relay→client. NewHostId non-empty on host-leave succession.</summary>
+/// <summary>PeerLeft (0x05) payload - relay→client. NewHostId non-empty on host-leave succession.</summary>
 [MessagePackObject]
 public class PeerLeftPayload
 {
@@ -290,15 +290,15 @@ public class PeerLeftPayload
     [Key(1)] public string NewHostId { get; set; } = "";    // "" if no succession
 }
 
-/// <summary>HostTransfer (0x06) payload — both directions. Target of an explicit transfer.</summary>
+/// <summary>HostTransfer (0x06) payload - both directions. Target of an explicit transfer.</summary>
 [MessagePackObject]
 public class HostTransferPayload
 {
     [Key(0)] public string TargetPeerId { get; set; } = "";
 }
 
-/// <summary>Error (0xFF) payload — relay→client.</summary>
-/// <summary>KickPeer (0x07) payload — client(host)→relay. Host ejects + bans a peer for the room's life.</summary>
+/// <summary>Error (0xFF) payload - relay→client.</summary>
+/// <summary>KickPeer (0x07) payload - client(host)→relay. Host ejects + bans a peer for the room's life.</summary>
 [MessagePackObject]
 public class KickPeerPayload
 {
@@ -312,7 +312,7 @@ public class ErrorPayload
     [Key(1)] public string Message { get; set; } = "";
 }
 
-// ── Frame header codec (shared logic — the fixed binary header, NOT msgpack). ──
+// ── Frame header codec (shared logic - the fixed binary header, NOT msgpack). ──
 // Both sides build/parse the header identically. The relay builds the DOWNLEG form (with stamped sender); the
 // client builds the UPLEG form (no sender) and parses the DOWNLEG form. Payload bytes are appended/read opaque.
 
@@ -404,7 +404,7 @@ public static class FrameHeader
         return r;
     }
 
-    // ── LE primitives (no BitConverter — explicit LE so endianness is never in question) ──
+    // ── LE primitives (no BitConverter - explicit LE so endianness is never in question) ──
     private static void WriteUInt16LE(byte[] b, int o, ushort v) { b[o] = (byte)v; b[o + 1] = (byte)(v >> 8); }
     private static ushort ReadUInt16LE(byte[] b, int o) => (ushort)(b[o] | (b[o + 1] << 8));
     private static void WriteInt64LE(byte[] b, int o, long v)
@@ -419,6 +419,6 @@ public static class FrameHeader
     }
 }
 
-// NOTE: the /hms wiredump decoder lives CLIENT-SIDE (HMSync.Plugin/Sync/WireDumpDecoder.cs), not here — it needs
+// NOTE: the /hms wiredump decoder lives CLIENT-SIDE (HMSync.Plugin/Sync/WireDumpDecoder.cs), not here - it needs
 // System.Text.Json for named-field display, and only the client uses it. Keeping it out of this shared file holds
 // the shared dependency surface to just MessagePack, so the relay compiles this file with no extra deps.

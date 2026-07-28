@@ -28,28 +28,28 @@ public class HMSyncUI
     private readonly IGameGui gameGui;   // S316: WorldToScreen for the carpet orientation rings
     private readonly ITextureProvider textureProvider;   // S322e: emote-browser icons
 
-    // S322e: emote catalog for the Emotes tab — built once from the sheet (id, name, icon, looped).
+    // S322e: emote catalog for the Emotes tab - built once from the sheet (id, name, icon, looped).
     private List<(ushort id, string name, uint icon, bool looped)>? emoteCatalog;
     // S322: id → details lookup, for rendering the Favourites / Recently-played rows (which store ids only).
     private Dictionary<ushort, (string name, uint icon, bool looped)>? emoteById;
     private string emoteSearch = "";
 
-    // S322: minion catalog for the Minions tab — built once from the Companion sheet (id, name, icon). The
+    // S322: minion catalog for the Minions tab - built once from the Companion sheet (id, name, icon). The
     // `looped` slot is unused for minions (kept so it shares the emote tuple shape / row helpers).
     private List<(ushort id, string name, uint icon, bool looped)>? minionCatalog;
     private Dictionary<ushort, (string name, uint icon)>? minionById;
     private string minionSearch = "";
 
     private bool showMain;
-    // v0.7.252: the tear-off carpet control bar — a separate floating ImGui window with the carpet controls you reach
+    // v0.7.252: the tear-off carpet control bar - a separate floating ImGui window with the carpet controls you reach
     // for mid-session (toggle / downhill / uphill / rings / settings), so you don't need the main window open. This is
-    // the first instance of the planned "HMS hotbar" idea (custom floating bars of plugin actions — summons, mounts,
-    // chips — since users can't hand-record game macros for plugin buttons).
+    // the first instance of the planned "HMS hotbar" idea (custom floating bars of plugin actions - summons, mounts,
+    // chips - since users can't hand-record game macros for plugin buttons).
     private bool showCarpetBar;
     public void ToggleCarpetBar() { showCarpetBar = !showCarpetBar; }
     private bool showFaceBar;
     // v0.7.465: tear-off state for the Movement and Appearance strips, matching Face Control and Carpet. Opened by
-    // clicking the section's own name (see PopOutHeader) rather than a separate button — the header IS the control.
+    // clicking the section's own name (see PopOutHeader) rather than a separate button - the header IS the control.
     private bool showMoveBar;
     private bool showAppearanceBar;
     private int summonsChip;   // which collectible sheet is shown on the Summons tab (0=Emotes 1=Mounts 2=Minions 3=Accessories)
@@ -58,7 +58,7 @@ public class HMSyncUI
 
     // v0.7.464 (RMS QA F3, soft tier): transient throttle banner. The relay emits a soft notice at most ~1/3 s
     // while it is dropping our excess ingress; each notice re-arms this for 5 s, so the line stays continuously
-    // lit through a burst and self-clears ~5 s after the throttle stops. No user action, no teardown — advisory.
+    // lit through a burst and self-clears ~5 s after the throttle stops. No user action, no teardown - advisory.
     private DateTime throttleUntil = DateTime.MinValue;
     public void NoteThrottled() => throttleUntil = DateTime.UtcNow.AddSeconds(5);
 
@@ -66,6 +66,7 @@ public class HMSyncUI
     private bool focusZonesTab;
     private bool focusCarpetTab;   // v0.7.252: the carpet bar's Settings button jumps to the Carpet tab
     private bool focusSessionTab = true;   // S329c: force Session as the default tab on open (not Character/last-used)
+    private bool focusConfigTab;   // installer "Settings" button (UiBuilder.OpenConfigUi) jumps to the Config tab
 
     // Zone directory wiring (moved from MapsWindow).
     // Called when the user clicks Load on a row. Plugin wires this to DoLoad(id).
@@ -110,16 +111,16 @@ public class HMSyncUI
     public bool IsOpen => showMain;
 
     // Text-input buffers for arg-taking commands on the Session tab.
-    // (S326n: the per-section id fields were merged into the section search boxes — removed emoteIdInput,
+    // (S326n: the per-section id fields were merged into the section search boxes - removed emoteIdInput,
     //  minionIdInput, mountIdInput, ornamentIdInput; the search box now doubles as summon/play-by-id input.)
 
-    // S322k: fashion accessory (ornament) tab — id reference + favourites/history grids (Hasel doesn't list these).
+    // S322k: fashion accessory (ornament) tab - id reference + favourites/history grids (Hasel doesn't list these).
     private List<(ushort id, string name, uint icon)>? ornamentCatalog;
     private Dictionary<ushort, (string name, uint icon)>? ornamentById;
     private string ornamentSearch = "";
     public Func<ushort, bool>? CanUseOrnament; // local ornament-unlock check, for greying locked rows out of session
 
-    // S323c: Mounts tab — favourites/history grids over the Mount sheet, same shape as Minions/Accessories.
+    // S323c: Mounts tab - favourites/history grids over the Mount sheet, same shape as Minions/Accessories.
     private List<(ushort id, string name, uint icon)>? mountCatalog;
     private Dictionary<ushort, (string name, uint icon)>? mountById;
     private string mountSearch = "";
@@ -127,7 +128,7 @@ public class HMSyncUI
 
     // S326: Map Settings tab. The plugin sets this so the tab can read legal weather / BGM names per territory.
     // Changes route through RunCommand ("mapweather"/"maptime"/"mapbgm"/"npc"/"qbubble") which the plugin applies host-side
-    // and broadcasts. (Environment is now scoped to the loaded map — set on Load, adjust live in the Session dash.)
+    // and broadcasts. (Environment is now scoped to the loaded map - set on Load, adjust live in the Session dash.)
     // S326d: the currently-loaded territory id (from ZoneLoadService.CurrentLoadedZone), so the Map Settings tab can
     // tell "editing the map I'm on" (live apply) from "preparing another map" (store only). 0 = none loaded.
     public Func<uint>? CurrentLoadedZone;
@@ -138,7 +139,7 @@ public class HMSyncUI
     // of re-deriving their own condition, so no future button can slip through with a weaker gate.
     public Func<bool>? MovementAllowed;   // v0.7.262 checkbox-level gate; superseded for movement by MovementResearchAllowed (kept wired, currently unused by movement UI)
     // v0.7.445: fly / noclip / carpet all require an HMS-loaded map or cutscene, or research mode
-    // (see MovementResearchAllowed in the plugin) — movement on the bare live zone is a teleport cheat.
+    // (see MovementResearchAllowed in the plugin) - movement on the bare live zone is a teleport cheat.
     public Func<bool>? MovementResearchAllowed;
     // S328am: relay connection state + active URL, for the service picker's live indicator.
     public Func<bool>? ConnectedRelay;
@@ -166,7 +167,7 @@ public class HMSyncUI
     public System.Action? DismissSayDriftBanner;
     public Func<bool>? MonikerAvailable;           // S328x: grey/green indicator chip for Moniker detection
 
-    // v0.7.371: Modules panel — presence + one-click open, wired by the plugin to InstalledPluginService.
+    // v0.7.371: Modules panel - presence + one-click open, wired by the plugin to InstalledPluginService.
     // ModulePresent(internalName) → installed AND loaded. ModuleCanOpen → it exposes a window we can open.
     // OpenModule → opens that plugin's own UI (no slash command needed).
     public Func<string, bool>? ModulePresent;
@@ -175,7 +176,7 @@ public class HMSyncUI
 
     // One row of the Modules panel. When the module is installed AND exposes a window, the NAME becomes a clickable
     // link that opens it. Rendered as a borderless button sized to the text so it sits on the same baseline and left
-    // edge as the plain-text version — the panel stays aligned whether a module is installed or not.
+    // edge as the plain-text version - the panel stays aligned whether a module is installed or not.
     private void DrawModuleRow(string label, string internalName, bool present, string tagline)
     {
         var dot = present ? new Vector4(0.35f, 0.85f, 0.42f, 1f) : new Vector4(0.5f, 0.5f, 0.5f, 1f);
@@ -237,7 +238,7 @@ public class HMSyncUI
     public Func<bool>? OrnamentOut;
     public Func<bool>? MountOut;
 
-    // S326f: a participant row for the session table — resolved live per frame from the peer's object.
+    // S326f: a participant row for the session table - resolved live per frame from the peer's object.
     public struct ParticipantRow
     {
         public string PeerId;
@@ -247,7 +248,7 @@ public class HMSyncUI
         public float Distance;     // yalms from local player; -1 if unresolved
         public double? Bearing;    // v0.7.430: camera-relative bearing (radians) for the compass arrow; null = don't draw
         public bool Resolved;      // did we find the live object this frame?
-        public bool IsSelf;        // S326h: the local player row — no action buttons, full designator
+        public bool IsSelf;        // S326h: the local player row - no action buttons, full designator
         public bool IsHost;        // pinned to #1 and amber-tinted
     }
     public Func<List<ParticipantRow>>? SessionParticipants;   // the full participant table
@@ -258,7 +259,7 @@ public class HMSyncUI
     public MapSettingsService? MapSettings;
     public bool TimeDragHold;   // S326u: true while the time slider is being actively dragged (previews live even if not frozen)
     public Func<string>? BgmNowPlaying;   // S326w: title of the currently-selected BGM track (for host + guest display)
-    public Action<ushort, byte, bool>? SetHostTime;   // S327g: (hour, minute, forced) — silent host time-set: apply + push epoch, no chat spam
+    public Action<ushort, byte, bool>? SetHostTime;   // S327g: (hour, minute, forced) - silent host time-set: apply + push epoch, no chat spam
     private string bgmBrowseFilter = "";  // S326w: filter in the BGM browse popup
     // Cached lists for the loaded map's Time & weather (rebuilt when the loaded zone changes).
     private uint mapSettingsCachedTerritory = uint.MaxValue;
@@ -267,21 +268,21 @@ public class HMSyncUI
     private byte mapDefaultWeather;                      // the territory's native weather (for the "Default -" label)
     private bool showAllWeather;                        // S326s: reveal the full (experimental) weather list
     private List<(byte id, string name, bool legal)>? mapAllWeather;   // lazy full flagged list for the loaded zone
-    private string roomPasswordInput = "";              // S326f: room password entry (host) — shared by Host/Join segments
+    private string roomPasswordInput = "";              // S326f: room password entry (host) - shared by Host/Join segments
 
-    // Segmented entry mode — which of Solo/Host/Join the idle panel is showing. Purely a UI selection; it doesn't
+    // Segmented entry mode - which of Solo/Host/Join the idle panel is showing. Purely a UI selection; it doesn't
     // start anything until the mode's action button is pressed.
     private enum IdleMode { Solo, Host, Join }
     private IdleMode idleMode = IdleMode.Solo;
-    // S328am: relay-service picker — custom-add input buffers.
+    // S328am: relay-service picker - custom-add input buffers.
     private string customServiceUrl = "";
     private string customServiceName = "";
-    private bool showCoords;                             // spawn: "Show coordinates" toggle (live readout; off by default — the reserved line prevents reflow)
+    private bool showCoords;                             // spawn: "Show coordinates" toggle (live readout; off by default - the reserved line prevents reflow)
     private float tpX, tpY, tpZ;                         // teleport target (live readout; editable on double-click)
     private bool coordsEditing;                          // false = live readout, true = user is editing (entered via double-click)
     private int coordFocusField = -1;                    // which coord field to keyboard-focus on entering edit (-1 = none)
 
-    // S328am: hide the ?k=<token> in a displayed URL (log/screenshot hygiene — the token is a bearer credential).
+    // S328am: hide the ?k=<token> in a displayed URL (log/screenshot hygiene - the token is a bearer credential).
     private static string RedactToken(string url)
     {
         if (string.IsNullOrEmpty(url)) return "(none)";
@@ -305,17 +306,17 @@ public class HMSyncUI
     public void ToggleMain() { showMain = !showMain; if (showMain) focusSessionTab = true; }   // S329c: default to Session on open
 
     // v0.7.400: tab bodies scroll INSIDE a child region, so the tab strip stays PINNED at the top of
-    // the window instead of scrolling away with the content — and the scrollbar belongs to the body,
+    // the window instead of scrolling away with the content - and the scrollbar belongs to the body,
     // so it no longer runs up into the strip. Size (0,0) fills the remaining window area.
     // EndTabBody() must run on EVERY exit path: EndChild is unconditional in ImGui and must match
     // BeginChild one-for-one regardless of what BeginChild returned.
     private static void BeginTabBody(string id)
     {
-        // v0.7.405 — the child paints its OWN background via ChildBg, replacing the hand-drawn rect
+        // v0.7.405 - the child paints its OWN background via ChildBg, replacing the hand-drawn rect
         // that used to sit in the parent window.
         //
         // Why: that rect was positioned by arithmetic over the PARENT's content region, while the
-        // content inside was laid out against the CHILD's. The two never quite agreed — measured on a
+        // content inside was laid out against the CHILD's. The two never quite agreed - measured on a
         // screenshot, the panel spanned x18..547 while the button row reached 553, overrunning it and
         // cropping "Join", with a 20px left margin against a 3px right one. Painting the background as
         // the child's own means panel edge and content edge are the same rect by construction, and the
@@ -326,7 +327,7 @@ public class HMSyncUI
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(10f, 8f));
         ImGui.PushStyleColor(ImGuiCol.ChildBg, ImGui.GetColorU32(ImGuiCol.WindowBg));
 
-        // v0.7.406 — AlwaysUseWindowPadding is why v0.7.405's margins did nothing.
+        // v0.7.406 - AlwaysUseWindowPadding is why v0.7.405's margins did nothing.
         // ImGui FORCES WindowPadding to (0,0) for a borderless child unless this flag is set, so the
         // pushed padding was silently discarded and content stayed flush against the panel edge. The
         // push above was correct; it was being overridden one call later.
@@ -339,9 +340,9 @@ public class HMSyncUI
         ImGui.PopStyleColor();
         ImGui.PopStyleVar();
 
-        // v0.7.432 — GLOBAL WRAP BOUNDARY. Every tab body passes through here, so pushing a wrap
+        // v0.7.432 - GLOBAL WRAP BOUNDARY. Every tab body passes through here, so pushing a wrap
         // position once makes ALL text inside wrap to the panel's content edge instead of overflowing
-        // the border (ImGui.Text/TextDisabled/TextUnformatted/TextColored do NOT wrap on their own —
+        // the border (ImGui.Text/TextDisabled/TextUnformatted/TextColored do NOT wrap on their own -
         // only TextWrapped did, and it was used in ~10 of 135 sites, so long strings overran everywhere).
         // Position 0.0 = wrap at the current content-region right edge, which inside this child IS the
         // panel edge (padding already accounted for). Popped in EndTabBody, one-for-one. Tables suspend
@@ -352,11 +353,11 @@ public class HMSyncUI
 
     private static void EndTabBody()
     {
-        ImGui.PopTextWrapPos();   // v0.7.432 — matches the PushTextWrapPos(0) in BeginTabBody
+        ImGui.PopTextWrapPos();   // v0.7.432 - matches the PushTextWrapPos(0) in BeginTabBody
         ImGui.EndChild();
     }
 
-    // v0.7.432 — tables set their own per-column wrapping; the global panel-edge wrap boundary (pushed
+    // v0.7.432 - tables set their own per-column wrapping; the global panel-edge wrap boundary (pushed
     // in BeginTabBody) interferes with column auto-sizing and squashes fixed columns. Each table
     // therefore suspends it FOR ITS OWN BODY: SuspendWrap() is called immediately after a successful
     // BeginTable (pushes wrap-off on top of the boundary), ResumeWrap() immediately before EndTable
@@ -372,49 +373,64 @@ public class HMSyncUI
         focusZonesTab = true;
     }
 
+    // Installer "Open" button (UiBuilder.OpenMainUi): show the window on its default Session tab.
+    public void OpenMain()
+    {
+        showMain = true;
+        focusSessionTab = true;
+    }
+
+    // Installer "Settings" button (UiBuilder.OpenConfigUi): show the window and jump to the Config tab.
+    public void OpenConfig()
+    {
+        showMain = true;
+        focusSessionTab = false;   // clear any pending default-to-Session so it can't fight the Config jump on first open
+        focusConfigTab = true;
+    }
+
     public void Draw()
     {
         if (!showMain) return;
 
-        // Accent the title bar. v0.7.442 — the tab-bar SEPARATOR that EndTabBar draws (the persistent
+        // Accent the title bar. v0.7.442 - the tab-bar SEPARATOR that EndTabBar draws (the persistent
         // overrun) is coloured ImGuiCol_TabActive (focused) / TabUnfocusedActive (not). TabBarBorderSize
-        // (which would disable it) does NOT exist in this Hexa-derived binding — confirmed by compile
-        // error — so we kill the line by zeroing those two colours' ALPHA. Side effect: the SELECTED tab
+        // (which would disable it) does NOT exist in this Hexa-derived binding - confirmed by compile
+        // error - so we kill the line by zeroing those two colours' ALPHA. Side effect: the SELECTED tab
         // loses its accent fill and instead reads as the band surface (alpha 0 → shows the band behind),
         // i.e. the active tab "opens into" the panel while unselected tabs stay a shade darker/recessed
-        // (ImGuiCol_Tab, set below). That's a clean, deliberate tab idiom — and our own accent divider
+        // (ImGuiCol_Tab, set below). That's a clean, deliberate tab idiom - and our own accent divider
         // (drawn after EndTabBar, clamped to content) is the only line, with no overrun.
         var acc = Accent();
         ImGui.PushStyleColor(ImGuiCol.TitleBg, Darken(acc, 0.32f));
         ImGui.PushStyleColor(ImGuiCol.TitleBgActive, Darken(acc, 0.55f));
         ImGui.PushStyleColor(ImGuiCol.TabActive, new Vector4(0f, 0f, 0f, 0f));          // was accent fill; now nil → kills separator
         ImGui.PushStyleColor(ImGuiCol.TabHovered, Darken(acc, 0.72f));
-        // v0.7.435 — TAB VALUE LADDER. Previously ImGuiCol.Tab (the UNSELECTED resting colour) was left
+        // v0.7.435 - TAB VALUE LADDER. Previously ImGuiCol.Tab (the UNSELECTED resting colour) was left
         // at ImGui's default grey, which was LIGHTER than the header band and made unselected tabs blend
         // into it. The design fix: unify the band with the body surface (WindowBg, done below), then set
         // unselected tabs a shade DARKER than that surface so they read as recessed "cut into" the bar,
-        // with the accented active tab popping forward — separation by value-step, not borders. Derived
+        // with the accented active tab popping forward - separation by value-step, not borders. Derived
         // from WindowBg so it tracks the theme. TabUnfocused* cover the window-not-focused states.
         {
-            // v0.7.436 — a fixed dark tab-rest colour a shade below the standard dark-theme WindowBg
+            // v0.7.436 - a fixed dark tab-rest colour a shade below the standard dark-theme WindowBg
             // (~0.06 grey), so unselected tabs recede into the band. (GetStyleColorVec4 returns a
             // Vector4* in this ImGui.NET binding and can't be dereferenced outside unsafe context, so
-            // we use a constant rather than reading WindowBg's components — the band still matches the
+            // we use a constant rather than reading WindowBg's components - the band still matches the
             // body via GetColorU32(ImGuiCol.WindowBg) below, which needs no components.)
             var tabRest = new Vector4(0.045f, 0.045f, 0.050f, 1f);   // darker than body → recessed tabs
             ImGui.PushStyleColor(ImGuiCol.Tab, tabRest);
             ImGui.PushStyleColor(ImGuiCol.TabUnfocused, tabRest);
-            ImGui.PushStyleColor(ImGuiCol.TabUnfocusedActive, new Vector4(0f, 0f, 0f, 0f));   // v0.7.442 — nil, kills the unfocused-window separator too (active tab opens into panel)
+            ImGui.PushStyleColor(ImGuiCol.TabUnfocusedActive, new Vector4(0f, 0f, 0f, 0f));   // v0.7.442 - nil, kills the unfocused-window separator too (active tab opens into panel)
         }
 
         ImGui.SetNextWindowSize(new Vector2(400, 600), ImGuiCond.FirstUseEver);
-        // v0.7.400 — the tab strip IS the window header.
+        // v0.7.400 - the tab strip IS the window header.
         //   NoTitleBar   : no redundant chrome band; name + version moved into the Session strip.
         //   NoBackground : the window paints nothing, so the strip above the tab underline is
         //                  TRANSPARENT. The body background is drawn back manually below, starting
-        //                  under the strip — that is what makes only the top band see-through.
+        //                  under the strip - that is what makes only the top band see-through.
         // The window still drags from any empty body area (NoMove is not set); ✕ is a trailing tab.
-        // v0.7.403: NoScrollbar/NoScrollWithMouse — since v0.7.400 each tab body scrolls inside its own
+        // v0.7.403: NoScrollbar/NoScrollWithMouse - since v0.7.400 each tab body scrolls inside its own
         // child, so the WINDOW's scrollbar was a second, redundant one sitting outside the panel. The
         // child keeps its scrollbar; the window no longer competes for the wheel.
         if (!ImGui.Begin(WindowTitle, ref showMain,
@@ -428,31 +444,31 @@ public class HMSyncUI
 
         // Repaint the body background by hand, from just below the tab strip to the window bottom.
         // Everything drawn afterwards lands on top of it, so no channel splitting is needed.
-        // A touch more vertical breathing room between controls than the ImGui default (8,4) — buttons were clustered.
+        // A touch more vertical breathing room between controls than the ImGui default (8,4) - buttons were clustered.
         ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(8f, 6f));
-        // v0.7.437 — SQUARE TABS. Default TabRounding (~4px) rounded the tab corners, and the first
-        // tab's left rounding overshot the strip edge — that overshoot is the little blue "notch" where
+        // v0.7.437 - SQUARE TABS. Default TabRounding (~4px) rounded the tab corners, and the first
+        // tab's left rounding overshot the strip edge - that overshoot is the little blue "notch" where
         // ImGui's built-in tab underline pokes left of the divider clamp. Squaring the tabs removes the
         // rounding AND the notch in one move, and reads cleaner against the flat band. Popped with the
         // ItemSpacing var at the end of Draw().
         ImGui.PushStyleVar(ImGuiStyleVar.TabRounding, 0f);
         ImGui.PushTextWrapPos(0f);   // wrap long text at the window/column edge throughout (no horizontal overflow)
 
-        // The strip stays at its natural X — that IS the content region's left edge, and the body
+        // The strip stays at its natural X - that IS the content region's left edge, and the body
         // panel above is now drawn to match it. Forcing it further left only clips it.
         float tabRowY = ImGui.GetCursorPosY();
         float barBottomY = 0f;
 
-        // v0.7.433 — TAB-STRIP BACKGROUND BAND. The header band was fully transparent (NoBackground),
+        // v0.7.433 - TAB-STRIP BACKGROUND BAND. The header band was fully transparent (NoBackground),
         // which over a busy game scene made the tabs hard to read. Paint a semi-transparent black band
-        // behind the tab row — same tone as the ImGui body — spanning the true window border-to-border
+        // behind the tab row - same tone as the ImGui body - spanning the true window border-to-border
         // width. It stops just ABOVE the accent divider so the intentional gap between tabs and the
         // divider line is preserved. Drawn here (before the tabs submit) so tab text lands on top.
-        // v0.7.434 — TAB-STRIP BACKGROUND BAND, aligned to the BODY panel. The band, the accent
+        // v0.7.434 - TAB-STRIP BACKGROUND BAND, aligned to the BODY panel. The band, the accent
         // divider, and the body panel below must all share the SAME left/right extent. The body is a
-        // width-0 child, so it spans the CONTENT REGION (window minus WindowPadding on each side) — NOT
+        // width-0 child, so it spans the CONTENT REGION (window minus WindowPadding on each side) - NOT
         // the full window box. v0.7.433 used winPos.X..winPos.X+winSize.X (the window box), overshooting
-        // by WindowPadding.X on both sides — that was the "extends beyond the body" overflow. Use the
+        // by WindowPadding.X on both sides - that was the "extends beyond the body" overflow. Use the
         // content-region screen X for all three so their edges line up exactly.
         var winPos = ImGui.GetWindowPos();
         float padX = ImGui.GetStyle().WindowPadding.X;
@@ -464,9 +480,9 @@ public class HMSyncUI
         float stripTopScreen = winPos.Y + tabRowY;
         float accentDividerY = winPos.Y + tabRowY + ImGui.GetFrameHeight();
         {
-            // v0.7.436 — band = the BODY surface exactly (WindowBg), opaque, so header and body read as
+            // v0.7.436 - band = the BODY surface exactly (WindowBg), opaque, so header and body read as
             // one continuous panel. Uses the GetColorU32(ImGuiCol) overload that returns a packed uint
-            // directly (same idiom as the ChildBg push in BeginTabBody) — no Vector4* to dereference.
+            // directly (same idiom as the ChildBg push in BeginTabBody) - no Vector4* to dereference.
             uint bodyBgU = ImGui.GetColorU32(ImGuiCol.WindowBg);
             ImGui.GetWindowDrawList().AddRectFilled(
                 new Vector2(stripLeftX, stripTopScreen),
@@ -476,14 +492,14 @@ public class HMSyncUI
 
         if (ImGui.BeginTabBar("##hmstabs"))
         {
-            // v0.7.404: the bar's bottom edge, captured HERE — immediately after BeginTabBar and
+            // v0.7.404: the bar's bottom edge, captured HERE - immediately after BeginTabBar and
             // BEFORE any tab content is submitted. Measuring after EndTabBar (v0.7.403) read the
             // cursor below the ENTIRE tab body, so the close button was sized to the whole window:
             // a full-panel red button that swallowed clicks and highlighted on hover.
             barBottomY = ImGui.GetCursorPosY();
 
             // v0.7.446 tab order: Session · Map Control · Zones · Summons · Carpet · [Packets] · Config.
-            // Map Control sits next to Session — it holds the loaded-map's live controls (time/weather/
+            // Map Control sits next to Session - it holds the loaded-map's live controls (time/weather/
             // BGM/NPC) and spawn point, moved out of Session to keep that tab uncluttered.
             DrawSessionTab();
             DrawMapControlTab();
@@ -491,21 +507,21 @@ public class HMSyncUI
             DrawCharacterTab();     // S326k: Emotes/Minions/Accessories/Mounts folded in as collapsible inventories
             DrawCarpetTab();
             if (DebugMode?.Invoke() ?? false)
-                DrawPacketsTab();   // S327x: inbound packet inspector — now gated behind debug mode (Config tab)
+                DrawPacketsTab();   // S327x: inbound packet inspector - now gated behind debug mode (Config tab)
             DrawConfigTab();        // S328p: settings + say-opcode management + debug-mode toggle
 
             ImGui.EndTabBar();
         }
 
         // v0.7.401: close button, drawn AFTER the bar and positioned by hand on the bar's own row.
-        //   • "X" not "✕" — the game font has no U+2715, which rendered as "=".
+        //   • "X" not "✕" - the game font has no U+2715, which rendered as "=".
         //   • TabItemButton with the Trailing flag placed it immediately after the last tab rather
         //     than flush right, so it is a plain button positioned absolutely instead. That also keeps
         //     it correct whatever the tab set is (Packets appears only in debug mode).
         {
             var savePos = ImGui.GetCursorPos();
 
-            // Height of the tab-bar row itself. CLAMPED — a bad measurement must never be able to
+            // Height of the tab-bar row itself. CLAMPED - a bad measurement must never be able to
             // produce a window-sized button again, so anything outside a plausible range falls back
             // to the frame height.
             float barH = barBottomY > tabRowY
@@ -514,13 +530,13 @@ public class HMSyncUI
             float fh = ImGui.GetFrameHeight();
             if (barH < fh * 0.5f || barH > fh * 2f) barH = fh;
 
-            // Against contentRegionMax, not window width — past that edge ImGui clips it away entirely,
+            // Against contentRegionMax, not window width - past that edge ImGui clips it away entirely,
             // which is where it went in v0.7.401.
             ImGui.SetCursorPos(new Vector2(ImGui.GetWindowContentRegionMax().X - barH, tabRowY));
 
             // Distinct from the tabs: muted red at rest, brighter on hover, so it reads as "close"
             // rather than as one more tab.
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);   // v0.7.437 — square, matching the tabs
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);   // v0.7.437 - square, matching the tabs
             ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.42f, 0.16f, 0.16f, 1f));
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.72f, 0.22f, 0.22f, 1f));
             ImGui.PushStyleColor(ImGuiCol.ButtonActive,  new Vector4(0.85f, 0.28f, 0.28f, 1f));
@@ -528,14 +544,14 @@ public class HMSyncUI
             if (ImGui.Button("X##hmsclose", new Vector2(barH, barH)))
                 showMain = false;
             ImGui.PopStyleColor(4);
-            ImGui.PopStyleVar();   // v0.7.437 — FrameRounding
+            ImGui.PopStyleVar();   // v0.7.437 - FrameRounding
 
             if (ImGui.IsItemHovered()) ImGui.SetTooltip("Close");
             ImGui.SetCursorPos(savePos);
         }
 
-        // v0.7.442 — our accent divider, the ONLY line now. ImGui's tab separator is suppressed by
-        // zeroing TabActive/TabUnfocusedActive alpha (above) — TabBarBorderSize doesn't exist in this
+        // v0.7.442 - our accent divider, the ONLY line now. ImGui's tab separator is suppressed by
+        // zeroing TabActive/TabUnfocusedActive alpha (above) - TabBarBorderSize doesn't exist in this
         // binding. Clamped exactly to the content region, so no overrun past the panel edges.
         {
             var dl = ImGui.GetWindowDrawList();
@@ -550,14 +566,14 @@ public class HMSyncUI
         ImGui.PopStyleColor(7);
     }
 
-    // Tab 1: Session — a STATE MACHINE, not a wall of controls. Three faces:
+    // Tab 1: Session - a STATE MACHINE, not a wall of controls. Three faces:
     //   • Idle   (not connected): the only decision is Host / Join (+ Solo under Host). Nothing else shown.
-    //   • Hosting (you own the room, incl. solo): the full authoring surface — room, time & weather, this-map,
+    //   • Hosting (you own the room, incl. solo): the full authoring surface - room, time & weather, this-map,
     //     maps loader, participants. State is VISIBLE (the status strip), so there's no Status button.
-    //   • Guest  (you joined): a stripped surface — participants + a note that the host owns the world.
+    //   • Guest  (you joined): a stripped surface - participants + a note that the host owns the world.
     private void DrawSessionTab()
     {
-        // S329c: honour a pending "default to Session" request (window just opened) — force this tab selected once.
+        // S329c: honour a pending "default to Session" request (window just opened) - force this tab selected once.
         var sessFlags = ImGuiTabItemFlags.None;
         if (focusSessionTab)
         {
@@ -570,7 +586,7 @@ public class HMSyncUI
 
         var connected = relay.IsSessionActive;   // S328f: true in solo too, so the authoring surface shows
 
-        // Persistent top — the status strip is ALWAYS present, so pressing a mode/starting a session swaps the panel
+        // Persistent top - the status strip is ALWAYS present, so pressing a mode/starting a session swaps the panel
         // beneath it without the layout shifting.
         DrawSessionStatusStrip();
         ImGui.Spacing();
@@ -587,7 +603,7 @@ public class HMSyncUI
     }
 
     // v0.7.446: MAP CONTROL tab. Time / weather / BGM / NPC cleanup for the currently loaded map, plus the
-    // spawn-point controls — moved here from the Session tab, which had grown too busy. These are map-authority
+    // spawn-point controls - moved here from the Session tab, which had grown too busy. These are map-authority
     // actions (host or solo), so a guest sees a short note instead; idle / no-map states are handled by the
     // sub-sections themselves (they show "Load a map..." guidance). The tab is always present so the strip
     // stays stable across states.
@@ -600,12 +616,12 @@ public class HMSyncUI
         var connected = relay.IsSessionActive;
         if (connected && !relay.HasMapAuthority)
         {
-            // Guest — the host owns the map. Mirror the language used on the Session guest view.
+            // Guest - the host owns the map. Mirror the language used on the Session guest view.
             ImGui.TextDisabled("The host controls time, weather, and music for the loaded map.");
         }
         else
         {
-            // Host / solo / idle — the full authoring surface. DrawTimeAndWeather and DrawThisMapControls
+            // Host / solo / idle - the full authoring surface. DrawTimeAndWeather and DrawThisMapControls
             // each self-guard when no map is loaded, so idle degrades to "Load a map..." cleanly.
             BeginPanel("Map control");
             DrawTimeAndWeather();
@@ -620,14 +636,14 @@ public class HMSyncUI
         ImGui.EndTabItem();
     }
 
-    // Streamlined status header. Line 1 is the headline — relay reachability from the /health probe (online / offline
+    // Streamlined status header. Line 1 is the headline - relay reachability from the /health probe (online / offline
     // / checking). Line 2 appears only in a session: your role (Host / Peer / Solo) and the packet filter state.
-    // Idle shows just the relay line — "not connected / not in session" was redundant. Dots carry state colour; text
+    // Idle shows just the relay line - "not connected / not in session" was redundant. Dots carry state colour; text
     // is white when active, grey when dormant. The session-exit controls (Leave / Stop) live in the Room section.
     private void DrawSessionStatusStrip()
     {
         var white = new Vector4(0.92f, 0.92f, 0.94f, 1f);
-        var grey  = new Vector4(0.52f, 0.52f, 0.55f, 1f);   // dormant — dot and text
+        var grey  = new Vector4(0.52f, 0.52f, 0.55f, 1f);   // dormant - dot and text
         var green = new Vector4(0.30f, 0.85f, 0.40f, 1f);   // active
         var red   = new Vector4(0.90f, 0.38f, 0.38f, 1f);   // relay down
 
@@ -649,7 +665,7 @@ public class HMSyncUI
         // left-aligned line has none of those failure modes and reads fine as a header.
         ImGui.TextColored(grey, WindowTitle);
 
-        // Line 1 — relay reachability (+ offline helper). Always shown.
+        // Line 1 - relay reachability (+ offline helper). Always shown.
         if (lightState == RelayLight.Green) Ind(green, white, "Relay: online");
         else if (lightState == RelayLight.Red)
         {
@@ -659,27 +675,27 @@ public class HMSyncUI
         else Ind(grey, grey, "Relay: checking…");
 
 
-        // Line 2 — packet filter: lit green when engaged (synthetic), dormant grey until then. Always shown.
+        // Line 2 - packet filter: lit green when engaged (synthetic), dormant grey until then. Always shown.
         Ind(pf ? green : grey, pf ? white : grey, pf ? "Packet filter: on" : "Packet filter: off");
 
-        // Line 3 — session role: lit green with just the TYPE in a session, dormant grey when idle. Always shown.
+        // Line 3 - session role: lit green with just the TYPE in a session, dormant grey when idle. Always shown.
         if (inSession) Ind(green, white, solo ? "Solo" : (relay.IsHost ? "Host" : "Peer"));
         else Ind(grey, grey, "No session");
 
-        // Line 4 — SOFT relay throttle. CONDITIONAL: only while a throttle is live, so the strip's normal height is
+        // Line 4 - SOFT relay throttle. CONDITIONAL: only while a throttle is live, so the strip's normal height is
         // unchanged. Uses the same Ind() idiom as the three lines above, so it inherits their left edge and baseline
         // rather than introducing a differently-aligned control.
         if (DateTime.UtcNow < throttleUntil)
         {
             var amber = new Vector4(0.95f, 0.72f, 0.25f, 1f);
-            Ind(amber, amber, "Relay throttling — some updates dropped");
+            Ind(amber, amber, "Relay throttling - some updates dropped");
         }
 
         ImGui.Separator();
     }
 
     // Single exit control (Stop == Leave). Leaving hands host to the next peer if you're the host; the room closes
-    // when the last person leaves. Restrained warm-red — destructive, but not shouting.
+    // when the last person leaves. Restrained warm-red - destructive, but not shouting.
     private void DrawSessionExitControls()
     {
         var red  = new Vector4(0.42f, 0.20f, 0.20f, 1f);
@@ -692,11 +708,11 @@ public class HMSyncUI
         if (ImGui.IsItemHovered()) ImGui.SetTooltip("Leave the room. If you're the host, it hands off to the next peer; the room closes when the last person leaves.");
     }
 
-    // IDLE — Host (Solo | Group) / Join. Fixed-height boxes, no scrollbars. Solo and Group are separate flows:
-    // Group opens a room others join (password required — it's the room's identifier); Solo is local-only, no relay,
+    // IDLE - Host (Solo | Group) / Join. Fixed-height boxes, no scrollbars. Solo and Group are separate flows:
+    // Group opens a room others join (password required - it's the room's identifier); Solo is local-only, no relay,
     // and skips password/lock entirely (there's no room to join). Solo's backend (local-no-relay) is a P0 item not
-    // built yet, so its button is disabled with a note — the affordance is visible without faking capability.
-    // IDLE — one shared "Room password" field, then Host / Solo / Join as an equal-width row. The password IS the
+    // built yet, so its button is disabled with a note - the affordance is visible without faking capability.
+    // IDLE - one shared "Room password" field, then Host / Solo / Join as an equal-width row. The password IS the
     // room's key: Host opens a room keyed by it, Join enters a friend's, Solo ignores it. Declaring it up front
     // (not after opening) means you land in the lobby already secured, not idling behind the firewall while you
     // configure. Host and Join need the field; Solo doesn't.
@@ -750,7 +766,7 @@ public class HMSyncUI
         DrawRecentMaps();
     }
 
-    // HOSTING — the full authoring surface. Order: status strip → room → time & weather → this map → maps → participants.
+    // HOSTING - the full authoring surface. Order: status strip → room → time & weather → this map → maps → participants.
     private void DrawSessionHosting()
     {
         // (the status strip + session title are drawn by DrawSessionTab, so the top stays stable across states)
@@ -780,7 +796,7 @@ public class HMSyncUI
         ImGui.Spacing(); ImGui.Separator();
         DrawRecentMaps();
 
-        // Movement + Appearance + Face Control (your own toggles) — HIGH-FREQUENCY use (fly/noclip, face control),
+        // Movement + Appearance + Face Control (your own toggles) - HIGH-FREQUENCY use (fly/noclip, face control),
         // so they sit near the top just under Recent Maps.
         ImGui.Spacing(); ImGui.Separator();
         DrawMovementToggles();
@@ -788,16 +804,16 @@ public class HMSyncUI
         DrawAppearanceToggles();
 
         // v0.7.446: Map control (time/weather/BGM/NPC) and Spawn point moved OUT of the Session tab to
-        // their own "Map Control" tab — the Session tab had grown too busy. See DrawMapControlTab.
+        // their own "Map Control" tab - the Session tab had grown too busy. See DrawMapControlTab.
     }
 
-    // GUEST — stripped to what a guest can actually do. No time/weather/maps (host owns those).
+    // GUEST - stripped to what a guest can actually do. No time/weather/maps (host owns those).
     private void DrawSessionGuest()
     {
         // (status strip + session title drawn by DrawSessionTab)
         DrawSessionExitControls();
 
-        // Participants (lobby / "who's here") at the TOP — matching the host layout, where the roster sits just under
+        // Participants (lobby / "who's here") at the TOP - matching the host layout, where the roster sits just under
         // the room controls. In-session, the list of participants is the first thing you check, so it leads here too.
         ImGui.Spacing(); ImGui.Separator();
         DrawParticipantsSection();
@@ -814,7 +830,7 @@ public class HMSyncUI
         ImGui.Spacing();
         if (MapSettings != null)
         {
-            // Zone header — identical to the host's "Zone: <name> (ID)" (was host-only; guests should see it too).
+            // Zone header - identical to the host's "Zone: <name> (ID)" (was host-only; guests should see it too).
             uint gz = CurrentLoadedZone?.Invoke() ?? 0;
             if (gz != 0)
             {
@@ -830,7 +846,7 @@ public class HMSyncUI
 
             bool tOverride = MapSettings.IsTimeOverridden();
             var (eh, em) = MapSettings.GetEorzeaTimeOfDay();
-            // Read-only time slider for visual orientation (guests can't edit — the host drives it). Shows the same
+            // Read-only time slider for visual orientation (guests can't edit - the host drives it). Shows the same
             // value the host sees once time-sync is holding.
             int gTotal = (eh * 60 + em) % 1440;
             string gLabel = eh.ToString("D2") + ":" + em.ToString("D2") + (tOverride ? " (frozen)" : "");
@@ -839,7 +855,7 @@ public class HMSyncUI
             ImGui.SliderInt("##guesttime", ref gTotal, 0, 1439, gLabel);
             ImGui.EndDisabled();
 
-            // Peer Music display: read the LIVE playing track (what's actually audible here) — the peer's config pick is
+            // Peer Music display: read the LIVE playing track (what's actually audible here) - the peer's config pick is
             // not synced to the host, so reading it showed a stale/wrong name that never refreshed. The live read always
             // reflects reality and updates as the host changes the track.
             uint peerLive = MapSettings.GetCurrentBgm();
@@ -849,11 +865,11 @@ public class HMSyncUI
     }
 
     // v0.7.465: a section header that IS its own pop-out control. Replaces the separate grey "Pop out" button that
-    // used to sit under Face Control — the label carries the affordance instead of a competing widget, so the strip
+    // used to sit under Face Control - the label carries the affordance instead of a competing widget, so the strip
     // keeps one visual weight per section.
     //
     // Resting state is pixel-identical to the plain TextDisabled headers it replaces, so nothing shifts. On hover the
-    // label lifts to the accent and gains a one-pixel underline drawn directly (no font glyph — an icon would need an
+    // label lifts to the accent and gains a one-pixel underline drawn directly (no font glyph - an icon would need an
     // atlas entry we can't verify, and a trailing caret would change the resting layout). While the pop-out is open
     // the label stays lit, so the docked strip always shows whether its tear-off is live.
     //
@@ -882,7 +898,7 @@ public class HMSyncUI
     }
 
     // Quick-access self controls: Fly / Noclip / Carpet + Weapon / Helmet / Visor, ALL as fixed-length dot-indicator
-    // buttons — a leading ● that's green when on, red when off, on a neutral button (matching the movement-toggle
+    // buttons - a leading ● that's green when on, red when off, on a neutral button (matching the movement-toggle
     // style). Fixed width so nothing swells. Shown in host & guest (your own state is always yours to drive).
     private void DrawMovementToggles()
     {
@@ -890,10 +906,10 @@ public class HMSyncUI
         DrawMovementBody();
     }
 
-    // Body only — shared verbatim by the docked strip and the tear-off window, so the two can't drift.
+    // Body only - shared verbatim by the docked strip and the tear-off window, so the two can't drift.
     private void DrawMovementBody()
     {
-        // v0.7.445: fly / noclip / carpet all gate together on MovementResearchAllowed — true on an
+        // v0.7.445: fly / noclip / carpet all gate together on MovementResearchAllowed - true on an
         // HMS-loaded map or cutscene (movement is legitimate there) OR under research mode. On the bare
         // live zone they're a teleport-to-target cheat, so they're disabled unless research mode is on.
         bool moveBlocked = !(MovementResearchAllowed?.Invoke() ?? false);
@@ -907,7 +923,7 @@ public class HMSyncUI
             bool blk = moveBlocked && !on[i];
             if (blk) ImGui.BeginDisabled();
             // Carpet: enabling it here also pops the tear-off control bar, so the controls are visible
-            // immediately (instant learning — no need to open the tab and read). Only on enable.
+            // immediately (instant learning - no need to open the tab and read). Only on enable.
             System.Action? extra = (i == 2 && !on[2]) ? () => showCarpetBar = true : null;
             PillToggle(labels[i], subs[i], on[i], w, extra);
             if (blk) ImGui.EndDisabled();
@@ -921,14 +937,14 @@ public class HMSyncUI
         PopOutHeader("Appearance", ref showAppearanceBar, "Pop out the appearance controls");
         DrawAppearanceBody();
 
-        // Dynamic Face Control — its own named section, same style/padding as Movement & Appearance. Its header is
+        // Dynamic Face Control - its own named section, same style/padding as Movement & Appearance. Its header is
         // the pop-out control too (v0.7.465), replacing the grey "Pop out" button that used to sit below the body.
         ImGui.Spacing();
         PopOutHeader("Face Control", ref showFaceBar, "Pop out the face controls");
         DrawFaceControlBody(false);
     }
 
-    // Body only — shared verbatim by the docked strip and the tear-off window.
+    // Body only - shared verbatim by the docked strip and the tear-off window.
     private void DrawAppearanceBody()
     {
         bool glam = glamourerAvailable && glamourerKnown;
@@ -938,7 +954,7 @@ public class HMSyncUI
         FlexButtons(3, 78f, 6f, (i, w) => PillToggle(labels[i], subs[i], on[i], w));
     }
 
-    // A compact toggle "pill" — the state IS the pill's own colour (a green tint when on, dim when off), so there's
+    // A compact toggle "pill" - the state IS the pill's own colour (a green tint when on, dim when off), so there's
     // no separate lead dot. Equal-width across the row so a set of three fills it and stays aligned.
     private void PillToggle(string label, string sub, bool on, float width, System.Action? extra = null)
     {
@@ -1044,10 +1060,10 @@ public class HMSyncUI
         }
         else if (MapSettings != null)
         {
-            // Clickable chips — tap a place to load it (natural-width, wrapping to new lines). A place is either a plain
+            // Clickable chips - tap a place to load it (natural-width, wrapping to new lines). A place is either a plain
             // zone (StageBg==null → GetZoneName + OnQuickLoad) or a swap cutscene stage (StageBg set → resolve its name
             // from CutsceneEntries and load by index via OnLoadCutscene). From the user's view both are just "places I
-            // visited" — the load routing is invisible.
+            // visited" - the load routing is invisible.
             float avail = ImGui.GetContentRegionAvail().X;
             float x = 0f; const float gap = 6f;
             bool first = true;
@@ -1071,7 +1087,7 @@ public class HMSyncUI
                         label = CutsceneEntries[found].Name + "  (" + tag + ")";
                         csIndex = CutsceneEntries[found].Index;
                     }
-                    else continue;   // stage no longer in the catalog — skip rather than show a broken chip
+                    else continue;   // stage no longer in the catalog - skip rather than show a broken chip
                 }
                 else
                 {
@@ -1104,7 +1120,7 @@ public class HMSyncUI
             ImGui.TextDisabled("Tapping a map loads it in a solo session.");
     }
 
-    // Time & weather for the CURRENTLY LOADED map (the "load it, adjust, save" model — no territory selector). Time as
+    // Time & weather for the CURRENTLY LOADED map (the "load it, adjust, save" model - no territory selector). Time as
     // HH:MM with Freeze on the same row; weather from the loaded map's legal set.
     private void DrawTimeAndWeather()
     {
@@ -1118,7 +1134,7 @@ public class HMSyncUI
         }
 
         // Rebuild the loaded map's weather list when the loaded zone changes. (Weather is settled to default on the
-        // load event itself in DoLoad, so a stale weather can't bleed across a map change — no sanitise needed here.)
+        // load event itself in DoLoad, so a stale weather can't bleed across a map change - no sanitise needed here.)
         if (loadedZone != mapSettingsCachedTerritory)
         {
             mapSettingsCachedTerritory = loadedZone;
@@ -1128,7 +1144,7 @@ public class HMSyncUI
             mapAllWeather = null;   // lazy-rebuilt if "show more" is on
         }
 
-        // Zone header — the map these controls act on. "Zone: <name> (ID)".
+        // Zone header - the map these controls act on. "Zone: <name> (ID)".
         {
             string? stg2 = CurrentStageName?.Invoke();
             string zn = !string.IsNullOrEmpty(stg2) ? stg2 : MapSettings.GetZoneName(loadedZone);
@@ -1138,12 +1154,12 @@ public class HMSyncUI
         }
         ImGui.Spacing();
 
-        // Time: HH:MM slider (0..1439) + Freeze + reset. Moving the slider AUTO-FREEZES (pins) the time — RP scenes need
+        // Time: HH:MM slider (0..1439) + Freeze + reset. Moving the slider AUTO-FREEZES (pins) the time - RP scenes need
         // a static sky, and the Eorzea clock races (~20x real), so dragging to a time you want and having it hold is the
         // desired default. Uncheck Freeze (or hit reset) to release the override and let the real clock resume.
         // DISPLAY: always read the LIVE Eorzea clock (GetEorzeaTimeOfDay reads ClientTime.EorzeaTime). When frozen the
         // clock IS the held value (the Brio hook pins it), when not it's the real marching time. Reading the live clock
-        // on BOTH host and peer means the displayed integers match exactly — they read the same underlying field, which
+        // on BOTH host and peer means the displayed integers match exactly - they read the same underlying field, which
         // the freeze holds identically on every client. (Reading config here instead diverged from the peer's live read
         // and made the on-load integers briefly disagree even though the sky was synced.)
         int totalMin;
@@ -1153,7 +1169,7 @@ public class HMSyncUI
         }
         int sliderVal = totalMin;
         string hhmm = (sliderVal / 60).ToString("D2") + ":" + (sliderVal % 60).ToString("D2");
-        // Reset button — release the freeze, real clock resumes.
+        // Reset button - release the freeze, real clock resumes.
         if (ImGuiComponents.IconButton("##timereset", FontAwesomeIcon.UndoAlt))
             SetHostTime?.Invoke(config.MapEorzeaHour, config.MapEorzeaMinute, false);   // forced=false → unfreeze
         if (ImGui.IsItemHovered()) ImGui.SetTooltip("Reset to the real, flowing Eorzea time.");
@@ -1163,7 +1179,7 @@ public class HMSyncUI
         if (sliderChanged)
         {
             // Dragging pins the time (auto-freeze). One silent path: SetHostTime updates config + applies locally +
-            // bumps the map-state epoch so peers get THIS value on the next transform — no chat spam, no separate
+            // bumps the map-state epoch so peers get THIS value on the next transform - no chat spam, no separate
             // mirror. Called every drag frame; each epoch bump carries the new value to peers.
             SetHostTime?.Invoke((ushort)(sliderVal / 60), (byte)(sliderVal % 60), true);
         }
@@ -1186,7 +1202,7 @@ public class HMSyncUI
             ImGui.Dummy(new Vector2(0f, ImGui.GetTextLineHeightWithSpacing()));   // a slider + time is self-explanatory; keep the space, no how-to text
 
         // Weather. The dropdown's DISPLAYED value is the LIVE weather the engine is rendering (GetActiveWeather), so it
-        // always matches the sky — even the map's natural weather on load, which the host never explicitly picked.
+        // always matches the sky - even the map's natural weather on load, which the host never explicitly picked.
         // Picking applies LIVE (ApplyWeather writes EnvManager directly). "None - Atmospheric" (0) is a synthetic forced
         // blank the host can choose; it only reads as the selected row when the live weather is actually 0.
         byte liveW = MapSettings.GetActiveWeather();
@@ -1196,7 +1212,7 @@ public class HMSyncUI
         ImGui.TextDisabled("Weather");
         ImGui.SetNextItemWidth(-PanelPad);
         // v0.7.474: HeightLarge. The default combo popup is ~8 rows; 958 has 9 legal weathers once CutScene is
-        // promoted, so the promoted entry — appended last by design — fell below the scroll fold and read as
+        // promoted, so the promoted entry - appended last by design - fell below the scroll fold and read as
         // "the promotion didn't work". Promotions will always land last, so this must not clip.
         if (ImGui.BeginCombo("##mapweather", curWName, ImGuiComboFlags.HeightLarge))
         {
@@ -1241,7 +1257,7 @@ public class HMSyncUI
                 if (!elegal && ewid != 0 && ewid != mapDefaultWeather) extras.Add((ewid, ename));
             // v0.7.474: alphabetical, then by id. The natural order is the sheet's (grouped by id), which is a
             // fine data order and a poor reading order across ~70 chips. Note the game reuses names across ids
-            // (three "Termination", two "Gales"), so identical labels now sit adjacent instead of scattered —
+            // (three "Termination", two "Gales"), so identical labels now sit adjacent instead of scattered -
             // they are genuinely different weathers; the ImGui id suffix (##wc{id}) already keeps them distinct.
             extras.Sort((a, b) =>
             {
@@ -1276,9 +1292,9 @@ public class HMSyncUI
         // ── Music (BGM). Play/Stop toggle + reset-to-zone-default (single curved arrow) + Browse. The row shows the
         // CURRENTLY-PLAYING track (read live) so a name is present even before the host picks one, and it STAYS when
         // stopped (stopping silences playback but the row keeps naming the track). Friendly titles need the Orchestrion
-        // community CSV (deferred) — "Track N" for now. Playback mechanism (scene-0 write) also deferred.
+        // community CSV (deferred) - "Track N" for now. Playback mechanism (scene-0 write) also deferred.
         ImGui.Spacing();
-        // Track to NAME: the host's explicit pick if set, else the zone's STATIC default (GetDefaultBgm — now resolves
+        // Track to NAME: the host's explicit pick if set, else the zone's STATIC default (GetDefaultBgm - now resolves
         // instanced zones correctly via CFC→InstanceContent). We do NOT use the live scene read for display: mid-load it
         // returns the previous zone's track (the stale-entry bug). The static default is reliable and refreshes with the
         // loaded zone. config.MapBgmId=0 after load (reset), so a fresh map shows its own default immediately.
@@ -1290,7 +1306,7 @@ public class HMSyncUI
         ImGui.TextDisabled("Music:");
         ImGui.SameLine();
         // Play (▶): resume the map's music. Play the PICKED track (config.MapBgmId) if it's a real track; if nothing is
-        // picked OR the pick is the SILENCE sentinel (1, set by Stop), fall through to the zone default — otherwise Play
+        // picked OR the pick is the SILENCE sentinel (1, set by Stop), fall through to the zone default - otherwise Play
         // after Stop just replays silence and looks dead (the bug). So Play always produces audible music.
         if (ImGuiComponents.IconButton("##bgmplay", FontAwesomeIcon.Play))
         {
@@ -1300,7 +1316,7 @@ public class HMSyncUI
         }
         if (ImGui.IsItemHovered()) ImGui.SetTooltip("Play the selected track (or the zone default if none picked / after Stop).");
         ImGui.SameLine();
-        // Stop (■): actual SILENCE — broadcast the null track (BGM 1) so peers go quiet too. Distinct from Reset, which
+        // Stop (■): actual SILENCE - broadcast the null track (BGM 1) so peers go quiet too. Distinct from Reset, which
         // restores the zone's own default music. (Writing 0 would make the game re-resolve the default = not silence.)
         if (ImGuiComponents.IconButton("##bgmstop", FontAwesomeIcon.Stop))
         {
@@ -1333,11 +1349,11 @@ public class HMSyncUI
         { config.MapHideQuestSigns = signHide; config.Save(); RunCommand?.Invoke("qbubble", signHide ? "on" : "off"); }
     }
 
-    // Two-column searchable BGM picker in a popup — the smart alternative to a giant dropdown. Search by title, click
+    // Two-column searchable BGM picker in a popup - the smart alternative to a giant dropdown. Search by title, click
     // to play. Populated from the Orchestrion-named track list.
     private void DrawBgmBrowsePopup(uint loadedZone)
     {
-        // Anchor the popup to a STABLE position (just below the Browse button's left edge), not the mouse-click point —
+        // Anchor the popup to a STABLE position (just below the Browse button's left edge), not the mouse-click point -
         // ImGui popups otherwise open at the cursor, so the corner landed wherever in the button you happened to click.
         var anchor = ImGui.GetItemRectMin();
         var btnBottom = ImGui.GetItemRectMax().Y;
@@ -1374,7 +1390,7 @@ public class HMSyncUI
     }
 
     // "This map" spawn-point editor (loaded-map scoped). BGM moved into Time & weather; Hide-NPCs into the
-    // maps-menu filter row — spawn is what remains. Set-from-here + a same-size revert arrow; the live
+    // maps-menu filter row - spawn is what remains. Set-from-here + a same-size revert arrow; the live
     // coordinate readout is toggle-gated and rides a permanently-reserved line so toggling never reflows.
     private void DrawThisMapControls()
     {
@@ -1384,14 +1400,14 @@ public class HMSyncUI
         if (!live) { ImGui.TextDisabled("Load a map to set its spawn point."); return; }
 
         // Status: the SAVED custom spawn for this map vs the game default. HasUserSpawn is stage-aware (checks the
-        // swap-stage bg key as well as the territory key) — the reset button gates on it. For the coordinate readout we
+        // swap-stage bg key as well as the territory key) - the reset button gates on it. For the coordinate readout we
         // can only cheaply show the territory-keyed value; on a swap stage we show a generic "custom set" line (the
-        // exact coords live under the bg key, which the panel doesn't resolve — the reset button still works).
+        // exact coords live under the bg key, which the panel doesn't resolve - the reset button still works).
         bool hasTerrSpawn = config.UserSpawns.TryGetValue(loadedZone, out var us) && us.Length >= 3;
         bool hasSpawn = HasUserSpawn?.Invoke(loadedZone) ?? hasTerrSpawn;
         if (hasTerrSpawn)
             // v0.7.340: display in native X, Y, Z order (elevation is Y in the game). Stored array is [X,Y,Z,facing];
-            // print [0],[1],[2] straight through — no transposition (reverted the old X,Z,Y display).
+            // print [0],[1],[2] straight through - no transposition (reverted the old X,Z,Y display).
             ImGui.TextColored(new Vector4(0.40f, 0.76f, 0.61f, 1f),
                 "Custom spawn  " + us![0].ToString("F1") + "  " + us![1].ToString("F1") + "  " + us![2].ToString("F1"));
         else if (hasSpawn)
@@ -1399,8 +1415,8 @@ public class HMSyncUI
         else
             ImGui.TextDisabled("Using default spawn point");
 
-        // Set + reset. Reset is a tidy square — default IconButton, same UndoAlt glyph and dimensions as the
-        // time/BGM reverts — greyed when there's nothing to reset.
+        // Set + reset. Reset is a tidy square - default IconButton, same UndoAlt glyph and dimensions as the
+        // time/BGM reverts - greyed when there's nothing to reset.
         ImGui.Spacing();
         if (ImGui.Button("Set spawn")) CaptureSpawnFor?.Invoke(loadedZone);
         if (ImGui.IsItemHovered()) ImGui.SetTooltip("Save your current position and facing as this map's spawn point.");
@@ -1424,11 +1440,11 @@ ImGui.Spacing();
 
             var cf = coordsEditing ? ImGuiInputTextFlags.None : ImGuiInputTextFlags.ReadOnly;
 
-            // v0.7.340: native X, Y, Z order (Y = elevation, as the game stores it) — reverted the old X, Z, Y display
+            // v0.7.340: native X, Y, Z order (Y = elevation, as the game stores it) - reverted the old X, Z, Y display
             // transposition. Labels sit exactly on each box's left edge: capture the cursor X at the label row, then
             // place the three boxes on the next row at the SAME three X positions (box width 76 + 6px gap = 82px
             // stride). Anchoring to the live cursor X (not absolute window offsets) keeps labels aligned regardless of
-            // panel indent — the standing GUI alignment rule.
+            // panel indent - the standing GUI alignment rule.
             float col0 = ImGui.GetCursorPosX();
             float stride = 82f;   // 76 box + 6 gap
             ImGui.TextDisabled("X");
@@ -1514,7 +1530,7 @@ ImGui.Spacing();
                     ImGui.TableNextColumn(); ImGui.TextUnformatted(string.IsNullOrWhiteSpace(p.Fc) ? "-" : p.Fc);
                     ImGui.TableNextColumn();
                     ImGui.TextUnformatted(p.Distance >= 0 ? p.Distance.ToString("F0") + "y" : "-");
-                    // v0.7.430 — compass arrow after the distance, same baseline (alignment rule). Points the
+                    // v0.7.430 - compass arrow after the distance, same baseline (alignment rule). Points the
                     // way to turn the screen to face the peer. Adapted from Wholist DrawDirectionArrow.
                     if (p.Bearing is { } bearing)
                     {
@@ -1532,7 +1548,7 @@ ImGui.Spacing();
             ImGui.TextDisabled("Right-click a participant for host actions (transfer host / kick).");
     }
 
-    // v0.7.430 — compass arrow, adapted from Wholist (UserInterface/.../NearbyPlayers.window.cs
+    // v0.7.430 - compass arrow, adapted from Wholist (UserInterface/.../NearbyPlayers.window.cs
     // DrawDirectionArrow). Draws a filled triangle inside a text-height square, rotated to `bearing`
     // (radians, camera-relative). Reserves a Dummy of one text line so it shares the row baseline with
     // the distance number (the HMSync alignment rule). Colour follows the current text colour so it
@@ -1560,13 +1576,13 @@ ImGui.Spacing();
         return new Vector2((float)cos, (float)sin);
     }
 
-    // Debug/dev tools — behind a checkbox, at the very bottom, any state.
-    // Command reference at the base of the Session tab — the common user commands always, the dev/debug set as a
+    // Debug/dev tools - behind a checkbox, at the very bottom, any state.
+    // Command reference at the base of the Session tab - the common user commands always, the dev/debug set as a
     // quiet list (not the old button grid) when Debug mode is on. Reference only; type them in chat.
     private void DrawSessionDevTools()
     {
         ImGui.Spacing(); ImGui.Separator();
-        // v0.7.432: dropped the faint "Commands" / "Debug commands (toggle…)" caption lines — the command
+        // v0.7.432: dropped the faint "Commands" / "Debug commands (toggle…)" caption lines - the command
         // references below are self-explanatory and the captions were redundant helper text.
         ImGui.TextDisabled("/hms start · /hms join <code> · /hms starts");
         ImGui.TextDisabled("/hms load <map> · /hms leave · /hms stop");
@@ -1574,17 +1590,19 @@ ImGui.Spacing();
         // Config tab (shown when Debug mode is on). The Session tab keeps just the everyday user commands.
     }
 
-    // Tab: Config — settings, say-opcode management, debug-mode toggle (S328p).
+    // Tab: Config - settings, say-opcode management, debug-mode toggle (S328p).
     private uint opcodeInOut, opcodeInIn;   // manual key-in scratch fields
     private bool opcodeFieldsInit;
     private void DrawConfigTab()
     {
-        if (!ImGui.BeginTabItem("Config")) return;
+        var tabFlags = ImGuiTabItemFlags.None;
+        if (focusConfigTab) { tabFlags = ImGuiTabItemFlags.SetSelected; focusConfigTab = false; }   // installer "Settings" jump
+        if (!ImGui.BeginTabItem("Config", tabFlags)) return;
         BeginTabBody("##configbody");
 
         // ── Relay service (v0.7.248 UX pass) ── Normal mode: one relay (Enceladeum), name + status on one line, a
         // key field, and the closed-beta note. The dropdown, localhost, and custom-service controls are DEBUG-ONLY
-        // (nobody self-hosts this architecture for multibox) — they live in the Developer panel below.
+        // (nobody self-hosts this architecture for multibox) - they live in the Developer panel below.
         bool debugMode = DebugMode?.Invoke() ?? false;
         BeginPanel("Relay");
         {
@@ -1593,14 +1611,19 @@ ImGui.Spacing();
             if (sel < 0 || sel >= services.Count) sel = 0;
             var keyStat = RelayKeyStatusGet?.Invoke() ?? RelayKeyStatus.NoKey;
 
-            // The status dot now reflects the KEY status (not raw reachability): grey = no key, green = accepted,
-            // amber = invalid/rejected, red = relay unreachable. Draws next to the relay name.
+            // The status dot reflects the KEY-handshake result (green only once the relay actually upgrades us to a
+            // WebSocket): grey = no key, green = accepted (HTTP 101), amber = the handshake failed - which is bad key
+            // OR server down (indistinguishable over the Cloudflare tunnel, so we don't assert "invalid key"), red =
+            // the configured URL couldn't be parsed to even try. Draws next to the relay name.
             void KeyStatusDot()
             {
                 switch (keyStat)
                 {
                     case RelayKeyStatus.Accepted: ImGui.TextColored(new Vector4(0.35f, 0.85f, 0.42f, 1f), "● Key accepted"); break;
-                    case RelayKeyStatus.Invalid: ImGui.TextColored(new Vector4(0.90f, 0.68f, 0.30f, 1f), "● Invalid key"); break;
+                    case RelayKeyStatus.Invalid:
+                        ImGui.TextColored(new Vector4(0.90f, 0.68f, 0.30f, 1f), "● Couldn't connect");
+                        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Check your key, or the server may be down.");
+                        break;
                     case RelayKeyStatus.Unreachable: ImGui.TextColored(new Vector4(0.85f, 0.42f, 0.42f, 1f), "● Unreachable"); break;
                     case RelayKeyStatus.Checking: ImGui.TextDisabled("○ Checking…"); break;
                     default: ImGui.TextDisabled("○ No key"); break;
@@ -1664,7 +1687,7 @@ ImGui.Spacing();
                 }
             }
 
-            // v0.7.338 (#5): muted effective-connection line — the RESOLVED endpoint actually in use, so there's no
+            // v0.7.338 (#5): muted effective-connection line - the RESOLVED endpoint actually in use, so there's no
             // confusion about which relay you're on (the friend was silently on localhost). Parse the composed
             // RelayUrl; show the host, and call out localhost distinctly (dev-only, won't reach the beta relay).
             {
@@ -1676,7 +1699,7 @@ ImGui.Spacing();
                 ImGui.TextDisabled("Connection:");
                 ImGui.SameLine();
                 if (isLocal)
-                    ImGui.TextColored(new Vector4(0.85f, 0.68f, 0.30f, 1f), host + " (local dev — not the relay)");
+                    ImGui.TextColored(new Vector4(0.85f, 0.68f, 0.30f, 1f), host + " (local dev - not the relay)");
                 else
                     ImGui.TextColored(new Vector4(0.50f, 0.55f, 0.62f, 1f), host);
             }
@@ -1690,16 +1713,33 @@ ImGui.Spacing();
         }
         EndPanel();
 
-        // Drift/patch banner — shown prominently if the say passthrough auto-shut.
+        // Drift/patch banner - shown prominently if the say passthrough auto-shut. A rounded box sized to its
+        // content (mirrors BeginPanel/EndPanel, with a red wash). Was a fixed-height BeginChild that clipped its
+        // text and grew a scrollbar; now the content flows naturally and the fill+border are drawn on a lower
+        // draw-list channel so the wash sits BEHIND the immediate-mode text (whose height isn't known up front).
         if (SayDriftBanner?.Invoke() ?? false)
         {
-            ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.35f, 0.12f, 0.12f, 0.5f));
-            ImGui.BeginChild("##driftbanner", new Vector2(0, 66f), true);
+            var dl = ImGui.GetWindowDrawList();
+            dl.ChannelsSplit(2);
+            dl.ChannelsSetCurrent(1);                                            // content on the top channel
+            var bStart = ImGui.GetCursorScreenPos();
+            float bWidth = ImGui.GetContentRegionAvail().X;
+            ImGui.Dummy(new Vector2(0f, 3f + ImGui.GetStyle().ItemSpacing.Y));    // top inner padding (mirrors BeginPanel)
+            ImGui.Indent(PanelPad);
+            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + bWidth - PanelPad * 2f);
             ImGui.TextColored(new Vector4(1f, 0.6f, 0.4f, 1f), "⚠ /say passthrough is OFF");
-            ImGui.TextWrapped("The chat opcode stopped looking like chat, usually because a game patch changed it. Re-learn below to restore /say to session members. Everything else is unaffected.");
+            ImGui.TextColored(new Vector4(0.85f, 0.86f, 0.90f, 1f), "The chat opcode stopped looking like chat, usually because a game patch changed it. Re-learn below to restore /say to session members. Everything else is unaffected.");
+            ImGui.PopTextWrapPos();
+            ImGui.Spacing();
             if (ImGui.Button("Dismiss")) DismissSayDriftBanner?.Invoke();
-            ImGui.EndChild();
-            ImGui.PopStyleColor();
+            ImGui.Unindent(PanelPad);
+            ImGui.Dummy(new Vector2(0f, 3f));                                     // bottom inner padding
+            var bEnd = ImGui.GetCursorScreenPos();
+            dl.ChannelsSetCurrent(0);                                            // background + border on the bottom channel
+            var bMax = new Vector2(bStart.X + bWidth, bEnd.Y);
+            dl.AddRectFilled(bStart, bMax, ImGui.GetColorU32(new Vector4(0.35f, 0.12f, 0.12f, 0.5f)), 6f);
+            dl.AddRect(bStart, bMax, ImGui.GetColorU32(new Vector4(0.55f, 0.28f, 0.28f, 0.85f)), 6f);
+            dl.ChannelsMerge();
             ImGui.Spacing();
         }
 
@@ -1749,19 +1789,19 @@ ImGui.Spacing();
         // window via Dalamud's IExposedPlugin.OpenMainUi, so there's no need to type its command.
         BeginPanel("Modules");
         {
-            // Moniker — HMS integrates with it for real, so prefer its own IPC-backed availability flag; fall back to
+            // Moniker - HMS integrates with it for real, so prefer its own IPC-backed availability flag; fall back to
             // plugin presence if the delegate isn't wired.
             bool mk = MonikerAvailable?.Invoke() ?? ModulePresent?.Invoke("Moniker") ?? false;
             DrawModuleRow("Moniker", "Moniker", mk, "Sync custom character names across the session.");
 
-            // Outfits — presence-detected only (HMS has no Outfits IPC integration; this row is informational).
+            // Outfits - presence-detected only (HMS has no Outfits IPC integration; this row is informational).
             // v0.7.432: displayed WITHOUT the H prefix for consistency with Moniker. Detection key is also
             // "Outfits" now; ModulePresent's existing "H"+n fallback matches the installed "HOutfits" plugin.
             ImGui.Spacing();
             bool ho = ModulePresent?.Invoke("Outfits") ?? false;
             DrawModuleRow("Outfits", "Outfits", ho, "Apply and manage Glamourer outfits.");
 
-            // World Editor — placeholder for a not-yet-released module. Grey dot, "coming soon" tagline.
+            // World Editor - placeholder for a not-yet-released module. Grey dot, "coming soon" tagline.
             ImGui.Spacing();
             ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1f), "●"); ImGui.SameLine(0, 6);
             ImGui.TextUnformatted("World Editor");
@@ -1790,7 +1830,7 @@ ImGui.Spacing();
 
                 ImGui.Spacing();
                 ImGui.TextDisabled("Relay services (advanced)");
-                // Show the selected service's base URL (editable) — for localhost / custom endpoints.
+                // Show the selected service's base URL (editable) - for localhost / custom endpoints.
                 if (sel >= 0 && sel < services.Count)
                 {
                     string urlEdit = services[sel].Url ?? "";
@@ -1827,8 +1867,8 @@ ImGui.Spacing();
         }
         EndPanel();
 
-        // ── Say passthrough — opcodes ──
-        BeginPanel("Say passthrough — opcodes");
+        // ── Say passthrough - opcodes ──
+        BeginPanel("Say passthrough: opcodes");
         {
             var st = SayOpcodeState?.Invoke() ?? (300u, 912u, true, "");
             if (!opcodeFieldsInit) { opcodeInOut = st.Item1; opcodeInIn = st.Item2; opcodeFieldsInit = true; }
@@ -1852,7 +1892,7 @@ ImGui.Spacing();
             ImGui.TextWrapped("These opcodes let session members hear each other's /say, /yell, and /shout. A game update can change them; when that happens the passthrough switches off on its own and you re-learn them here.");
             ImGui.Spacing();
 
-            // CURRENT — aligned rows (label | value | hex | purpose).
+            // CURRENT - aligned rows (label | value | hex | purpose).
             ImGui.TextDisabled("Current");
             void OpRow(string label, uint val, string purpose)
             {
@@ -1872,12 +1912,12 @@ ImGui.Spacing();
             ImGui.Spacing();
 
             // Recovery block. When BROKEN (unverified), show the full plain-language two-person procedure as visible
-            // body text (not a tooltip) — auto-capture is the ONLY recovery path (there's no community chat-opcode list),
+            // body text (not a tooltip) - auto-capture is the ONLY recovery path (there's no community chat-opcode list),
             // and it strictly needs a second person, so that requirement is stated up front, not buried.
             if (!st.Item3)
             {
                 ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + panelWidth - PanelPad * 2f);
-                ImGui.TextColored(new Vector4(1f, 0.6f, 0.35f, 1f), "/say sync is off — a game update changed the chat codes.");
+                ImGui.TextColored(new Vector4(1f, 0.6f, 0.35f, 1f), "/say sync is off. A game update changed the chat codes.");
                 ImGui.TextColored(new Vector4(0.80f, 0.82f, 0.88f, 1f), "To re-learn them you need a friend standing in the same place as you. The game never sends your own /say back to you, so the \"receive\" code can't be captured alone.");
                 ImGui.PopTextWrapPos();
                 ImGui.Spacing();
@@ -1890,7 +1930,7 @@ ImGui.Spacing();
             }
             else
             {
-                // Working — compact, but the procedure is VISIBLE (short line beside/above the button), not tooltip-only,
+                // Working - compact, but the procedure is VISIBLE (short line beside/above the button), not tooltip-only,
                 // so the button isn't a lone wide control with hidden meaning.
                 ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + panelWidth - PanelPad * 2f);
                 ImGui.TextDisabled("Re-learn if a patch breaks sync: you and a co-located friend each /say the marker it shows (you capture send, they capture receive).");
@@ -1922,14 +1962,14 @@ ImGui.Spacing();
         }
         EndPanel();
 
-        // v0.7.457: DEBUG COMMANDS REFERENCE — the full inventory, documented so they don't have to be
+        // v0.7.457: DEBUG COMMANDS REFERENCE - the full inventory, documented so they don't have to be
         // remembered (typed in chat; shown only when Debug mode is on). Placed LAST in Config, after the
         // opcode panel. Grouped by what they do; the log tags (in [BRACKETS]) are where their output lands.
         if (DebugMode?.Invoke() ?? false)
         {
             BeginPanel("Debug commands");
             {
-                ImGui.TextWrapped("Reference only — type these in chat. Output goes to /xllog under the bracketed tags. Requires Debug mode (this panel).");
+                ImGui.TextWrapped("Reference only - type these in chat. Output goes to /xllog under the bracketed tags. Requires Debug mode (this panel).");
                 ImGui.Spacing();
 
                 void CmdRow(string cmd, string desc)
@@ -1989,7 +2029,7 @@ ImGui.Spacing();
     }
 
 
-    // Tab 2: Zones — territory browser. Two-key classification (ContentType for duties, else TerritoryIntendedUse),
+    // Tab 2: Zones - territory browser. Two-key classification (ContentType for duties, else TerritoryIntendedUse),
     // place-name folding (near-identical maps collapse into one expandable cluster), region/expansion section headers,
     // ★ favourites, search, and the name itself as the hot Load affordance. No per-row Load/reset buttons.
     private struct ZoneRow
@@ -2030,7 +2070,7 @@ ImGui.Spacing();
         "Waiting Room", "Seasonal", "Treasure Map", "Cosmic Exploration", "Field Operations", "Gold Saucer", "Seaships", "Cutscenes", "Other",
     };
 
-    // v0.7.235: curated Seaships chip — ship-deck and voyage territories (thematic, RP-friendly, not something you'd
+    // v0.7.235: curated Seaships chip - ship-deck and voyage territories (thematic, RP-friendly, not something you'd
     // want to hunt for by ID). Two ship cutscene stages (o1e1 Endless Ocean, s1e7 Limsa intro ship) are appended in
     // the Seaships view like the All-tab cutscene fold-in.
     private static readonly HashSet<uint> SeashipTerritories = new() { 1142, 708, 680, 900, 1206 };
@@ -2100,7 +2140,7 @@ ImGui.Spacing();
             18 or 28 or 37 or 39 => "PvP",
             20 or 23 or 25 or 44 => "Gold Saucer",                     // Chocobo Racing, Gold Saucer, LoV, Leap of Faith
             26 or 38 or 41 or 47 or 48 or 61 => "Field Operations",    // Exploratory/Diadem, Eureka, Bozja/Zadnor, Occult
-            52 or 53 => "Raid",                                        // Delubrum Reginae (Normal/Savage) — a 48-man duty
+            52 or 53 => "Raid",                                        // Delubrum Reginae (Normal/Savage) - a 48-man duty
             _ => "Other",
         },
     };
@@ -2228,7 +2268,7 @@ ImGui.Spacing();
                 };
                 if (zr.Id == 886) { zr.Name = "Empyreum"; zr.Category = "Housing"; }   // Firmament folds under Empyreum
                 if (zr.Id == 181) { zr.Name = "Limsa Lominsa Upper Decks"; zr.Category = "City"; }   // Limsa opening folds under the city
-                if (SeashipTerritories.Contains(zr.Id)) zr.Category = "Seaships";       // v0.7.235: curated thematic chip — ship decks/voyages, great for RP
+                if (SeashipTerritories.Contains(zr.Id)) zr.Category = "Seaships";       // v0.7.235: curated thematic chip - ship decks/voyages, great for RP
                 if (HousingDistricts.Contains(zr.Name)) zr.Category = "Housing";                    // residential districts → Housing
                 if (!byName.TryGetValue(zr.Name, out var lst)) { lst = new List<ZoneRow>(); byName[zr.Name] = lst; }
                 lst.Add(zr);
@@ -2266,7 +2306,7 @@ ImGui.Spacing();
     // The tier/instance tag shown on a variant sub-row (the parent already carries location).
     private static string VariantTag(ZoneRow v)
     {
-        if (v.Id == 886) return "Firmament";   // The Firmament — festival face of the Empyreum housing district
+        if (v.Id == 886) return "Firmament";   // The Firmament - festival face of the Empyreum housing district
         if (v.CfcName.Length > 0 && v.CfcName.IndexOf('(') >= 0)
         {
             int tp = v.CfcName.IndexOf('(');
@@ -2314,7 +2354,7 @@ ImGui.Spacing();
         if (ImGui.Button("Clear##mapfilter", new Vector2(-1, 0f))) filter = "";
         if (!hasFilter) ImGui.EndDisabled();
         // v0.7.229: "Named maps only" checkbox hidden. The named/unnamed split is a hand-maintained list, so the toggle
-        // was inert (onlyNamed is read nowhere) — and unchecking would only surface black, mesh-less, unlit void maps
+        // was inert (onlyNamed is read nowhere) - and unchecking would only surface black, mesh-less, unlit void maps
         // that are useless to browse. Users can still `hms load <id>` an unnamed zone manually. Re-enable this (and add
         // custom chip naming) once the map editor lands and empty maps become usable skeletons for custom builds.
         // ImGui.Checkbox("Named maps only", ref onlyNamed);
@@ -2408,7 +2448,7 @@ ImGui.Spacing();
             }
 
             // Outline pill for the name; a fixed toggle slot before EVERY pill keeps all pill left-edges aligned
-            // (the disclosure triangle sits in that slot for clusters; the slot is just empty space otherwise —
+            // (the disclosure triangle sits in that slot for clusters; the slot is just empty space otherwise -
             // no placeholder glyph, which would only add noise). depth 1 = a nested variant row.
             void DrawNamePill(string label, uint id, bool multi, bool open, string cluKey, int depth)
             {
@@ -2455,7 +2495,7 @@ ImGui.Spacing();
                 if (open)
                     foreach (var v in c.Variants)
                     {
-                        if (v.Id == c.Primary.Id) continue;   // primary is the parent row — don't list it twice
+                        if (v.Id == c.Primary.Id) continue;   // primary is the parent row - don't list it twice
                         ImGui.TableNextRow();
                         ImGui.TableSetColumnIndex(0); DrawStar(v.Id);
                         ImGui.TableSetColumnIndex(1); ImGui.AlignTextToFramePadding(); ImGui.TextDisabled(v.Id.ToString());
@@ -2511,7 +2551,7 @@ ImGui.Spacing();
                     foreach (var c in Sort(g)) ClusterRows(c);
                 }
             }
-            else   // Type — Other, grouped by its distinct kinds (Barracks, Hall of the Novice, Triple Triad, …)
+            else   // Type - Other, grouped by its distinct kinds (Barracks, Hall of the Novice, Triple Triad, …)
             {
                 foreach (var g in rest.GroupBy(c => string.IsNullOrEmpty(c.TypeName) ? "Miscellaneous" : c.TypeName)
                                       .OrderBy(g => g.Key == "Miscellaneous" ? "\uFFFF" : g.Key))
@@ -2523,7 +2563,7 @@ ImGui.Spacing();
 
             // v0.7.232b/235: cutscene stages are places too. In "All" WITH a filter, surface matches by search; in the
             // curated "Seaships" chip, surface the two ship cutscene stages always. Render as rows INSIDE this
-            // scrollable table (drawing after EndTable() would land them off-screen — the table fills the window).
+            // scrollable table (drawing after EndTable() would land them off-screen - the table fills the window).
             bool csShown = false;
             List<CutsceneEntry> csMatches = new();
             if (activeCat == "All" && f.Length > 0 && CutsceneEntries.Count > 0)
@@ -2548,11 +2588,11 @@ ImGui.Spacing();
                 foreach (var c in csMatches)
                 {
                     ImGui.TableNextRow();
-                    ImGui.TableSetColumnIndex(0);   // star column — blank for cutscenes
+                    ImGui.TableSetColumnIndex(0);   // star column - blank for cutscenes
                     ImGui.TableSetColumnIndex(1); ImGui.AlignTextToFramePadding(); ImGui.TextDisabled(c.Code ?? "");
                     ImGui.TableSetColumnIndex(2);
-                    // Accent pill — same recipe as DrawNamePill / the Cutscenes chip's NamePill, so a cutscene row
-                    // looks identical everywhere (was a flat grey button — the lone style outlier). Wired to load.
+                    // Accent pill - same recipe as DrawNamePill / the Cutscenes chip's NamePill, so a cutscene row
+                    // looks identical everywhere (was a flat grey button - the lone style outlier). Wired to load.
                     var accCs = acc2;
                     ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(9f, 2f));
                     ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1f);
@@ -2650,11 +2690,11 @@ ImGui.Spacing();
     }
 
 
-    // Tab: Emotes — laid out like the in-game emote menu: two columns, icon + name, with the id appended for
+    // Tab: Emotes - laid out like the in-game emote menu: two columns, icon + name, with the id appended for
     // reference. Favourites + Recently-played sit on top as collapsible two-column grids; the full searchable
     // catalogue fills the rest. Click a name to play it (routes through /hms emote → synced in a session).
     // Locked emotes are greyed + inert out of session. This whole tab is the layout template for the mount list.
-    // Tab: Character — 2×2 quadrant grid of the collectible pickers, replacing the old flat stack of collapsibles
+    // Tab: Character - 2×2 quadrant grid of the collectible pickers, replacing the old flat stack of collapsibles
     // (which got noisy). Layout: Emotes | Mounts on top, Minions | Accessories below. Each quadrant is a bordered,
     // titled fixed-height box holding its search row + nested All/Fav/History. The TOP row height is adjustable via a
     // divider handle; the bottom row fills the remainder, so dragging trades space between the vertical neighbours.
@@ -2665,7 +2705,7 @@ ImGui.Spacing();
         BeginTabBody("##summonsbody");
 
         // Chip-selected single sheet: one of Emotes/Mounts/Minions/Accessories at a time (mirrors the Zones chip
-        // pattern — same styling). Each body is self-contained (its own search + action button via
+        // pattern - same styling). Each body is self-contained (its own search + action button via
         // DrawCollectibleBody), so they slot into one sheet cleanly. Far less cramped than the old 2×2 quadrant grid.
         string[] chips = { "Emotes", "Mounts", "Minions", "Accessories" };
         var acc = Accent();
@@ -2695,7 +2735,7 @@ ImGui.Spacing();
         ImGui.EndTabItem();
     }
 
-    // Tab: Packets — inbound packet inspector, modeled on Dalamud's Network Monitor. Lets us learn what specific opcodes
+    // Tab: Packets - inbound packet inspector, modeled on Dalamud's Network Monitor. Lets us learn what specific opcodes
     // carry on the live client (e.g. the 103/356 that Hyperborea/AnoMech allow through) without an external tool. Capture
     // OBSERVES only: in a session it still drops after logging; out of session it passes packets through. Use in an inn
     // (clean stream) and optionally filter to specific opcodes.
@@ -2726,13 +2766,13 @@ ImGui.Spacing();
         ImGui.SameLine();
         ImGui.SetNextItemWidth(160f);
         ImGui.InputTextWithHint("##pktopcodes", "opcodes e.g. 103,356", ref pktFilterInput, 64);
-        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Capture only these inbound opcodes (comma-separated). Empty = all inbound (a firehose — use in an inn).");
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Capture only these inbound opcodes (comma-separated). Empty = all inbound (a firehose - use in an inn).");
         ImGui.SameLine();
         if (ImGui.Button("Clear")) ClearCapture?.Invoke();
 
         // Status line + a display-only filter (narrows what's shown without restarting capture).
         var packets = SnapshotCapture?.Invoke() ?? new List<PacketFilterService.CapturedPacket>();
-        ImGui.TextDisabled((active ? "Capturing" : "Stopped") + " — " + packets.Count + " packets in buffer (max 500).");
+        ImGui.TextDisabled((active ? "Capturing" : "Stopped") + " - " + packets.Count + " packets in buffer (max 500).");
         var mapStatus = OpcodeMapStatus?.Invoke();
         if (!string.IsNullOrEmpty(mapStatus)) ImGui.TextDisabled(mapStatus);
         ImGui.SetNextItemWidth(240f);
@@ -2754,7 +2794,7 @@ ImGui.Spacing();
 
         ImGui.Separator();
 
-        // The table — Index / Time / OpCode / Hex / Name / EntityId / Payload. Newest at the bottom (auto-scroll).
+        // The table - Index / Time / OpCode / Hex / Name / EntityId / Payload. Newest at the bottom (auto-scroll).
         var flags = ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY | ImGuiTableFlags.Resizable;
         if (ImGui.BeginTable("##pkttable", 7, flags, new Vector2(0f, 0f)))
         {
@@ -2766,7 +2806,7 @@ ImGui.Spacing();
             ImGui.TableSetupColumn("Hex", ImGuiTableColumnFlags.WidthFixed, 50f);
             ImGui.TableSetupColumn("Name", ImGuiTableColumnFlags.WidthFixed, 150f);
             ImGui.TableSetupColumn("Actor", ImGuiTableColumnFlags.WidthFixed, 130f);
-            ImGui.TableSetupColumn("Payload (first 32 bytes) — click to copy", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn("Payload (first 32 bytes) - click to copy", ImGuiTableColumnFlags.WidthStretch);
             ImGui.TableHeadersRow();
 
             for (int i = 0; i < packets.Count; i++)
@@ -2782,7 +2822,7 @@ ImGui.Spacing();
                 ImGui.TableNextColumn(); ImGui.TextUnformatted("0x" + p.Opcode.ToString("X3"));
                 ImGui.TableNextColumn();
                 if (name.Length > 0) ImGui.TextUnformatted(name);
-                else ImGui.TextDisabled("—");
+                else ImGui.TextDisabled("-");
                 ImGui.TableNextColumn();
                 if (p.EntityId != 0)
                 {
@@ -2790,7 +2830,7 @@ ImGui.Spacing();
                     if (an.Length > 0) ImGui.TextUnformatted(an);
                     else ImGui.TextDisabled("0x" + p.EntityId.ToString("X8"));
                 }
-                else ImGui.TextDisabled("—");
+                else ImGui.TextDisabled("-");
                 ImGui.TableNextColumn();
                 if (ImGui.Selectable(p.PayloadHex + "##pk" + i, false, ImGuiSelectableFlags.SpanAllColumns))
                     ImGui.SetClipboardText("op=" + p.Opcode + " (0x" + p.Opcode.ToString("X3") + ") " + (name.Length > 0 ? name + " " : "") + "eid=0x" + p.EntityId.ToString("X8") + " ts=" + p.Timestamp + " payload=" + p.PayloadHex);
@@ -2838,9 +2878,9 @@ ImGui.Spacing();
         }
     }
 
-    // Option A merged list: search box + one dynamic action button, then a SINGLE list — Recent-then-All when the search
+    // Option A merged list: search box + one dynamic action button, then a SINGLE list - Recent-then-All when the search
     // is empty (a faint "Recent" / "All" divider between), or just filtered results (no divider) when searching. The
-    // quadrant child is the only scroll surface — the grid renders at natural height (0), so there is NO nested scroll.
+    // quadrant child is the only scroll surface - the grid renders at natural height (0), so there is NO nested scroll.
     // `recent` is the history list (most-recent-first); `catalog` yields (id,name) for the full set + filter.
     private void DrawCollectibleBody(
         string idTag, string searchHint, ref string searchBuf,
@@ -2862,7 +2902,7 @@ ImGui.Spacing();
 
         if (q.Length == 0)
         {
-            // Browsing: Recent pinned on top (short), then All beneath — one continuous scroll.
+            // Browsing: Recent pinned on top (short), then All beneath - one continuous scroll.
             if (recent.Count > 0)
             {
                 ImGui.TextDisabled("Recent");
@@ -2876,7 +2916,7 @@ ImGui.Spacing();
         }
         else
         {
-            // Searching: hunting, not browsing — drop the Recent header, just show filtered matches.
+            // Searching: hunting, not browsing - drop the Recent header, just show filtered matches.
             var filtered = new List<uint>();
             foreach (var e in catalog)
             {
@@ -2907,7 +2947,7 @@ ImGui.Spacing();
     // across the three grids (the same emote can appear in all of them).
     private void DrawEmoteGrid(string tableId, IReadOnlyList<uint> ids, bool inSession, string idTag, float height)
     {
-        // height 0 = grow naturally and let the parent (the quadrant child) scroll — NO ScrollY, or we'd nest scrolls.
+        // height 0 = grow naturally and let the parent (the quadrant child) scroll - NO ScrollY, or we'd nest scrolls.
         // height >0 = a self-contained scroll region (legacy callers).
         var flags = ImGuiTableFlags.RowBg | (height > 0 ? ImGuiTableFlags.ScrollY : ImGuiTableFlags.None);
         if (!ImGui.BeginTable(tableId, 2, flags, new Vector2(0, height)))
@@ -2930,7 +2970,7 @@ ImGui.Spacing();
         ImGui.EndTable();
     }
 
-    // S322: one emote as a grid cell — [star] [icon] Name #id. The star toggles favourite; the name plays on
+    // S322: one emote as a grid cell - [star] [icon] Name #id. The star toggles favourite; the name plays on
     // click. A locked emote out of session is greyed + inert (forcing it would only fake a local unlock; in a
     // session it syncs to peers). idTag disambiguates the ImGui ids between the favourites/recents/full grids.
     private void DrawEmoteCell(ushort id, bool inSession, string idTag)
@@ -3011,20 +3051,20 @@ ImGui.Spacing();
         var sheet = dataManager.GetExcelSheet<Emote>();
         if (sheet == null) return;
 
-        // v0.7.389 — exclude POSTURE-EXIT TRANSITIONS from the clickable list.
+        // v0.7.389 - exclude POSTURE-EXIT TRANSITIONS from the clickable list.
         // EmoteMode rows pair a posture with its exit: {StartEmote 50 Sit, EndEmote 51 Stand Up} and
-        // {StartEmote 52 Sit on Ground, EndEmote 53 Stand Up}. 51 and 53 are not standalone emotes —
+        // {StartEmote 52 Sit on Ground, EndEmote 53 Stand Up}. 51 and 53 are not standalone emotes -
         // they are the second half of a state-machine transition, they carry NO TextCommand (the game
         // never lets a player invoke them directly), and firing one from the grid initiates a hidden
         // stand-up whose FIRST FRAME is seated. The engine then finishes it and tries to return to a
         // "default" that is now corrupted: the character re-seats itself and slides on movement.
         //
-        // That is engine behaviour rather than an HMS bug — nobody stands up via an emote in normal
-        // play, they use movement keys, jump or mouse — so the fix is to stop offering the button.
+        // That is engine behaviour rather than an HMS bug - nobody stands up via an emote in normal
+        // play, they use movement keys, jump or mouse - so the fix is to stop offering the button.
         // Still reachable via `/hms emote 51` for anyone deliberately probing.
         //
         // Derived, not hardcoded: any emote that appears as an EmoteMode.EndEmote and never as a
-        // StartEmote. Across the whole sheet that is exactly {51, 53, 89} — 89 being a nameless row
+        // StartEmote. Across the whole sheet that is exactly {51, 53, 89} - 89 being a nameless row
         // already dropped by the name check below. Self-maintaining if a new posture pair is added.
         var exitTransitions = new HashSet<uint>();
         var starts = new HashSet<uint>();
@@ -3042,7 +3082,7 @@ ImGui.Spacing();
         foreach (var row in sheet)
         {
             if (row.RowId == 0 || row.RowId > ushort.MaxValue) continue;
-            if (exitTransitions.Contains(row.RowId)) continue;   // posture-exit half — see above
+            if (exitTransitions.Contains(row.RowId)) continue;   // posture-exit half - see above
             var name = row.Name.ToString();
             if (string.IsNullOrWhiteSpace(name)) continue;
             // Skip placeholder rows with no animation timeline.
@@ -3054,11 +3094,11 @@ ImGui.Spacing();
         }
     }
 
-    // S322: Minions tab — same interface as Emotes (favourites + recently-summoned grids over the full
+    // S322: Minions tab - same interface as Emotes (favourites + recently-summoned grids over the full
     // Companion catalogue). Summoning routes through /hms minion, syncs to peers via the MinionId wire field,
     // and the host's already-summoned minion replicates on join through the same capture path. Locked minions
     // are greyed + inert out of session; summonable + synced inside one. (Shares the row shape with the Emotes
-    // tab — both fold into one shared picker at the character-management consolidation.)
+    // tab - both fold into one shared picker at the character-management consolidation.)
     private void DrawMinionsBody()
     {
         BuildMinionCatalog();
@@ -3072,7 +3112,7 @@ ImGui.Spacing();
             inSession);
     }
 
-    // S322: two-column minion grid — mirror of DrawEmoteGrid. Folds into the shared picker at consolidation.
+    // S322: two-column minion grid - mirror of DrawEmoteGrid. Folds into the shared picker at consolidation.
     private void DrawMinionGrid(string tableId, IReadOnlyList<uint> ids, bool inSession, string idTag, float height)
     {
         var flags = ImGuiTableFlags.RowBg | (height > 0 ? ImGuiTableFlags.ScrollY : ImGuiTableFlags.None);
@@ -3096,7 +3136,7 @@ ImGui.Spacing();
         ImGui.EndTable();
     }
 
-    // S322: one minion as a grid cell — [star] [icon] Name #id. Mirror of DrawEmoteCell, against the minion
+    // S322: one minion as a grid cell - [star] [icon] Name #id. Mirror of DrawEmoteCell, against the minion
     // favourites + the minion unlock hook + the /hms minion verb. Reuses DrawEmoteIcon (generic icon draw).
     private void DrawMinionCell(ushort id, bool inSession, string idTag)
     {
@@ -3154,7 +3194,7 @@ ImGui.Spacing();
         }
     }
 
-    // S322k: ornament catalogue for the Accessories tab — id + name from the Ornament sheet. Minimal filter
+    // S322k: ornament catalogue for the Accessories tab - id + name from the Ornament sheet. Minimal filter
     // (valid id + non-empty name) so nothing real is hidden; the whole point is finding ids Hasel doesn't show.
     private void BuildOrnamentCatalog()
     {
@@ -3176,7 +3216,7 @@ ImGui.Spacing();
         }
     }
 
-    // S322k: Accessories (fashion accessory / ornament) tab — same layout as Emotes/Minions: favourites +
+    // S322k: Accessories (fashion accessory / ornament) tab - same layout as Emotes/Minions: favourites +
     // history grids over the full catalogue, two columns, icons, star-to-bookmark. Hasel doesn't expose ornament
     // ids, so this doubles as the id reference. Equipping routes through /hms accessory and syncs via OrnamentId.
     private void DrawAccessoriesBody()
@@ -3192,7 +3232,7 @@ ImGui.Spacing();
             inSession);
     }
 
-    // S322k: two-column ornament grid — mirror of DrawMinionGrid. Folds into the shared picker at consolidation.
+    // S322k: two-column ornament grid - mirror of DrawMinionGrid. Folds into the shared picker at consolidation.
     private void DrawOrnamentGrid(string tableId, IReadOnlyList<uint> ids, bool inSession, string idTag, float height)
     {
         var flags = ImGuiTableFlags.RowBg | (height > 0 ? ImGuiTableFlags.ScrollY : ImGuiTableFlags.None);
@@ -3216,7 +3256,7 @@ ImGui.Spacing();
         ImGui.EndTable();
     }
 
-    // S322k: one ornament as a grid cell — [star] [icon] Name #id. Mirror of DrawMinionCell, against the ornament
+    // S322k: one ornament as a grid cell - [star] [icon] Name #id. Mirror of DrawMinionCell, against the ornament
     // favourites + the ornament unlock hook + the /hms accessory verb. Reuses DrawEmoteIcon (generic icon draw).
     private void DrawOrnamentCell(ushort id, bool inSession, string idTag)
     {
@@ -3253,7 +3293,7 @@ ImGui.Spacing();
         }
     }
 
-    // S323c: mount catalogue for the Mounts tab — id + name + icon from the Mount sheet. Minimal filter
+    // S323c: mount catalogue for the Mounts tab - id + name + icon from the Mount sheet. Minimal filter
     // (valid id + non-empty name) so nothing real is hidden; mirrors BuildMinionCatalog / BuildOrnamentCatalog.
     private void BuildMountCatalog()
     {
@@ -3275,7 +3315,7 @@ ImGui.Spacing();
         }
     }
 
-    // S323c: Mounts tab — same layout as Emotes/Minions/Accessories: favourites + history grids over the full
+    // S323c: Mounts tab - same layout as Emotes/Minions/Accessories: favourites + history grids over the full
     // catalogue, two columns, icons, star-to-bookmark. Mounting routes through /hms mount and syncs via MountId;
     // the front-page mount line stays as the quick id entry. Folds into the shared picker at consolidation.
     private void DrawMountsBody()
@@ -3291,7 +3331,7 @@ ImGui.Spacing();
             inSession);
     }
 
-    // S323c: two-column mount grid — mirror of DrawMinionGrid. Folds into the shared picker at consolidation.
+    // S323c: two-column mount grid - mirror of DrawMinionGrid. Folds into the shared picker at consolidation.
     private void DrawMountGrid(string tableId, IReadOnlyList<uint> ids, bool inSession, string idTag, float height)
     {
         var flags = ImGuiTableFlags.RowBg | (height > 0 ? ImGuiTableFlags.ScrollY : ImGuiTableFlags.None);
@@ -3315,7 +3355,7 @@ ImGui.Spacing();
         ImGui.EndTable();
     }
 
-    // S323c: one mount as a grid cell — [star] [icon] Name #id. Mirror of DrawMinionCell, against the mount
+    // S323c: one mount as a grid cell - [star] [icon] Name #id. Mirror of DrawMinionCell, against the mount
     // favourites + the mount unlock hook + the /hms mount verb. Reuses DrawEmoteIcon (generic icon draw).
     private void DrawMountCell(ushort id, bool inSession, string idTag)
     {
@@ -3352,7 +3392,7 @@ ImGui.Spacing();
         }
     }
 
-    // Tab 3: Carpet — the ported HCollider ground-carpet (walk on surfaces with no collision mesh).
+    // Tab 3: Carpet - the ported HCollider ground-carpet (walk on surfaces with no collision mesh).
     // Toggle + the baked-in flat preset, then finer controls. Sliders bind live to the service so
     // adjustments take effect on the next dropped patch. (Placeholder home: this will likely fold into
     // a wider character-management section later.)
@@ -3439,7 +3479,7 @@ ImGui.Spacing();
             bool isFlat = Math.Abs(c.Pitch - CarpetService.DefaultPitch) < 0.001f;
             bool isUp = Math.Abs(c.Pitch - CarpetService.UphillPitch) < 0.001f;
             bool isDown = Math.Abs(c.Pitch - CarpetService.DownhillPitch) < 0.001f;
-            // Status-dot buttons (matching the tear-off bar): neutral button, an accent dot marks the active pitch —
+            // Status-dot buttons (matching the tear-off bar): neutral button, an accent dot marks the active pitch -
             // no full-button colour fill.
             var accP = Accent();
             var dimP = new Vector4(0.42f, 0.44f, 0.48f, 1f);
@@ -3527,7 +3567,7 @@ ImGui.Spacing();
     // S316: world-overlay ring renderer for the carpet, subscribed to UiBuilder.Draw SEPARATELY from
     // Draw() so it renders even when the main window is closed (people orient by the rings while using
     // the tool, before they're comfortable turning them off). Draws a translucent ring at each live patch
-    // centre — the patch you're standing on (oldest, index 0) is red-ish, the lead patches green — by
+    // centre - the patch you're standing on (oldest, index 0) is red-ish, the lead patches green - by
     // sampling points around the circle and projecting via WorldToScreen onto the background draw list.
     private readonly List<Vector3> carpetRingBuf = new();
     private bool carpetDirty;   // S319: a carpet tunable changed this frame; flush to config on release
@@ -3535,7 +3575,7 @@ ImGui.Spacing();
     // Brio-style per-slot gaze: Eyes / Body / Head, each a [toggle] + [set-to-camera] + [X/Y/Z]. Self-actor; the
     // state is broadcast per-actor (FaceControlState → capture → WARM → updateLookAt on peers). "Set to camera" fills
     // that slot's point from the live camera eye; coords can also be keyed manually. Rows are left-aligned per the
-    // GUI standing rule. Shared body — rendered both in the Character tab section and the tear-off window.
+    // GUI standing rule. Shared body - rendered both in the Character tab section and the tear-off window.
     private static unsafe System.Numerics.Vector3 CameraEyeWorld()
     {
         var camMgr = FFXIVClientStructs.FFXIV.Client.Game.Control.CameraManager.Instance();
@@ -3558,7 +3598,7 @@ ImGui.Spacing();
         void Row(string label, ref bool on, ref System.Numerics.Vector3 vec)
         {
             // Align the label text to the frame padding so its baseline lines up with the icon button + drag on the
-            // same row (the standard ImGui idiom — no manual Y juggling). Fixed label column keeps rows aligned.
+            // same row (the standard ImGui idiom - no manual Y juggling). Fixed label column keeps rows aligned.
             ImGui.AlignTextToFramePadding();
             ImGui.TextUnformatted(label);
             ImGui.SameLine(labelCol);
@@ -3590,14 +3630,14 @@ ImGui.Spacing();
         if (ImGui.Checkbox("Hold coords", ref locked)) FaceControlState.Locked = locked;
         if (ImGui.IsItemHovered()) ImGui.SetTooltip("Keep looking at the fixed point while you move (no auto-clear)");
 
-        // v0.7.465: the docked view's "Pop out" button is gone — the section header itself is the pop-out control
+        // v0.7.465: the docked view's "Pop out" button is gone - the section header itself is the pop-out control
         // (PopOutHeader), so there's no second widget competing with it. `compact` still earns its keep above: it
         // suppresses the one-line help text in the tear-off, where the window title already supplies the context.
     }
 
     // v0.7.465: the tear-off Movement and Appearance windows. Same chrome as the Face Control tear-off (accented title
     // bar, first-use width, close via the window's own X) so the three read as one family. Each renders the SAME body
-    // method the docked strip calls — one implementation, two mounts, no chance of the pair drifting.
+    // method the docked strip calls - one implementation, two mounts, no chance of the pair drifting.
     public void DrawMovementBar()
     {
         if (!showMoveBar) return;

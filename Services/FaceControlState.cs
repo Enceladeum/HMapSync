@@ -14,7 +14,7 @@ public static class FaceControlState
     public static Vector3 Body;
     public static bool HeadOn;
     public static Vector3 Head;
-    // "Hold coords" lock: when true, the gaze does NOT auto-clear on movement — it holds its world-point through
+    // "Hold coords" lock: when true, the gaze does NOT auto-clear on movement - it holds its world-point through
     // walking and pivoting, so you can aim at a fixed point (airship, portrait, star) and track it as you move.
     // When false (default), fire-and-forget: moving clears the gaze.
     public static bool Locked;

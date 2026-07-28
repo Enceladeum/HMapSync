@@ -7,9 +7,9 @@ using CSFramework = FFXIVClientStructs.FFXIV.Client.System.Framework.Framework;
 
 namespace HMSync.Services;
 
-// v0.7.351: constructive collision — add a flat box collider ("floor patch") to fill an unmeshed area (e.g. the o1e1
+// v0.7.351: constructive collision - add a flat box collider ("floor patch") to fill an unmeshed area (e.g. the o1e1
 // observation deck). This is the CONSTRUCTIVE counterpart to the scene-suppression toolkit: instead of hiding/moving
-// existing colliders, it spawns NEW ones via the engine's own factory (SceneWrapper.AddColliderBox) — the exact
+// existing colliders, it spawns NEW ones via the engine's own factory (SceneWrapper.AddColliderBox) - the exact
 // proven op CarpetService already uses for its moving floor patches. The engine allocates from its per-type pool,
 // inserts into the BVH, and owns teardown; RemoveCollider drops it. All patches are removed on stop.
 //
@@ -118,7 +118,7 @@ public sealed unsafe class DeckFloorService
         var pos = center;
         var rot = Vector3.Zero;
         var scl = halfExtents;
-        ulong lm = 1ul;   // same layer mask the carpet uses — participates in normal walk collision
+        ulong lm = 1ul;   // same layer mask the carpet uses - participates in normal walk collision
         return (Collider*)sw->AddColliderBox(lm, &pos, &rot, &scl);
     }
 

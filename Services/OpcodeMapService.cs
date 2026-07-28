@@ -15,8 +15,8 @@ namespace HMSync.Services;
 //
 // Two sources, in order of preference:
 //   1) A live community-maintained map fetched once per session from karashiiro/FFXIVOpcodes on GitHub
-//      (raw.githubusercontent.com — a public CDN, no auth, separate from the game network). Best-effort + async.
-//   2) The EMBEDDED opcodes.min.json shipped in the assembly — the guaranteed baseline if the fetch is off/slow/failed.
+//      (raw.githubusercontent.com - a public CDN, no auth, separate from the game network). Best-effort + async.
+//   2) The EMBEDDED opcodes.min.json shipped in the assembly - the guaranteed baseline if the fetch is off/slow/failed.
 // The embedded map always loads synchronously first so labels work instantly; a successful fetch quietly swaps in a
 // fresher table. If the fetch can't reach GitHub we keep the embedded map and flag it as possibly stale.
 public sealed class OpcodeMapService
@@ -144,7 +144,7 @@ public sealed class OpcodeMapService
         return s switch
         {
             MapSource.Remote => "Opcode names: live map " + ver + " from GitHub" + gvSuffix + ".",
-            MapSource.RemoteFailed => "Opcode names: bundled map " + ver + " (couldn't reach GitHub — labels may be stale)" + gvSuffix + ".",
+            MapSource.RemoteFailed => "Opcode names: bundled map " + ver + " (couldn't reach GitHub - labels may be stale)" + gvSuffix + ".",
             _ => "Opcode names: bundled map " + ver + " (checking GitHub for a newer one…)" + gvSuffix + ".",
         };
     }

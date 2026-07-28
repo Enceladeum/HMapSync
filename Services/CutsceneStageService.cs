@@ -9,14 +9,14 @@ using Lumina.Excel.Sheets;
 namespace HMSync.Services;
 
 // ============================================================================
-// CutsceneStageService — free-roam catalog of cutscene-only bg locations (curated from V's research list).
+// CutsceneStageService - free-roam catalog of cutscene-only bg locations (curated from V's research list).
 // These have NO TerritoryType row, so LoadZone(territoryId) can't reach them.
 //
-// DIRECT-LOAD approach (supersedes the retired Penumbra file-redirect, which was fragile — a missed drop
+// DIRECT-LOAD approach (supersedes the retired Penumbra file-redirect, which was fragile - a missed drop
 // corrupted file resolution and needed a game repair). The game will load any bg into a walkable scene if a
 // territory is pointed at it; a modder proved this by swapping a donor territory's bg (inn / 2055 private
 // island) with a cutscene bg via a raw memory edit. We do the same in-engine. The bg-swap SEAM is not yet
-// wired — LoadStage logs and returns false until it is (see the working thread's RE notes). No Penumbra.
+// wired - LoadStage logs and returns false until it is (see the working thread's RE notes). No Penumbra.
 // ============================================================================
 public sealed class CutsceneStageService : IDisposable
 {
@@ -25,7 +25,7 @@ public sealed class CutsceneStageService : IDisposable
         public string Expansion => Bg.StartsWith("ex") && Bg.Length >= 3
             ? (Bg[..3] switch { "ex1" => "HW", "ex2" => "SB", "ex3" => "ShB", "ex4" => "EW", "ex5" => "DT", _ => "ARR" })
             : "ARR";
-        public string Code => Bg.Split('/').Last();   // "n4e5" — searchable tag for the ID column
+        public string Code => Bg.Split('/').Last();   // "n4e5" - searchable tag for the ID column
     }
 
     private static readonly Stage[] AllStages =
@@ -158,13 +158,13 @@ public sealed class CutsceneStageService : IDisposable
         };
     }
 
-    // These are bg-path-only stages — they need the direct bg-swap load, NOT a territory load. doLoad is the
+    // These are bg-path-only stages - they need the direct bg-swap load, NOT a territory load. doLoad is the
     // plugin's DoLoad (kept in the signature for when the swap is wired: donor load under the filter + swapped bg).
     public bool LoadStage(Stage s, uint donor, Action<uint> doLoad)
     {
-        if (s.TerritoryId != 0)                      // Tier B — real TerritoryType row, plain load, no swap
+        if (s.TerritoryId != 0)                      // Tier B - real TerritoryType row, plain load, no swap
         {
-            zoneLoad.ActiveStageBg = null;           // a real TT load — spawn keys by territoryId, not stage
+            zoneLoad.ActiveStageBg = null;           // a real TT load - spawn keys by territoryId, not stage
             log.Information("[CSS] load '" + s.Name + "' (TT " + s.TerritoryId + ")");
             doLoad(s.TerritoryId);
             return true;
@@ -208,7 +208,7 @@ public sealed class CutsceneStageService : IDisposable
 
     /// <summary>
     /// v0.7.362: resolve free-text to a cutscene stage for "/hms load &lt;text&gt;". Matches either the stage TAG
-    /// (Code — the bg's last segment, e.g. "o1e1") or the display NAME ("ship cabin"), so both spellings work.
+    /// (Code - the bg's last segment, e.g. "o1e1") or the display NAME ("ship cabin"), so both spellings work.
     ///
     /// Ranking, best first:
     ///   0. exact tag        ("o1e1")
@@ -216,7 +216,7 @@ public sealed class CutsceneStageService : IDisposable
     ///   2. name prefix      ("ship ca")
     ///   3. name substring   ("cabin")
     ///   4. tag prefix       ("o1e")
-    /// Ties break toward the non-experimental stage, then the shorter name, then list order — so a curated stage
+    /// Ties break toward the non-experimental stage, then the shorter name, then list order - so a curated stage
     /// wins over an experimental one with a similar name. Returns the index into <see cref="Stages"/> (what
     /// OnLoadCutscene takes), or -1 when nothing matches.
     /// </summary>

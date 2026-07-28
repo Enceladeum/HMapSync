@@ -1,14 +1,14 @@
 namespace HMSync.Sync;
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════════════
-// LANE PROJECTION — binary lanes only (S331 Stage 4; JSON payloads removed v0.7.364)
+// LANE PROJECTION - binary lanes only (S331 Stage 4; JSON payloads removed v0.7.364)
 //
 // ⚠ LANE PAYLOADS ARE BINARY-ONLY. Do NOT reintroduce a parallel JSON payload mirror.
 //
 // This file once carried a second, JSON copy of every lane payload (HotData/WarmData/ColdData/HostData plus their
 // ToX/MergeX mappers) alongside the binary path. Nothing called them after the Stage-4 binary cutover, and the
 // duplication silently rotted: the 12 face/gaze fields were added to the binary WarmPayload but never to the JSON
-// WarmData, so the two copies disagreed. They were deleted rather than repaired — a parallel encoder that nothing
+// WarmData, so the two copies disagreed. They were deleted rather than repaired - a parallel encoder that nothing
 // sends is pure maintenance debt and a standing trap for the next person adding a field.
 //
 // The live wire format is MessagePack over HMSync.Wire.*Payload (keys via [Key(n)] in Wire/HMSyncWireTypes.cs).
@@ -31,7 +31,7 @@ namespace HMSync.Sync;
 // TransformData shape the apply path still consumes.
 public static class LaneProjection
 {
-    // ── S331 (Stage 4): wire-payload projections — TransformData → HMSync.Wire.* (the msgpack POCOs). These replace
+    // ── S331 (Stage 4): wire-payload projections - TransformData → HMSync.Wire.* (the msgpack POCOs). These replace
     // the JSON path's ToHot/ToWarm/etc for the binary sender. Field mapping is identical; only the target type differs.
     public static HMSync.Wire.HotPayload ToHotWire(TransformData t, string subjectId, uint seq) => new()
     {

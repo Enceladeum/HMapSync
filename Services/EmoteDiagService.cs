@@ -35,7 +35,7 @@ public unsafe class EmoteDiagService : IDisposable
     private float prevDrawOffsetY;
     private float prevPosY;
 
-    // v0.7.381 — full sequencer coverage.
+    // v0.7.381 - full sequencer coverage.
     // TimelineIds is FixedSizeArray14<ushort> on ActionTimelineSequencer @0xE0: "the timeline active
     // in each slot or 0 when none". Names are from that struct's own remarks; 4-6 are documented as
     // unknown purpose, so they're printed by index only.
@@ -62,9 +62,9 @@ public unsafe class EmoteDiagService : IDisposable
     {
         if (logging)
         {
-            // Already running — extend the timer
+            // Already running - extend the timer
             logUntil = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + durationMs;
-            log.Information("[HMSync-DIAG] Extended — logging for " + durationMs + "ms more.");
+            log.Information("[HMSync-DIAG] Extended - logging for " + durationMs + "ms more.");
             return;
         }
 
@@ -82,7 +82,7 @@ public unsafe class EmoteDiagService : IDisposable
         prevWeaponDrawn = false;
         framework.Update += OnUpdate;
         log.Information("[HMSync-DIAG] Started (" + (peer ? "PEER" : "LOCAL") +
-            ") — logging for " + (durationMs / 1000) + "s.");
+            ") - logging for " + (durationMs / 1000) + "s.");
     }
 
     public void StopLogging()
@@ -132,7 +132,7 @@ public unsafe class EmoteDiagService : IDisposable
         var baseOv = c->Timeline.BaseOverride;
         // ANIM_2_009 (v0.7.381): sample ALL 14 sequencer slots, not just 0-2. TimelineIds is
         // FixedSizeArray14<ushort> ("the timeline active in each slot or 0 when none"), and
-        // PlayTimeline "determines which slot the timeline belongs in" — so an animation we're
+        // PlayTimeline "determines which slot the timeline belongs in" - so an animation we're
         // trying to identify can land anywhere. Watching only 0-2 was enough for emote/pose work
         // but silently misses Add(3), Lips(7), Parts1-4(8-11) and Overlay(12). The visor travel is
         // the case in point: we do NOT know which slot it uses, and guessing from the sheet's Slot
@@ -146,8 +146,8 @@ public unsafe class EmoteDiagService : IDisposable
         // DrawData.IsVisorToggled never flipping, and a DrawDataContainer byte-diff showed ZERO
         // bytes changing across a toggle. FFXIVClientStructs puts it on CharacterBase.StateFlags
         // @0x90 (the DrawObject):
-        //     VisorToggled  = 1UL << 6   — the state (confirmed live)
-        //     VisorChanging = 1UL << 7   — DOES NOT MATCH THIS PATCH. See below.
+        //     VisorToggled  = 1UL << 6   - the state (confirmed live)
+        //     VisorChanging = 1UL << 7   - DOES NOT MATCH THIS PATCH. See below.
         //
         // ⚠ OBSERVED, AND IT CONTRADICTS THE REFERENCE: the changing/trigger flag on this patch is
         // BIT 30, not bit 7. Bit 7 never moved in any capture; bit 30 pulses for exactly one frame
@@ -155,7 +155,7 @@ public unsafe class EmoteDiagService : IDisposable
         // Decoded below as *CHANGING* using bit 30. Re-verify if CS is updated.
         //
         // What the visor actually IS (v0.7.386 finding, from Penumbra's GMP meta editor): a GIMMICK
-        // PARAMETER entry keyed by head model id — {Enabled, Animated, RotationA/B/C degrees} in
+        // PARAMETER entry keyed by head model id - {Enabled, Animated, RotationA/B/C degrees} in
         // chara/xls/equipmentparameter/gimmickparameter.gmp. Not an ActionTimeline at all, which is
         // why no sequencer slot ever moves. The "blend" is the game interpolating the visor bone.
         // Also sampled: HasUmbrella (1<<16), VieraEarsHidden (1<<31), VieraEarsChanging (1<<32).
@@ -179,7 +179,7 @@ public unsafe class EmoteDiagService : IDisposable
         var posY = native->Position.Y;
         var height = native->Height;
 
-        // v0.7.381: ANY slot changing is a change — previously only tl0 was compared, so a timeline
+        // v0.7.381: ANY slot changing is a change - previously only tl0 was compared, so a timeline
         // that landed in slot 3+ never triggered a log line and was invisible to this diagnostic.
         bool anySlotChanged = false;
         for (int i = 0; i < TlSlots; i++)
@@ -238,7 +238,7 @@ public unsafe class EmoteDiagService : IDisposable
             if (stateFlags != prevStateFlags) delta += " [MODELFLAGS]";
 
             // v0.7.383: decode CharacterBase.StateFlags. VisorChanging is the animation-in-progress
-            // flag — if it pulses on a toggle, that pulse IS the broadcastable event.
+            // flag - if it pulses on a toggle, that pulse IS the broadcastable event.
             string modelFlags;
             if (!haveDrawObj) modelFlags = "(no DrawObject)";
             else

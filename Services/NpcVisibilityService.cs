@@ -9,10 +9,10 @@ namespace HMSync.Services;
 /// Host-authoritative NPC scene-cleanup for RP (S328aa). Two independent modes the host can set; the mode is broadcast
 /// on the map-state backbone so every session member (and late joiners) sees the same picture, and it works in solo.
 ///
-///   • <b>DespawnNpcs</b> — hide EVENT NPCs entirely (RenderFlags 0x02, the Penumbra-safe hide that keeps the DrawObject
-///     intact — same mechanism as the player-hide in ActorVisibilityService). BATTLE NPCs are KEPT, so striking dummies
+///   • <b>DespawnNpcs</b> - hide EVENT NPCs entirely (RenderFlags 0x02, the Penumbra-safe hide that keeps the DrawObject
+///     intact - same mechanism as the player-hide in ActorVisibilityService). BATTLE NPCs are KEPT, so striking dummies
 ///     (BattleNpc) survive. Also suppresses the over-head quest marker so a hidden NPC never leaves a floating icon.
-///   • <b>HideQuestSigns</b> — keep the NPC bodies (ambience) but null the over-head quest markers (the !/? balloons via
+///   • <b>HideQuestSigns</b> - keep the NPC bodies (ambience) but null the over-head quest markers (the !/? balloons via
 ///     GameObject.NamePlateIconId @0x110). A subtler RP-cleanliness option: drop the gamey quest UI, keep the world alive.
 ///
 /// Both modes reuse the furniture/player persistent-watch discipline: NPCs stream in by proximity exactly like furniture,
@@ -39,7 +39,7 @@ public unsafe class NpcVisibilityService : IDisposable
     // Restore tracking. For each EventNpc we touched: the object index → its original NamePlateIconId (so HideQuestSigns
     // restores the exact marker, not a guess). RenderFlags restore is a simple bit-clear (we only ever SET 0x02), so a
     // hidden-set is enough to know to clear it. Keyed by object index; restore re-fetches the live object (never derefs
-    // a saved pointer — objects stream/re-index).
+    // a saved pointer - objects stream/re-index).
     private readonly HashSet<ushort> hiddenIndices = new();              // NPCs we RenderFlags-hid
     private readonly Dictionary<ushort, uint> savedNamePlateIcon = new(); // index → original NamePlateIconId (marker hide)
 
@@ -57,7 +57,7 @@ public unsafe class NpcVisibilityService : IDisposable
         hideQuestSigns = questSigns;
         if (!active || !changed) return;
 
-        // A mode may have turned OFF — restore anything that mode was responsible for before re-applying the new state.
+        // A mode may have turned OFF - restore anything that mode was responsible for before re-applying the new state.
         RestoreAll();
         ApplyAll();
     }
@@ -79,7 +79,7 @@ public unsafe class NpcVisibilityService : IDisposable
         if (!active) return;
         active = false;
         RestoreAll();
-        log.Information("[HMSync] NpcVisibility stopped — NPCs restored");
+        log.Information("[HMSync] NpcVisibility stopped - NPCs restored");
     }
 
     /// <summary>
@@ -138,7 +138,7 @@ public unsafe class NpcVisibilityService : IDisposable
             savedNamePlateIcon[idx] = native->NamePlateIconId;
     }
 
-    // Restore every field we touched. Re-fetch each object live (objects stream/re-index — never deref a saved pointer).
+    // Restore every field we touched. Re-fetch each object live (objects stream/re-index - never deref a saved pointer).
     private void RestoreAll()
     {
         foreach (var idx in hiddenIndices)

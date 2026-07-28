@@ -38,10 +38,10 @@ public unsafe class StateCaptureService : IDisposable
     private bool active;
     private DateTime lastSend = DateTime.MinValue;
 
-    // S331 (release hardening): change-detection is ALWAYS ON — a stationary peer stops re-sending identical state
+    // S331 (release hardening): change-detection is ALWAYS ON - a stationary peer stops re-sending identical state
     // 10x/sec; only changed lanes go out, plus a low-rate keepalive (every KeepaliveSecs) so the epoch/heartbeat logic
     // and any late joiner stay fresh. The old DirtyCheckEnabled toggle (S328ag) was measurement scaffolding for A/B'ing
-    // against the always-send baseline; the architecture is validated, so the off-switch is removed — it only ever
+    // against the always-send baseline; the architecture is validated, so the off-switch is removed - it only ever
     // risked accidentally disabling the 95% idle suppression that makes the whole thing viable.
     private const double KeepaliveSecs = 2.0;   // force a send at least this often even when idle
     private DateTime lastActualSend = DateTime.MinValue;
@@ -50,10 +50,10 @@ public unsafe class StateCaptureService : IDisposable
     // so the newcomer gets everything set-once-static: the peer's Moniker name, held emote/cpose stance, mount, minion,
     // ornament, weapon-drawn, AND (host only) map-state. WARM/COLD are strictly change-gated (no heartbeat, the 161
     // fix), so a value set BEFORE the newcomer joined is invisible to them unless re-offered here. Generalizes the old
-    // HOST-only forceHostResend (which only caught weather/time — zone/name/emote/mount were all still missed).
+    // HOST-only forceHostResend (which only caught weather/time - zone/name/emote/mount were all still missed).
     private volatile bool forceFullResend;
     public void RequestFullResend() => forceFullResend = true;
-    private const float PosEps = 0.01f;      // ~1cm — below this, treat position as unchanged
+    private const float PosEps = 0.01f;      // ~1cm - below this, treat position as unchanged
     private const float RotEps = 0.005f;     // radians
 
     // Visual body-offset tracking (send-on-change via epoch).
@@ -114,7 +114,7 @@ public unsafe class StateCaptureService : IDisposable
     private void OnFrameworkUpdate(IFramework fw)
     {
         if (!active || !relay.IsConnected) return;
-        // S331 (Stage 4): don't send lane frames until the relay's RoomJoined has arrived (it mints our peer id — spec
+        // S331 (Stage 4): don't send lane frames until the relay's RoomJoined has arrived (it mints our peer id - spec
         // §10.1). Sending before we have our id would race the relay's identity assignment. Once acknowledged, proceed.
         if (!relay.RoomJoinedAcknowledged) return;
 
@@ -154,7 +154,7 @@ public unsafe class StateCaptureService : IDisposable
                 moveState = 1; // walking
 
             // S197b: clamp mounted sprint→run. A mount's normal pace (~8-9 u/s) clears SprintSpeed and
-            // classifies as sprint — but GndSprint has NO directional variant, so mounted strafe-L/R
+            // classifies as sprint - but GndSprint has NO directional variant, so mounted strafe-L/R
             // would collapse to a forward animation (the slide). Run (GndRunL/R/F) HAS directional
             // variants. Reverse-mount avoided this because the on-foot peer rode at run speed; a
             // genuinely-mounted self moves at mount speed, so clamp here to keep strafe directional.
@@ -191,10 +191,10 @@ public unsafe class StateCaptureService : IDisposable
             }
         }
 
-        // S244/S245: cosmetic display toggles — read the local DrawData bools so peers can
+        // S244/S245: cosmetic display toggles - read the local DrawData bools so peers can
         // mirror them (visor flip, headgear-hidden). Weapon hide/show is SENDER-ONLY (not synced).
         bool visorToggled = false, hatHidden = false;
-        bool faceCamera = false;   // /facecamera fourth-wall stare — read from LookAt, not broadcast by the game natively
+        bool faceCamera = false;   // /facecamera fourth-wall stare - read from LookAt, not broadcast by the game natively
         ulong selfContentId = 0;   // S327: our stable identity, stamped on the snapshot so peers can bind us correctly
         {
             var ch = (Character*)player.Address;
@@ -207,14 +207,14 @@ public unsafe class StateCaptureService : IDisposable
                 // UNIFICATION + TOGGLE: /facecamera is a native TOGGLE (each press flips the game's IsFacingCamera).
                 // We treat each press as an event: on the rising edge we FLIP OUR OWN state (hmsFaceCamActive) and
                 // either write the camera point to all 3 FaceControlState slots (turning ON) or clear them (turning
-                // OFF — press again resets the stance, matching the game). Then we IMMEDIATELY SUPPRESS the game's
+                // OFF - press again resets the stance, matching the game). Then we IMMEDIATELY SUPPRESS the game's
                 // native flag (zero IsFacingCamera @ LookAt+0xBB0) so the game's own face-camera drive doesn't fight
-                // our unified FaceControlState path — that fight was why face-control edits were ignored after a
+                // our unified FaceControlState path - that fight was why face-control edits were ignored after a
                 // /facecamera, and why the puppet jittered on the reset press. Our path is now the sole driver.
                 if (faceCamera && !lastCapturedFaceCamera)   // rising edge = a keypress
                 {
                     // Derive the toggle from the ACTUAL current gaze state rather than a separate latch (the latch
-                    // drifted out of sync when face-control edits or auto-clear changed FaceControlState without it —
+                    // drifted out of sync when face-control edits or auto-clear changed FaceControlState without it -
                     // that caused the "/facecamera ignored, works on 2nd press" desync). If a gaze is currently active
                     // → this press RESETS (toggle off). If none active → this press SETS all 3 slots to camera.
                     bool gazeActive = FaceControlState.EyesOn || FaceControlState.BodyOn || FaceControlState.HeadOn;
@@ -261,12 +261,12 @@ public unsafe class StateCaptureService : IDisposable
             JumpPhase = state.JumpPhase,
             IsTurning = state.IsTurning,
             TargetEntityId = (uint)player.TargetObjectId,
-            // Old face-camera broadcast retired — /facecamera now writes FaceControlState and rides the gaze path
+            // Old face-camera broadcast retired - /facecamera now writes FaceControlState and rides the gaze path
             // (unified). Kept false/zero on the wire (append-only fields; harmless) so no double-drive on peers.
             FaceCamera = false,
             FaceCamX = 0, FaceCamY = 0, FaceCamZ = 0,
 
-            // Dynamic face control — read the shared UI state, broadcast per-slot so peers drive the gaze.
+            // Dynamic face control - read the shared UI state, broadcast per-slot so peers drive the gaze.
             GazeEyesOn = FaceControlState.EyesOn, GazeEyesX = FaceControlState.Eyes.X, GazeEyesY = FaceControlState.Eyes.Y, GazeEyesZ = FaceControlState.Eyes.Z,
             GazeBodyOn = FaceControlState.BodyOn, GazeBodyX = FaceControlState.Body.X, GazeBodyY = FaceControlState.Body.Y, GazeBodyZ = FaceControlState.Body.Z,
             GazeHeadOn = FaceControlState.HeadOn, GazeHeadX = FaceControlState.Head.X, GazeHeadY = FaceControlState.Head.Y, GazeHeadZ = FaceControlState.Head.Z,
@@ -287,11 +287,11 @@ public unsafe class StateCaptureService : IDisposable
             VisorToggled = visorToggled,
             HatHidden = hatHidden,
 
-            // S148: mount state — receiver spawns/clears the mount model on the puppet.
+            // S148: mount state - receiver spawns/clears the mount model on the puppet.
             MountId = state.MountId,
             MountAnimTimeline = state.MountAnimTimeline,
 
-            // S322: minion state — receiver summons/dismisses the minion on the puppet.
+            // S322: minion state - receiver summons/dismisses the minion on the puppet.
             MinionId = state.MinionId,
             MinionBehaviour = state.MinionBehaviour,
             MinionAnim = state.MinionAnim,
@@ -306,7 +306,7 @@ public unsafe class StateCaptureService : IDisposable
             MountActionEpoch = state.MountActionEpoch,
             OrnamentTimeline = state.OrnamentTimeline,
 
-            // S326: map-state backbone — the host stamps these on every outbound snapshot so late-joiners and
+            // S326: map-state backbone - the host stamps these on every outbound snapshot so late-joiners and
             // mid-session peers converge. Non-host: MapState is default (epoch 0) and receivers ignore it (only the
             // host's stream carries a live epoch). Set via MapState.* by the plugin's map* command handlers.
             MapWeatherId = MapState.WeatherId,
@@ -330,9 +330,9 @@ public unsafe class StateCaptureService : IDisposable
             StandupEpoch = state.StandupEpoch,
         };
 
-        // COSM_1_016: skills — carry the last locally-accepted cast so peers can replay it. Supplier pattern (same as
+        // COSM_1_016: skills - carry the last locally-accepted cast so peers can replay it. Supplier pattern (same as
         // MonikerNameSupplier) so SkillSyncService doesn't need to be a constructor dependency. The epoch is what
-        // drives replay; the id/type/target ride along. Held values are harmless — the receiver only fires on change.
+        // drives replay; the id/type/target ride along. Held values are harmless - the receiver only fires on change.
         if (SkillCastSupplier != null)
         {
             var (aId, aType, aEpoch, aTgt, aCid) = SkillCastSupplier();
@@ -354,26 +354,26 @@ public unsafe class StateCaptureService : IDisposable
 
         // S328ah: change-detection gate. Suppress a send if nothing a receiver renders from has changed since the last
         // SENT transform, AND we sent within the keepalive window. CRITICAL LESSON (S328ah regression): this MUST
-        // compare the WHOLE transform, not a hand-picked field list. An enumerated list silently omits fields — the
+        // compare the WHOLE transform, not a hand-picked field list. An enumerated list silently omits fields - the
         // first version missed MoveState (→ stopped actors kept walking) and also target/emote-detail/minion/ornament/
         // etc, and every future field would be another latent omission. So we compare against a retained copy of the
         // entire last-sent transform via TransformData.RenderEquals, which covers every render field with epsilon
         // tolerance on the float (position/rotation/offset) fields and exact compare on the rest. Seq/timestamp are
         // excluded (they always change). Add a field to TransformData → it's automatically in the comparison.
-        // Stage 2a (S330a): emit via LANES. Two force flags with distinct meaning (S330b fix — flagged by relay thread
+        // Stage 2a (S330a): emit via LANES. Two force flags with distinct meaning (S330b fix - flagged by relay thread
         // that COLD/HOST were heartbeating): forceHot sends HOT even if unchanged (the liveness/keepalive heartbeat +
-        // version carrier); forceAllLanes sends EVERY lane even if unchanged (first-send-after-join only — a joiner
+        // version carrier); forceAllLanes sends EVERY lane even if unchanged (first-send-after-join only - a joiner
         // needs the complete picture). A bare keepalive forces HOT ONLY, so COLD/HOST/WARM stay strictly change-gated
         // and don't add redundant idle traffic. The lane sender internally suppresses unchanged lanes.
         bool keepaliveDue = (now - lastActualSend).TotalSeconds >= KeepaliveSecs;
         bool firstSend = lastSentTransform == null;
 
         // S331 (late-join signal fix): when a peer JOINS, re-send our FULL current state once so the newcomer catches
-        // up on everything set-once-static. WARM/COLD are strictly change-gated (no heartbeat — the 161 fix), so a
+        // up on everything set-once-static. WARM/COLD are strictly change-gated (no heartbeat - the 161 fix), so a
         // value we set BEFORE they joined (Moniker name, held emote/cpose, mount, minion, ornament, weapon-drawn) is
         // invisible to them unless we re-offer it here. This generalizes the old HOST-only re-send (which only caught
         // weather/time). Consumed one-shot. Existing peers are unaffected: WARM/COLD merge is idempotent (same values),
-        // and HOST skips via the epoch gate — so this catches up the newcomer without disrupting anyone already in.
+        // and HOST skips via the epoch gate - so this catches up the newcomer without disrupting anyone already in.
         bool joinResend = forceFullResend;
         forceFullResend = false;
 

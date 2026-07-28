@@ -8,17 +8,17 @@ using Lumina.Excel.Sheets;
 namespace HMSync.Services;
 
 /// <summary>
-/// S326 — Map-state backbone. Host-authoritative environment control for a loaded map: TIME (Eorzea hour),
+/// S326 - Map-state backbone. Host-authoritative environment control for a loaded map: TIME (Eorzea hour),
 /// WEATHER (from the territory's legal WeatherRate set, plus 0 = atmospheric/undefined), and BGM. The host sets
 /// these; they are broadcast and replayed to peers (wire fields on TransformData / a dedicated map-state message),
 /// applied on map load AND changeable mid-session. NPC-removal is a wire flag here too (functionality lands later).
 ///
-/// READS (sheet-derived, no guesswork — confirmed against Weatherman's DataProvider + the CSV column layout):
+/// READS (sheet-derived, no guesswork - confirmed against Weatherman's DataProvider + the CSV column layout):
 ///   • Legal weather for a territory = TerritoryType.WeatherRate → WeatherRate.Weather[0..7] (weather IDs), names
 ///     from Weather.Name. We prepend 0 ("Default / atmospheric") as an always-valid choice (Hyperborea's trick:
-///     weather 0 gives atmospheric effects with no defined weather). Integer prefixes stripped — names only.
+///     weather 0 gives atmospheric effects with no defined weather). Integer prefixes stripped - names only.
 ///   • BGM names: the BGM sheet is PATHS ONLY (no titles). Friendly names come from the Orchestrion sheet
-///     (keyed by Orchestrion row id — the precise BGM-sheet-id ↔ Orchestrion mapping is finalized when the BGM
+///     (keyed by Orchestrion row id - the precise BGM-sheet-id ↔ Orchestrion mapping is finalized when the BGM
 ///     playback helper lands; OrchestrionPath.File is a path string, NOT a BGM ref). "None" (0) is always offered.
 ///
 /// WRITES:
@@ -26,7 +26,7 @@ namespace HMSync.Services;
 ///     (Weatherman patches the render path for persistence; we set the field + re-assert after load, which is
 ///     enough for a static RP scene. If the game overwrites it on its own weather tick, the re-assert poll catches it.)
 ///   • Time: EnvManager exposes the Eorzea time; we set the day-time seconds. (Mirrors Weatherman's time write.)
-///   • BGM: scene-based, more involved — deferred to the plugin/BGM path (Orchestrion's BGMManager pattern). This
+///   • BGM: scene-based, more involved - deferred to the plugin/BGM path (Orchestrion's BGMManager pattern). This
 ///     service owns the DATA (what BGM id) and the wire; the actual scene push is a thin helper.
 ///
 /// HOST-ONLY: only the session host may set map state. Peers receive + apply. Enforced at the command/plugin layer.
@@ -54,13 +54,13 @@ public unsafe class MapSettingsService
     public byte EorzeaMinute { get; set; }              // 0..59
     public bool TimeForced { get; set; }                // is time being held? (vs let it flow naturally)
     public uint BgmId { get; set; }                     // 0 = none/silence; else a BGM sheet row id
-    public bool RemoveNpcs { get; set; }                // host flag — despawn all event NPCs (S328aa)
-    public bool HideQuestSigns { get; set; }            // host flag — hide over-head quest markers only (S328aa)
+    public bool RemoveNpcs { get; set; }                // host flag - despawn all event NPCs (S328aa)
+    public bool HideQuestSigns { get; set; }            // host flag - hide over-head quest markers only (S328aa)
 
     public void MarkStateSet() => HasState = true;
 
     // ─────────────────────────────────────────────────────────────────────────────────────────────────────────
-    // SHEET READS — dropdown population
+    // SHEET READS - dropdown population
     // ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -68,7 +68,7 @@ public unsafe class MapSettingsService
     /// Then the WeatherRate.Weather[] entries for the territory, de-duplicated, names from Weather.Name, integer
     /// prefixes stripped (names only). Returns just the (0) entry if the territory or its rate row is unresolvable.
     /// </summary>
-    // v0.7.471 — TERRITORY-SCOPED WEATHER PROMOTIONS.
+    // v0.7.471 - TERRITORY-SCOPED WEATHER PROMOTIONS.
     //
     // Some territories accept a weather that isn't in their WeatherRate set, so it only ever appeared behind
     // "Show more presets" (debug-gated). These three want CutScene (59) in the ordinary picker. Verified against
@@ -80,9 +80,9 @@ public unsafe class MapSettingsService
     //
     // 59 is in NONE of those sets, so the promotion is purely additive on all three.
     //
-    // ⚠ KNOWN BUG, NOT FIXED HERE — "None - Atmospheric" cannot be broadcast. GetLegalWeather is consulted by the
+    // ⚠ KNOWN BUG, NOT FIXED HERE - "None - Atmospheric" cannot be broadcast. GetLegalWeather is consulted by the
     // peer-broadcast gate (HMSyncPlugin ~3034) and the held-weather reassert (ReassertHeldState). That gate reads
-    // `config.MapWeatherId == 0` as "host picked nothing" and substitutes the native default — but 0 is ALSO the
+    // `config.MapWeatherId == 0` as "host picked nothing" and substitutes the native default - but 0 is ALSO the
     // id the host sets when explicitly choosing "None - Atmospheric". One sentinel, two meanings, and the guard
     // can only see the first. Same shape one line earlier for any id not in this list.
     //
@@ -93,17 +93,17 @@ public unsafe class MapSettingsService
     // WHY NUMERIC IDS. The first cut of this resolved names against the Weather sheet, on the reasoning that an
     // unverified id fails silently-and-wrongly while a name miss fails visibly. That reasoning was sound and the
     // premise is now gone: with the CSVs on hand the id is ground truth, so the resolver was pure risk surface
-    // (a sheet enumeration + a string match, either of which could fail quietly inside the enclosing try/catch —
+    // (a sheet enumeration + a string match, either of which could fail quietly inside the enclosing try/catch -
     // and one of which did). Verified constant beats runtime lookup.
     private static readonly Dictionary<uint, byte[]> PromotedWeather = new()
     {
         [958]  = new byte[] { 59 },   // CutScene
         [1011] = new byte[] { 59 },   // CutScene
         [1120] = new byte[] { 59 },   // CutScene
-        [1345] = new byte[] { 4 },    // Fog — m6d2, native set is [15] only; verified Weather.csv `4,Fog,foggy`
+        [1345] = new byte[] { 4 },    // Fog - m6d2, native set is [15] only; verified Weather.csv `4,Fog,foggy`
     };
 
-    /// <summary>v0.7.473 — `/hms weatherdiag`. Dumps every input the weather picker and chip grid decide from, for
+    /// <summary>v0.7.473 - `/hms weatherdiag`. Dumps every input the weather picker and chip grid decide from, for
     /// the loaded zone, so "why isn't X in the dropdown" is answered by reading rather than by inference. Exists
     /// because two successive static reads of this path produced two wrong answers.</summary>
     public void DumpWeatherDiag(uint territoryId)
@@ -128,7 +128,7 @@ public unsafe class MapSettingsService
             log.Information("[HMSync] [WXDIAG] LVB weathers -> " + lvb.Count + ": "
                 + string.Join(", ", lvb.Select(x => x.id + ":" + x.name + (x.legal ? "(legal)" : "(extra)"))));
             // v0.7.474: report BOTH chip modes. The first cut modelled only the LVB path and reported "1 chip"
-            // while the debug grid was showing ~70 — because debug mode passes includeAll:true, which appends
+            // while the debug grid was showing ~70 - because debug mode passes includeAll:true, which appends
             // every used weather beyond the LVB set. A diagnostic that models one branch of the thing it is
             // diagnosing is worse than none: it reads as authoritative and disagrees with the screen.
             foreach (var dbg in new[] { false, true })
@@ -214,14 +214,14 @@ public unsafe class MapSettingsService
 
     // S327e: read the BGM the game is CURRENTLY playing (scene 0 = the zone/field theme priority). Lets the Music row
     // show the actual track even before the host picks one, and keeps the name when paused. The friendly title still
-    // needs the Orchestrion community CSV (deferred) — this returns the id, named "Track N" for now.
+    // needs the Orchestrion community CSV (deferred) - this returns the id, named "Track N" for now.
     public uint GetCurrentBgm()
     {
         try
         {
             var bgm = FFXIVClientStructs.FFXIV.Client.Game.BGMSystem.Instance();
             if (bgm == null || bgm->Scenes.LongCount <= 0) return 0;
-            ushort playing = bgm->Scenes.First->PlayingBgmId;   // 0x0E — what's actually audible
+            ushort playing = bgm->Scenes.First->PlayingBgmId;   // 0x0E - what's actually audible
             ushort target = bgm->Scenes.First->BgmId;           // 0x0C
             return playing != 0 ? playing : (uint)target;
         }
@@ -229,7 +229,7 @@ public unsafe class MapSettingsService
     }
 
     // S327b/f: current Eorzea time-of-day as HH:MM. Delegates to TimeFreezeService, which reads ClientTime.EorzeaTime
-    // (the field the renderer uses) — when frozen that's our held value, when not it's the live recomputed clock.
+    // (the field the renderer uses) - when frozen that's our held value, when not it's the live recomputed clock.
     public (int hour, int minute) GetEorzeaTimeOfDay() => timeFreeze.GetTimeOfDay();
 
     // S327b: resolve a territory's display name (PlaceName) for the "Zone: <name> (ID)" header. Empty if unnamed.
@@ -248,7 +248,7 @@ public unsafe class MapSettingsService
     /// <summary>
     /// The territory's DEFAULT BGM id (TerritoryType.BGM), used to preload the BGM dropdown's default choice.
     /// </summary>
-    // (Removed CurrentZoneDefaultBgm — it read GameMain.CurrentTerritoryTypeId, which does NOT reflect a synthetic
+    // (Removed CurrentZoneDefaultBgm - it read GameMain.CurrentTerritoryTypeId, which does NOT reflect a synthetic
     // HMS load: the packet filter hides the real zone change, so GameMain still reports the apartment/previous zone.
     // That produced "plays the last map's track" bugs. Callers now pass the TRUE loaded-zone id, GetDefaultBgm(id).)
 
@@ -262,10 +262,10 @@ public unsafe class MapSettingsService
                 uint tb = terrSheet.GetRow(territoryId).BGM.RowId;
                 // Instanced zones (1345 Clyteum etc.) carry the SILENCE PLACEHOLDER (1001); their real music is defined
                 // STATICALLY on the content via ContentFinderCondition → InstanceContent.BGM (1345 → CFC 1011 →
-                // InstanceContent 104 → BGM 20264 "Untested Voyager"). Use ONLY that static value — do NOT fall back to
+                // InstanceContent 104 → BGM 20264 "Untested Voyager"). Use ONLY that static value - do NOT fall back to
                 // the live scene read (it returns whatever's playing mid-transition = the PREVIOUS zone's track, which
                 // is what produced the "Kugane"/"880 Cartos" MISMATCHES). If the content has no BGM either, return the
-                // placeholder so it resolves to SILENCE — a correct silence beats a wrong track.
+                // placeholder so it resolves to SILENCE - a correct silence beats a wrong track.
                 if (tb == SilencePlaceholderBgm)
                 {
                     uint ic = ResolveInstanceContentBgm(territoryId);
@@ -289,7 +289,7 @@ public unsafe class MapSettingsService
             if (terrSheet == null || !terrSheet.HasRow(territoryId)) return 0;
             var cfc = terrSheet.GetRow(territoryId).ContentFinderCondition.ValueNullable;
             if (cfc == null) return 0;
-            // Content is an UNTYPED RowRef (it can point at different sheets by ContentType) — resolve it explicitly
+            // Content is an UNTYPED RowRef (it can point at different sheets by ContentType) - resolve it explicitly
             // as InstanceContent. Returns default (RowId 0) if it isn't an InstanceContent row.
             var ic = cfc.Value.Content.GetValueOrDefault<InstanceContent>();
             if (ic == null) return 0;
@@ -300,11 +300,11 @@ public unsafe class MapSettingsService
 
     // S327l/m/o: LOCATION-BASED BGM NAMING. The game has no readable BGM-id → song-title map (Orchestrion's sheet is
     // keyed by Orchestrion RowId ≠ BGM RowId; titles live only in Orchestrion's community CSV). We name each BGM by the
-    // PLACE/DUTY that plays it — "Terncliff", "Clyteum" — which is what an RP host actually wants ("play THIS location's
+    // PLACE/DUTY that plays it - "Terncliff", "Clyteum" - which is what an RP host actually wants ("play THIS location's
     // music", not "Rambunctious Waltz of Faeries, movement 2"). Sources, all in-game:
     //  • Open-world / most zones: TerritoryType.BGM (<1000 = direct file track) + TerritoryType.PlaceName.
     //  • INSTANCED content (dungeons/raids/trials): TerritoryType.BGM is usually the SILENCE PLACEHOLDER (1001); the real
-    //    track is on the content — ContentFinderCondition → InstanceContent.BGM — named by the DUTY name (CFC.Name).
+    //    track is on the content - ContentFinderCondition → InstanceContent.BGM - named by the DUTY name (CFC.Name).
     //    (Verified: 1345 → CFC 1011 → InstanceContent 104 → BGM 20264. ~558 placeholder territories resolve this way.)
     // The silence placeholder (1001) itself is excluded from naming. Distinct BGMs sharing a name get "#N" suffixes.
     private const uint SilencePlaceholderBgm = 1001;
@@ -319,7 +319,7 @@ public unsafe class MapSettingsService
             var terr = dataManager.GetExcelSheet<TerritoryType>();
             if (terr == null) return;
 
-            // Pass 1: open-world/zone tracks — FIRST place name per distinct bgm id (skip 0 + silence placeholder).
+            // Pass 1: open-world/zone tracks - FIRST place name per distinct bgm id (skip 0 + silence placeholder).
             var rawByBgm = new Dictionary<uint, string>();
             foreach (var row in terr)
             {
@@ -331,7 +331,7 @@ public unsafe class MapSettingsService
                 rawByBgm[bgmId] = NormalizeName(place);
             }
 
-            // Pass 1b: INSTANCED content tracks — enumerate ContentFinderCondition → InstanceContent.BGM, keyed by the
+            // Pass 1b: INSTANCED content tracks - enumerate ContentFinderCondition → InstanceContent.BGM, keyed by the
             // duty name. Only add a bgm id not already named by a territory (territory place names win for open zones).
             // This recovers dungeon/raid/trial music that the territory BGM field hides behind the silence placeholder.
             var cfcSheet = dataManager.GetExcelSheet<ContentFinderCondition>();
@@ -383,7 +383,7 @@ public unsafe class MapSettingsService
     /// </summary>
     // Normalize a display name: capitalize the leading letter so articled duty names ("the Clyteum", "the Praetorium")
     // read consistently with place names ("Central Shroud"). CFC gives lowercase-articled names; place names are
-    // already title-case — this makes them uniform.
+    // already title-case - this makes them uniform.
     private static string NormalizeName(string s)
     {
         if (string.IsNullOrEmpty(s)) return s;
@@ -423,7 +423,7 @@ public unsafe class MapSettingsService
     }
 
     // ─────────────────────────────────────────────────────────────────────────────────────────────────────────
-    // WRITES — apply the host-set state to the live client
+    // WRITES - apply the host-set state to the live client
     // ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -468,9 +468,9 @@ public unsafe class MapSettingsService
     }
 
     // S327f: TIME FREEZE now goes through TimeFreezeService, which HOOKS the game's UpdateEorzeaTime recompute and
-    // no-ops it while frozen, then writes ClientTime.EorzeaTime (the field the renderer reads) — Brio's mechanism. The
+    // no-ops it while frozen, then writes ClientTime.EorzeaTime (the field the renderer reads) - Brio's mechanism. The
     // old EorzeaTimeOverride (0x30) approach was a confirmed dead end (the recompute ignores it and clobbers EorzeaTime
-    // every frame — proven by the [TIME-MIRROR] "was" value marching while overridden=True). These methods keep their
+    // every frame - proven by the [TIME-MIRROR] "was" value marching while overridden=True). These methods keep their
     // names so the sync architecture (epoch-gated MapState apply) is unchanged.
     public bool ApplyTime(ushort hour, byte minute)
     {
@@ -481,7 +481,7 @@ public unsafe class MapSettingsService
     // Freeze at the CURRENT live time (tap Freeze without dragging → pin "now", not a stale stored value).
     public void FreezeAtCurrent() => timeFreeze.FreezeAtCurrent();
 
-    // Release the freeze — the recompute resumes and real time flows again.
+    // Release the freeze - the recompute resumes and real time flows again.
     public void DisableTimeOverride() => timeFreeze.Unfreeze();
 
     // Is time currently held?
@@ -541,7 +541,7 @@ public unsafe class MapSettingsService
                 if (string.IsNullOrWhiteSpace(name)) name = "Weather " + wid;
                 result.Add((wid, name, true));
             }
-            // Then all OTHER weathers that are used by SOME map (deduped to the ~74 real ones — skip the rest).
+            // Then all OTHER weathers that are used by SOME map (deduped to the ~74 real ones - skip the rest).
             var used = GetUsedWeatherIds();
             foreach (var id in used)
             {
@@ -560,7 +560,7 @@ public unsafe class MapSettingsService
     }
 
     /// <summary>
-    /// The zone's ACTUAL weather set, read from its <c>.lvb</c> weather table (up to 32 slots) — includes cinematic
+    /// The zone's ACTUAL weather set, read from its <c>.lvb</c> weather table (up to 32 slots) - includes cinematic
     /// weathers (e.g. CutScene) that never appear in the WeatherRate sheet. Each entry is flagged legal via the
     /// WeatherRate set. Cached per territory. Empty if the zone has no LVB / the parse fails (caller falls back).
     /// </summary>
@@ -605,7 +605,7 @@ public unsafe class MapSettingsService
     /// <summary>
     /// The zone's weather set for the picker: prefer the LVB table (zone-accurate, includes cinematic weathers like
     /// CutScene); fall back to the WeatherRate-derived list if the zone has no readable LVB. When <paramref name="includeAll"/>
-    /// is set (debug mode), the ENTIRE game weather set is appended after the zone set — for hunting anomalous
+    /// is set (debug mode), the ENTIRE game weather set is appended after the zone set - for hunting anomalous
     /// weathers that aren't in a zone's LVB but still produce an effect (rare, not normally applicable).
     /// </summary>
     public List<(byte id, string name, bool legal)> GetZoneWeathers(uint territoryId, bool includeAll)
@@ -623,8 +623,8 @@ public unsafe class MapSettingsService
     }
 
     /// <summary>
-    /// The territory's native weather id. S328ac: prefer the LIVE WeatherManager (GetWeatherForDaytime(territory, 0)) —
-    /// the weather the game would actually show right now, respecting a territory's individual/special weather — so the
+    /// The territory's native weather id. S328ac: prefer the LIVE WeatherManager (GetWeatherForDaytime(territory, 0)) -
+    /// the weather the game would actually show right now, respecting a territory's individual/special weather - so the
     /// host broadcasts the REAL sky instead of 0 (which peers render as "None / atmospheric"). Falls back to the
     /// WeatherRate sheet's first non-zero entry (the dominant/native weather) if the live manager is unavailable, and
     /// to 0 if neither resolves. Also used to label the "Default - {name}" choice and the prepopulated value on a
@@ -666,12 +666,12 @@ public unsafe class MapSettingsService
     }
 
     /// <summary>
-    /// Play a BGM on the Territory scene (scene 11 — the zone-music layer), or stop it if 0. Uses CS's version-tracked
+    /// Play a BGM on the Territory scene (scene 11 - the zone-music layer), or stop it if 0. Uses CS's version-tracked
     /// BGMSystem.SetBGM / ResetBGM (no raw sig). Scene 11 is the zone BGM; overriding it holds our track over the map's
     /// default. 0 → ResetBGM (silence / let the scene fall back). Safe: null-gated on the BGMSystem instance.
     /// </summary>
     // S327r: play/stop BGM via the version-tracked BGMSystem.Instance()->Scenes[0] (the static-address approach in
-    // S327q resolved to nothing — sig miss — and played silence, WORSE than this). CS Scene layout: BgmId@0x0C (target),
+    // S327q resolved to nothing - sig miss - and played silence, WORSE than this). CS Scene layout: BgmId@0x0C (target),
     // PlayingBgmId@0x0E, PreviousBgmId@0x10. Writing BgmId is what forces the track; the game propagates it. For STOP
     // (id 0) we also poke the flags byte @0x04 (Resume) as Orchestrion does. A diagnostic confirms the write lands.
     public bool PlayBgm(uint bgmId)
@@ -682,11 +682,11 @@ public unsafe class MapSettingsService
             if (bgm == null) { log.Warning("[HMSync] [BGM-PLAY] BGMSystem null"); return false; }
             if (bgm->Scenes.LongCount <= 0) { log.Warning("[HMSync] [BGM-PLAY] no scenes"); return false; }
             var s0 = bgm->Scenes.First;                 // priority 0
-            s0->BgmId = (ushort)bgmId;                  // 0x0C — the target the game plays
+            s0->BgmId = (ushort)bgmId;                  // 0x0C - the target the game plays
             s0->PlayingBgmId = (ushort)bgmId;           // 0x0E
             s0->PreviousBgmId = (ushort)bgmId;          // 0x10
             if (bgmId == 0)
-                *(uint*)((nint)s0 + 0x04) = 0x02;       // Flags = Resume — cancel playback
+                *(uint*)((nint)s0 + 0x04) = 0x02;       // Flags = Resume - cancel playback
             return true;
         }
         catch (Exception ex)
@@ -697,12 +697,12 @@ public unsafe class MapSettingsService
     }
 
     // STOP = actual SILENCE, not "revert to default". Writing 0 makes the game re-resolve the zone's own track (that's
-    // what Reset does). To truly silence, play the null track (BGM 1 = BGM_Null.scd) — an empty scd, so nothing sounds.
+    // what Reset does). To truly silence, play the null track (BGM 1 = BGM_Null.scd) - an empty scd, so nothing sounds.
     private const uint SilenceTrackBgm = 1;   // BGM_Null.scd
     public bool StopBgm() => PlayBgm(SilenceTrackBgm);
 
     // S327s: release our forced BGM entirely so the GAME resumes its own natural music. Writing 0 to scene 0 makes the
-    // game re-resolve the zone's default — which is exactly right on session-leave (the player is back in a real zone
+    // game re-resolve the zone's default - which is exactly right on session-leave (the player is back in a real zone
     // and should hear that zone's music, not a stuck synthetic track). Also clears the peer-apply latch caller-side.
     public void RestoreBgm()
     {
@@ -723,12 +723,12 @@ public unsafe class MapSettingsService
     /// weather/time/BGM) and on a mid-session change. Idempotent.
     /// </summary>
     // loadedZoneId MUST be the real synthetic-loaded zone (zoneLoad.CurrentLoadedZone), NOT GameMain's
-    // CurrentTerritoryTypeId — under the packet filter GameMain still reports the apartment/previous zone, which caused
+    // CurrentTerritoryTypeId - under the packet filter GameMain still reports the apartment/previous zone, which caused
     // weather-legality and BGM-default to resolve against the WRONG map ("plays the last map's track").
     public void Reassert(uint loadedZoneId)
     {
         // Held HOST STATE (weather/time/explicit BGM pick) is only re-asserted if the host actually set something this
-        // session — that's what HasState gates. But it does NOT gate the BGM BASELINE below.
+        // session - that's what HasState gates. But it does NOT gate the BGM BASELINE below.
         if (HasState)
         {
             // Weather is per-scene: only re-assert a held weather if it's still LEGAL for the map we're now on.
@@ -737,7 +737,7 @@ public unsafe class MapSettingsService
             if (TimeForced) ApplyTime(EorzeaHour, EorzeaMinute);
         }
 
-        // WEATHER ENGAGE (S328ac) — like the BGM baseline below, runs on EVERY load. The host's own weather write on a
+        // WEATHER ENGAGE (S328ac) - like the BGM baseline below, runs on EVERY load. The host's own weather write on a
         // synthetic load can otherwise land as a stale/generic sky (fair skies) rather than the map's real weather. If
         // no explicit host weather is held (or it's illegal here), assert the zone's NATIVE weather so the host shows
         // the true sky and broadcasts a concrete id. Explicit legal pick already applied above; this is the baseline.
@@ -748,7 +748,7 @@ public unsafe class MapSettingsService
             if (nativeWeather != 0) ApplyWeather(nativeWeather);
         }
 
-        // BGM ENGAGE — runs on EVERY load, HasState or not. Playing the zone's own default music is the BASELINE, not
+        // BGM ENGAGE - runs on EVERY load, HasState or not. Playing the zone's own default music is the BASELINE, not
         // "host state", so it must not be gated behind the host having configured something. (This was the bug: on a
         // fresh load with nothing set, HasState was false and the old early-return `if(!HasState) return;` skipped BGM
         // entirely → "plays none until you press Refresh". Refresh worked only because it routed through DoMapBgm, which

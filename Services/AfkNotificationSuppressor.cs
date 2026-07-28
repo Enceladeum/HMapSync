@@ -9,17 +9,17 @@ namespace HMSync.Services;
 /// S250: suppresses the duty AFK / "you will be expelled" system notification, but ONLY while an
 /// HMS session is active. This exists because HMS's raw zone loads spin up an InstanceContent
 /// director (for the wall-down convenience) whose Lua still runs the idle-watch and prints the
-/// 5-minute inactivity warning — even though the actual expel never fires (that needs full duty
+/// 5-minute inactivity warning - even though the actual expel never fires (that needs full duty
 /// machinery HMS doesn't run). The nag is harmless but annoying during long explore sessions.
 ///
-/// DESIGN (deliberately surgical — see handover §9):
+/// DESIGN (deliberately surgical - see handover §9):
 ///   * We do NOT touch the director Lua. It bundles many behaviours (objective tracking, sequence
 ///     ticks, the idle watch); killing it to silence one harmless message is a bad trade.
 ///   * We suppress only the CHAT LINE, via IChatGui.CheckMessageHandled → PreventOriginal().
 ///
 /// HARD CONSTRAINTS (both enforced below):
 ///   * Only suppress while relay.IsConnected (in an HMS session).
-///   * NEVER suppress outside a session — a real player legitimately AFK in a real dungeon must
+///   * NEVER suppress outside a session - a real player legitimately AFK in a real dungeon must
 ///     still get their system nudge. HMS must not eat anyone's real expel warning.
 ///
 /// The match is intentionally tight: system-channel only, plus a content check on the message
@@ -63,7 +63,7 @@ public sealed class AfkNotificationSuppressor : IDisposable
     {
         try
         {
-            // CONSTRAINT 1: only inside an HMS session. Outside a session we do nothing — real
+            // CONSTRAINT 1: only inside an HMS session. Outside a session we do nothing - real
             // AFK warnings for real dungeons pass through untouched.
             if (!isSessionActive())
                 return;
@@ -90,7 +90,7 @@ public sealed class AfkNotificationSuppressor : IDisposable
         }
         catch (Exception ex)
         {
-            // Never let a suppressor error break chat — just log and let the message through.
+            // Never let a suppressor error break chat - just log and let the message through.
             log.Debug("[HMSync] AFK suppressor error (message allowed through): " + ex.Message);
         }
     }

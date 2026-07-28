@@ -20,13 +20,13 @@ public class RelaySyncService : IDisposable
 
     public string LocalPeerId { get; private set; } = Guid.NewGuid().ToString("N")[..12];
     // S331 (Stage 4): true once the relay's RoomJoined has arrived (it mints our peer id). The capture/send loop must
-    // wait for this before emitting lane frames — the relay-minted id is our identity, and we need it to recognize our
+    // wait for this before emitting lane frames - the relay-minted id is our identity, and we need it to recognize our
     // own echoes. Reset on disconnect.
     public bool RoomJoinedAcknowledged { get; private set; }
     public string RoomId { get; private set; } = "";
     public bool IsConnected { get; private set; }
     // S328am: the URL we actually connected to (for the GUI to show the ACTIVE endpoint, not just the saved one).
-    // Set on a successful connect, cleared on disconnect. Token is NOT stripped here — the UI redacts it for display.
+    // Set on a successful connect, cleared on disconnect. Token is NOT stripped here - the UI redacts it for display.
     public string ConnectedUrl { get; private set; } = "";
     public bool IsHost { get; set; }
 
@@ -35,20 +35,20 @@ public class RelaySyncService : IDisposable
     public string CachedRoomId { get; private set; } = "";
 
     // Relay-authoritative room capacity (ROOM_CAP), handed to us on RoomJoined. 0 = unlimited / don't show. Never
-    // hardcoded — the relay may lower it after perf testing with just a restart, so we only ever read it from here.
+    // hardcoded - the relay may lower it after perf testing with just a restart, so we only ever read it from here.
     public int RoomCap { get; private set; }
 
-    // The room password for the current session — retained so the UI can show it as the shareable key (auto-generated
+    // The room password for the current session - retained so the UI can show it as the shareable key (auto-generated
     // on Host if the user left the field blank). In-memory only; cleared on disconnect.
     public string CurrentPassword { get; private set; } = "";
 
-    // S328f — SOLO MODE. When true, the plugin runs the full map-authoring feature set (zone load, time/weather/BGM,
-    // NPC, cosmetics, movement, packet filter) with NO relay connection and no peers — the same client-side loop
+    // S328f - SOLO MODE. When true, the plugin runs the full map-authoring feature set (zone load, time/weather/BGM,
+    // NPC, cosmetics, movement, packet filter) with NO relay connection and no peers - the same client-side loop
     // Hyperborea does. The relay exists ONLY to sync peers; everything else is client-side and relay-independent.
     // These two accessors are the single point solo flows through, so solo is one flag rather than scattered checks:
-    //   • HasMapAuthority — gates MAP actions (weather/time/BGM/NPC/load/reassert). True for the host OR in solo.
-    //   • IsSessionActive — gates feature-availability / packet-filter / "in a session". True when connected OR in solo.
-    // Peer-only operations (summon/kick/password/lock/transfer host) stay on the literal IsHost — solo can't do them.
+    //   • HasMapAuthority - gates MAP actions (weather/time/BGM/NPC/load/reassert). True for the host OR in solo.
+    //   • IsSessionActive - gates feature-availability / packet-filter / "in a session". True when connected OR in solo.
+    // Peer-only operations (summon/kick/password/lock/transfer host) stay on the literal IsHost - solo can't do them.
     public bool SoloMode { get; set; }
     public bool HasMapAuthority => IsHost || SoloMode;
     public bool IsSessionActive => IsConnected || SoloMode;
@@ -56,11 +56,11 @@ public class RelaySyncService : IDisposable
     public event Action<string, ulong, string>? OnPeerJoined;
     public event Action<string>? OnPeerLeft;
     public event Action<string>? OnHostTransfer;
-    public event Action<string, TransformData, bool>? OnTransformReceived;   // (peerId, snapshot, isHotLane) — v0.7.461: lane bool for the HOT-only Seq gate
+    public event Action<string, TransformData, bool>? OnTransformReceived;   // (peerId, snapshot, isHotLane) - v0.7.461: lane bool for the HOT-only Seq gate
 
     // ── Per-subject composite cache (Stage 2a) ── each lane message updates its slice of the subject's composite
     // TransformData; the merged whole feeds OnTransformReceived. Keyed by SUBJECT entity id (payload `sid`), not
-    // sender — the entity-addressing seam. This preserves the burst-coalescing property: one composite per subject,
+    // sender - the entity-addressing seam. This preserves the burst-coalescing property: one composite per subject,
     // each lane updates its own fields, the apply reads the merged whole. Evicted on peer-leave/despawn.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, TransformData> laneComposites = new();
 
@@ -77,7 +77,7 @@ public class RelaySyncService : IDisposable
     private static TransformData SnapshotComposite(TransformData c) =>
         JsonSerializer.Deserialize<TransformData>(JsonSerializer.Serialize(c))!;
 
-    // ── S331 (Stage 4): wiredump — the required binary-debuggability tool. Captures the next N frames (sent and/or
+    // ── S331 (Stage 4): wiredump - the required binary-debuggability tool. Captures the next N frames (sent and/or
     // received) and pretty-prints kind + decoded msgpack payload as readable text. Turns the binary wire back into
     // something eyeball-able on demand. Armed via /hms wiredump.
     public bool WireDumpActive { get; private set; }
@@ -90,7 +90,7 @@ public class RelaySyncService : IDisposable
         wireDumpLines.Clear();
         wireDumpRemaining = frames;
         WireDumpActive = true;
-        WireDumpEmit?.Invoke("[HMSync] wiredump armed — capturing next " + frames + " frames (sent+received).");
+        WireDumpEmit?.Invoke("[HMSync] wiredump armed - capturing next " + frames + " frames (sent+received).");
     }
 
     private void WireDumpCapture(bool sent, byte kind, byte[] payload, int frameLen)
@@ -113,14 +113,14 @@ public class RelaySyncService : IDisposable
     public event Action? OnDisconnected;
 
     // v0.7.464 (RMS QA F3, soft tier): the relay's SOFT ingress-throttle notice (WireKind.RateLimited 0x08).
-    // Non-fatal — the socket stays open and the session continues; excess ingress is simply not fanned out.
+    // Non-fatal - the socket stays open and the session continues; excess ingress is simply not fanned out.
     // Deliberately NOT an ErrorPayload code: see the note on WireKind.RateLimited for why an unknown code is
     // fatal on an older client and an unknown kind is inert.
     public event Action? OnRateLimited;
 
     // v0.7.464 (RMS QA F3, hard tier): the close status of the LAST closed connection, so the disconnect handler
     // can say WHY instead of the generic "lost connection". Null when the socket dropped without a close frame
-    // (abort/timeout/network) — which is exactly the case we cannot diagnose, and must not guess at.
+    // (abort/timeout/network) - which is exactly the case we cannot diagnose, and must not guess at.
     public int? LastCloseCode { get; private set; }
     public string LastCloseReason { get; private set; } = "";
 
@@ -136,7 +136,7 @@ public class RelaySyncService : IDisposable
     public async Task<bool> Connect(string relayUrl, string roomId, bool? createIfMissing, string? password, ulong[]? nearbyContentIds, ulong contentId, uint entityId, string charName)
     {
         // Force-kill any existing connection state synchronously
-        // Don't try graceful close — just nuke it
+        // Don't try graceful close - just nuke it
         try { cts?.Cancel(); } catch { }
         try { cts?.Dispose(); } catch { }
         cts = null;
@@ -153,7 +153,7 @@ public class RelaySyncService : IDisposable
 
         RoomId = roomId;
         CurrentPassword = password ?? "";
-        LastCloseCode = null;                // v0.7.464: fresh connection — a stale 4029 must not colour the next drop
+        LastCloseCode = null;                // v0.7.464: fresh connection - a stale 4029 must not colour the next drop
         LastCloseReason = "";
         IsHost = createIfMissing == true;   // optimistic; RoomJoined carries the relay's authoritative value
         cts = new CancellationTokenSource();
@@ -173,9 +173,9 @@ public class RelaySyncService : IDisposable
                 ContentId = contentId,
                 EntityId = entityId,
                 CharacterName = charName,
-                RoomPassword = password,        // the user's password — relay compares (constant-time)
+                RoomPassword = password,        // the user's password - relay compares (constant-time)
                 CreateIfMissing = createIfMissing,       // true=Host, false=Join/Reconnect, null=legacy (never null here)
-                NearbyContentIds = nearbyContentIds,     // Join only — the ContentIds we can see; relay resolves the room
+                NearbyContentIds = nearbyContentIds,     // Join only - the ContentIds we can see; relay resolves the room
             };
             await SendFrame(HMSync.Wire.WireKind.JoinRoom,
                 MessagePack.MessagePackSerializer.Serialize(joinWire, HMSync.Wire.WireFormat.Options));
@@ -185,9 +185,12 @@ public class RelaySyncService : IDisposable
         }
         catch (Exception ex)
         {
+            // Keep the raw handshake error in the LOG for diagnosis (e.g. "status code '502' when '101' was expected"),
+            // but hand the USER one honest message: a non-101 is bad key OR relay-down, indistinguishable once
+            // Cloudflare rewrites the origin's 401 to a 502 over the tunnel, so we don't claim "invalid key". (RMS→HMS.)
             log.Error("[HMSync] Connection failed: " + ex.Message);
             IsConnected = false;
-            OnError?.Invoke(0u, "Connection failed: " + ex.Message);   // 0 = generic (client-side connect failure)
+            OnError?.Invoke(0u, "Couldn't connect. Check your key, or the server may be down.");   // 0 = generic (client-side connect failure)
             return false;
         }
     }
@@ -196,38 +199,38 @@ public class RelaySyncService : IDisposable
     {
         if (!IsConnected && ws == null) return;
 
-        // Flip connection state OFF synchronously, FIRST — before any await. This is what the GUI and the
+        // Flip connection state OFF synchronously, FIRST - before any await. This is what the GUI and the
         // /hms stop guards read, so it must change the instant we decide to disconnect, not after the
         // (possibly slow/hanging) graceful close. The old code set it only AFTER awaiting CloseAsync, so a
         // server-half-closed socket faulted the fire-and-forget Task before the flag flipped → session
         // looked connected until a second /hms stop. Local socket cleanup still happens in finally.
         IsConnected = false;
         IsHost = false;
-        laneComposites.Clear();   // S330c (2b): drop all per-subject composites — a fresh session/reconnect starts clean
+        laneComposites.Clear();   // S330c (2b): drop all per-subject composites - a fresh session/reconnect starts clean
         RoomJoinedAcknowledged = false;   // S331: re-arm the join gate for the next connection
         var closing = ws;
 
         try
         {
-            // Best-effort graceful close, TIMEBOXED to 1s. Optional — teardown does not depend on it.
+            // Best-effort graceful close, TIMEBOXED to 1s. Optional - teardown does not depend on it.
             if (closing?.State == WebSocketState.Open)
             {
                 using var graceCts = new CancellationTokenSource(TimeSpan.FromSeconds(1));
                 try
                 {
                     // Tell the server we're leaving (matters for the /hms leave peer path, which sends no
-                    // SessionEnd). Best-effort — SendFrame targets the live ws (still set until finally) and
+                    // SessionEnd). Best-effort - SendFrame targets the live ws (still set until finally) and
                     // swallows its own errors; if the socket's already closing, CloseAsync below throws and
                     // we force teardown.
                     await SendFrame(HMSync.Wire.WireKind.LeaveRoom, System.Array.Empty<byte>());
                     await closing.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", graceCts.Token);
                 }
-                catch (Exception ex) { log.Debug("[HMSync] Graceful close skipped (" + ex.Message + ") — forcing teardown."); }
+                catch (Exception ex) { log.Debug("[HMSync] Graceful close skipped (" + ex.Message + ") - forcing teardown."); }
             }
         }
         finally
         {
-            // ALWAYS run local teardown — never gated behind network I/O.
+            // ALWAYS run local teardown - never gated behind network I/O.
             try { cts?.Cancel(); } catch { }
             try { cts?.Dispose(); } catch { }
             cts = null;
@@ -242,11 +245,11 @@ public class RelaySyncService : IDisposable
     }
 
     // S331 (Stage 4 / Stage 3 retirement): SendTransform (the monolithic TransformUpdate 0x10) is REMOVED. The whole-
-    // struct JSON send is gone — the binary lanes (SendTransformAsLanes) are the only wire format now. This is the
+    // struct JSON send is gone - the binary lanes (SendTransformAsLanes) are the only wire format now. This is the
     // point where the monolith is retired: there is no method here that sends the entire struct as one message.
 
     // ── LANE SENDER (Stage 2a, S330a) ── emit ONLY the lanes whose fields changed since the last send. This IS the
-    // "no monolithic send path" property: there is no method here that sends the whole struct as lanes — each lane is
+    // "no monolithic send path" property: there is no method here that sends the whole struct as lanes - each lane is
     // an independent message with only its fields. A walking-not-emoting peer sends HOT only; an idle peer sends
     // nothing (until the keepalive forces a HOT). Envelope SenderId = LocalPeerId ALWAYS (relay sender-exclusion +
     // spoof-guard); the subject entity id rides IN the payload (== LocalPeerId today; an NPC's id tomorrow).
@@ -255,21 +258,21 @@ public class RelaySyncService : IDisposable
 
     /// <summary>
     /// Emit changed lanes. Two force flags with distinct meaning:
-    ///   <paramref name="forceHot"/> — send HOT even if unchanged (the keepalive/liveness heartbeat; HOT carries the
+    ///   <paramref name="forceHot"/> - send HOT even if unchanged (the keepalive/liveness heartbeat; HOT carries the
     ///   version and is the "still here" signal). True on keepalive, first-send, and dirty-check-off.
-    ///   <paramref name="forceAllLanes"/> — send EVERY lane even if unchanged (a joiner needs the complete initial
-    ///   picture: position + appearance + map-state + emote). True on first-send and dirty-check-off ONLY — NOT on a
+    ///   <paramref name="forceAllLanes"/> - send EVERY lane even if unchanged (a joiner needs the complete initial
+    ///   picture: position + appearance + map-state + emote). True on first-send and dirty-check-off ONLY - NOT on a
     ///   bare keepalive, because resending unchanged COLD/HOST/WARM on every keepalive is redundant idle traffic.
     /// </summary>
     public async Task SendTransformAsLanes(TransformData t, bool isHost, bool forceHot, bool forceAllLanes, bool forceHostOnce, float posEps, float rotEps)
     {
         if (!IsConnected) return;
         var prev = lastSentLanes;
-        // S331 (Stage 4): subjectId = "" — for a player puppet the subject IS the relay-stamped sender, so we send the
+        // S331 (Stage 4): subjectId = "" - for a player puppet the subject IS the relay-stamped sender, so we send the
         // 1-byte empty sentinel instead of the full id (spec §4). An NPC/entity later would put its explicit id here.
         const string subject = "";
 
-        // HOT — position/movement. Sent on change OR on the keepalive/liveness heartbeat.
+        // HOT - position/movement. Sent on change OR on the keepalive/liveness heartbeat.
         if (forceHot || prev == null || !LaneProjection.HotEquals(t, prev, posEps, rotEps))
         {
             hotSeq++;
@@ -278,7 +281,7 @@ public class RelaySyncService : IDisposable
                 MessagePack.MessagePackSerializer.Serialize(hot, HMSync.Wire.WireFormat.Options));
         }
 
-        // WARM — emote/mount/minion/ornament/etc. STRICTLY change-gated (forceAllLanes only, never keepalive).
+        // WARM - emote/mount/minion/ornament/etc. STRICTLY change-gated (forceAllLanes only, never keepalive).
         if (forceAllLanes || prev == null || !LaneProjection.WarmEquals(t, prev))
         {
             var warm = LaneProjection.ToWarmWire(t, subject);
@@ -286,7 +289,7 @@ public class RelaySyncService : IDisposable
                 MessagePack.MessagePackSerializer.Serialize(warm, HMSync.Wire.WireFormat.Options));
         }
 
-        // COLD — Moniker/cosmetic toggles. STRICTLY change-gated (forceAllLanes only, never keepalive).
+        // COLD - Moniker/cosmetic toggles. STRICTLY change-gated (forceAllLanes only, never keepalive).
         if (forceAllLanes || prev == null || !LaneProjection.ColdEquals(t, prev))
         {
             var cold = LaneProjection.ToColdWire(t, subject);
@@ -294,7 +297,7 @@ public class RelaySyncService : IDisposable
                 MessagePack.MessagePackSerializer.Serialize(cold, HMSync.Wire.WireFormat.Options));
         }
 
-        // HOST — map-state block. Only the host emits it. STRICTLY change-gated (forceAllLanes only, never keepalive) —
+        // HOST - map-state block. Only the host emits it. STRICTLY change-gated (forceAllLanes only, never keepalive) -
         // EXCEPT forceHostOnce, the late-join re-broadcast: the host re-sends current map-state once when a peer joins so
         // the newcomer (who missed the original change) gets weather/time/BGM. Existing peers skip it via the epoch gate.
         if (isHost && (forceAllLanes || forceHostOnce || prev == null || !LaneProjection.HostEquals(t, prev)))
@@ -310,7 +313,7 @@ public class RelaySyncService : IDisposable
 
     private static TransformData CloneTransform(TransformData t)
     {
-        // Shallow value-copy is enough — all fields are value types + strings (immutable). JSON round-trip avoids
+        // Shallow value-copy is enough - all fields are value types + strings (immutable). JSON round-trip avoids
         // hand-listing 54 fields and can't silently miss one (same lesson as RenderEquals).
         return JsonSerializer.Deserialize<TransformData>(JsonSerializer.Serialize(t))!;
     }
@@ -319,7 +322,7 @@ public class RelaySyncService : IDisposable
     {
         if (!IsConnected || !IsHost) return;
 
-        // S331 (Stage 4): ZoneLoadData isn't ported to a wire POCO yet (spec §4.5 — it rides its own path). Carry its
+        // S331 (Stage 4): ZoneLoadData isn't ported to a wire POCO yet (spec §4.5 - it rides its own path). Carry its
         // JSON as the payload bytes for now; the relay treats the payload as opaque either way, so this is transparent
         // to it. Port to a msgpack ZoneLoadPayload later if zone-load traffic ever matters for bytes (it's rare).
         var jsonBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(zoneData));
@@ -343,7 +346,7 @@ public class RelaySyncService : IDisposable
     }
 
     // Host hands the role to a specific peer (relay reassigns host + broadcasts HostTransfer; we drop IsHost when the
-    // broadcast comes back). Distinct from leave-driven auto-succession — this is an explicit pick.
+    // broadcast comes back). Distinct from leave-driven auto-succession - this is an explicit pick.
     public async Task SendHostTransfer(string targetPeerId)
     {
         if (!IsConnected || !IsHost || string.IsNullOrEmpty(targetPeerId)) return;
@@ -356,7 +359,7 @@ public class RelaySyncService : IDisposable
     {
         var buffer = new byte[8192];
         // S328ak: reassemble multi-frame messages. A WebSocket message may arrive as several frames (EndOfMessage
-        // false until the last), regardless of size — the old code assumed one frame == one message and used
+        // false until the last), regardless of size - the old code assumed one frame == one message and used
         // result.Count directly, so a roster/burst/large payload would truncate and silently fail to parse (the
         // catch{continue} swallowed it). Accumulate until EndOfMessage, with a cap. Relay Claude fixed the mirror
         // bug server-side; this is the client half. 64KB cap matches the relay's.
@@ -377,7 +380,7 @@ public class RelaySyncService : IDisposable
                     {
                         // v0.7.464: record WHY the server closed before we unwind. Application close codes live in
                         // 4000–4999 (RFC 6455 §7.4.2) and .NET surfaces them cast into WebSocketCloseStatus, so an
-                        // int cast is the honest read. Only a clean close frame carries this — an aborted socket
+                        // int cast is the honest read. Only a clean close frame carries this - an aborted socket
                         // throws WebSocketException instead and leaves LastCloseCode null (correctly undiagnosed).
                         var cs = result.CloseStatus ?? ws?.CloseStatus;
                         LastCloseCode = cs.HasValue ? (int?)cs.Value : (int?)null;
@@ -388,7 +391,7 @@ public class RelaySyncService : IDisposable
                     }
                     if (assembly.Length + result.Count > MaxMessageBytes)
                     {
-                        // Oversized message — drain the rest of it and drop, rather than corrupt the stream.
+                        // Oversized message - drain the rest of it and drop, rather than corrupt the stream.
                         tooLarge = true;
                         continue;
                     }
@@ -406,7 +409,7 @@ public class RelaySyncService : IDisposable
                 var count = (int)assembly.Length;
                 NetStats?.RecordIn(count);   // S328ag: wire bytes actually received (now the full reassembled frame)
 
-                // S331 (Stage 4): parse the BINARY downleg frame (spec §1b) — [magic][kind][flags][senderLen][senderId]
+                // S331 (Stage 4): parse the BINARY downleg frame (spec §1b) - [magic][kind][flags][senderLen][senderId]
                 // [timestamp][msgpack payload]. The senderId is RELAY-STAMPED (trusted); the client never asserted it.
                 var frameBytes = new byte[count];
                 System.Buffer.BlockCopy(assembly.GetBuffer(), 0, frameBytes, 0, count);
@@ -416,7 +419,7 @@ public class RelaySyncService : IDisposable
                 if (WireDumpActive) WireDumpCapture(false, parsed.Kind, parsed.Payload, count);
 
                 // S328al: drop our OWN state broadcasts (we don't render our own puppet). EXCEPTION: HostTransfer is a
-                // control message ABOUT us — the relay stamps it with senderId = the NEW host (i.e. us, when promoted),
+                // control message ABOUT us - the relay stamps it with senderId = the NEW host (i.e. us, when promoted),
                 // so a blanket self-drop meant the new host never learned it was promoted. Let HostTransfer through even
                 // when the stamped sender is our own id.
                 if (parsed.SenderId == LocalPeerId && parsed.Kind != HMSync.Wire.WireKind.HostTransfer) continue;
@@ -440,7 +443,7 @@ public class RelaySyncService : IDisposable
         if (IsConnected)
         {
             IsConnected = false;
-            laneComposites.Clear();   // S330c (2b): unexpected drop — clear composites so a reconnect starts clean
+            laneComposites.Clear();   // S330c (2b): unexpected drop - clear composites so a reconnect starts clean
             RoomJoinedAcknowledged = false;   // S331: re-arm the join gate
             OnDisconnected?.Invoke();
         }
@@ -448,7 +451,7 @@ public class RelaySyncService : IDisposable
 
     // S331 (Stage 4): binary frame dispatch. kind + relay-stamped senderId + opaque msgpack payload. Replaces the JSON
     // HandleMessage. Lane payloads decode to HMSync.Wire types → merge into the per-subject composite → snapshot → apply.
-    // The subjectId sentinel (spec §4): payload SubjectId == "" means "subject is the stamped sender" (player puppet) —
+    // The subjectId sentinel (spec §4): payload SubjectId == "" means "subject is the stamped sender" (player puppet) -
     // resolve it to senderId. A non-empty SubjectId is an explicit entity id (NPC, later).
     private void HandleFrame(byte kind, string senderId, byte[] payload)
     {
@@ -460,7 +463,7 @@ public class RelaySyncService : IDisposable
             case HMSync.Wire.WireKind.RoomJoined:
             {
                 var data = MessagePack.MessagePackSerializer.Deserialize<HMSync.Wire.RoomJoinedPayload>(payload, HMSync.Wire.WireFormat.Options);
-                // The relay MINTS our peer id — adopt it as our LocalPeerId (S331: relay-authoritative identity).
+                // The relay MINTS our peer id - adopt it as our LocalPeerId (S331: relay-authoritative identity).
                 if (!string.IsNullOrEmpty(data.AssignedPeerId)) LocalPeerId = data.AssignedPeerId;
                 IsHost = data.IsHost;
                 if (!string.IsNullOrEmpty(data.RoomId)) CachedRoomId = data.RoomId;   // opaque id → cache for reconnect
@@ -469,7 +472,7 @@ public class RelaySyncService : IDisposable
                 // Bridge to the existing OnRoomJoined path. The v4 RoomJoined payload carries id+host; the richer
                 // zone/spawn fields the old JSON relay sent aren't in v4 (map-state now arrives via the HOST lane +
                 // the late-join re-broadcast, not baked into RoomJoined). Invoke with a minimal RoomJoinedData so the
-                // existing handler runs; CurrentZoneId=0 → no positional auto-load (correct — HOST lane drives it).
+                // existing handler runs; CurrentZoneId=0 → no positional auto-load (correct - HOST lane drives it).
                 OnRoomJoined?.Invoke(new RoomJoinedData { PeerIds = System.Array.Empty<string>() });
                 break;
             }
@@ -514,10 +517,10 @@ public class RelaySyncService : IDisposable
 
             case HMSync.Wire.WireKind.HostTransfer:
             {
-                // The relay stamps senderId = the new host's id in the HEADER (spec §3.1 exception) — that's the
+                // The relay stamps senderId = the new host's id in the HEADER (spec §3.1 exception) - that's the
                 // authoritative source. The payload MAY also carry it, but we don't require it: read the header sender
                 // first, and only fall back to the payload if the header is somehow empty. This is robust to an empty
-                // HostTransfer payload (the relay may send just the header stamp) — deserializing empty bytes would throw.
+                // HostTransfer payload (the relay may send just the header stamp) - deserializing empty bytes would throw.
                 string newHost = senderId;
                 if (string.IsNullOrEmpty(newHost) && payload.Length > 0)
                 {
@@ -539,7 +542,7 @@ public class RelaySyncService : IDisposable
                 string subj = ResolveSubject(h.SubjectId);
                 var comp = CompositeFor(subj);
                 LaneProjection.MergeHotWire(comp, h);
-                // Hand a SNAPSHOT COPY to the apply path — interpolation stores references, so the shared mutating
+                // Hand a SNAPSHOT COPY to the apply path - interpolation stores references, so the shared mutating
                 // composite would alias every snapshot to the latest position → flip-book. A copy per message gives
                 // interpolation distinct points to glide between.
                 OnTransformReceived?.Invoke(subj, SnapshotComposite(comp), /*isHotLane:*/ true);
@@ -575,7 +578,7 @@ public class RelaySyncService : IDisposable
 
             case HMSync.Wire.WireKind.ZoneLoadExecute:
             {
-                // ZoneLoad carries its JSON as payload bytes (not yet ported to a wire POCO — see SendZoneLoad).
+                // ZoneLoad carries its JSON as payload bytes (not yet ported to a wire POCO - see SendZoneLoad).
                 var json = Encoding.UTF8.GetString(payload);
                 var zd = JsonSerializer.Deserialize<ZoneLoadData>(json);
                 if (zd != null) OnZoneLoadReceived?.Invoke(zd);
@@ -591,7 +594,7 @@ public class RelaySyncService : IDisposable
                 break;
 
             // v0.7.464 (RMS QA F3, soft tier): the relay is dropping some of our ingress but keeping us connected.
-            // Payload is empty by contract — do NOT deserialize it (a future version may append fields; parsing an
+            // Payload is empty by contract - do NOT deserialize it (a future version may append fields; parsing an
             // empty buffer today would throw and turn an advisory into a log error). Advisory only: no teardown.
             case HMSync.Wire.WireKind.RateLimited:
                 OnRateLimited?.Invoke();
@@ -608,7 +611,7 @@ public class RelaySyncService : IDisposable
     }
 
     // ── S331 (Stage 4): binary frame send. Builds an UPLEG frame [magic][kind][flags][timestamp][payload] and
-    // sends it as a WS BINARY message. The payload is already-serialized msgpack bytes. No sender/room — the relay
+    // sends it as a WS BINARY message. The payload is already-serialized msgpack bytes. No sender/room - the relay
     // stamps the trusted sender and knows the room from the connection (spec §1a). This replaces the JSON Send path.
     private async Task SendFrame(byte kind, byte[] msgpackPayload)
     {
