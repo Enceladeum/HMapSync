@@ -1300,8 +1300,16 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         });
 
         string gameVersion = GetGameVersion();
+        // F1: only run the patch-detection when we could actually READ the live version. An empty read (CS not ready /
+        // exception) is NOT evidence of a patch — comparing "" against a real stamp would falsely trip the drift branch
+        // and shut a perfectly-good passthrough. Skip the check and leave the current verified state untouched.
+        if (string.IsNullOrEmpty(gameVersion))
+        {
+            log.Warning("[HMSync] /say passthrough: could not read the live game version; skipping patch-change check " +
+                "and leaving the current opcode state as-is.");
+        }
         // If the game has patched since these opcodes were confirmed, treat them as unverified until re-learned.
-        if (!string.IsNullOrEmpty(config.SayOpcodesGameVersion) && config.SayOpcodesGameVersion != gameVersion && config.SayOpcodesVerified)
+        else if (!string.IsNullOrEmpty(config.SayOpcodesGameVersion) && config.SayOpcodesGameVersion != gameVersion && config.SayOpcodesVerified)
         {
             config.SayOpcodesVerified = false;
             config.Save();
@@ -1315,6 +1323,9 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         {
             packetFilter.PassSayChat = false;
             packetFilter.PassSayChatOut = false;
+            // F4: say WHY it's shut so the closed state is diagnosable from the log, not silent.
+            log.Information("[HMSync] /say passthrough stays off: opcodes are not verified for this game version. " +
+                "Re-learn them (Config tab → Say opcodes → Re-learn) to enable it.");
             return false;   // stay shut until re-learned
         }
 
@@ -1328,6 +1339,10 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             packetFilter.PassSayChatOut = false;
             config.SayOpcodesVerified = false;
             config.Save();
+            // F4: this branch means Verified read true but there's no version stamp — the opcodes were never captured
+            // for any known version. Log it (rare, but otherwise invisible) instead of shutting silently.
+            log.Warning("[HMSync] /say passthrough stays off: opcodes were marked verified but carry no game-version " +
+                "stamp, so they can't be trusted for this version. Re-learn them to enable it.");
             return false;
         }
 
@@ -1922,11 +1937,26 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     {
         if (relearnGotOut && relearnGotIn)
         {
+            // F2: don't stamp/verify against an empty version. GetGameVersion() can return "" (CS not ready), and a
+            // verified state with a blank stamp is exactly what the PrepareSayPassthrough empty-stamp guard fails
+            // closed on next start. Keep the captured opcodes but refuse to verify; ask the user to retry so we
+            // stamp a real version. The re-learn stays armed so a moment later (CS ready) it can complete.
+            string learnedVersion = GetGameVersion();
+            if (string.IsNullOrEmpty(learnedVersion))
+            {
+                log.Warning("[HMSync] Re-learn captured both opcodes but the live game version could not be read; " +
+                    "not verifying to avoid an empty stamp.");
+                chat.PrintError("[HMSync] Both /say opcodes were captured, but the game version couldn't be read just now, " +
+                    "so they weren't confirmed. Please run Re-learn again in a moment.");
+                relearnGotOut = false;
+                relearnGotIn = false;
+                return;
+            }
             packetFilter.RelearnArmed = false;
             packetFilter.OnSayOpcodeFound = null;
             packetFilter.OnSayOutOpcodeFound = null;
             config.SayOpcodesVerified = true;
-            config.SayOpcodesGameVersion = GetGameVersion();
+            config.SayOpcodesGameVersion = learnedVersion;
             config.Save();
             sayDriftBanner = false;
             packetFilter.ConfigureSayOpcodes(config.SayOutboundOpcode, config.SayInboundOpcode);
