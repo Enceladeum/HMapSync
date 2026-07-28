@@ -3,7 +3,7 @@
         <TargetFramework>net10.0-windows</TargetFramework>
         <LangVersion>latest</LangVersion>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-        <Version>1.0.0.0</Version>
+        <Version>1.0.0.1</Version>
         <AssemblyName>HMSync</AssemblyName>
         <RootNamespace>HMSync</RootNamespace>
         <Nullable>enable</Nullable>
@@ -14,13 +14,13 @@
     <ItemGroup>
         <!-- S327: named opcode→id map (FFXIVOpcodes, Global region). Embedded so the packet inspector can label
              packets by name (e.g. 356 → ActorControlSelf). Opcodes rotate per patch; swap this JSON to update.
-             The NAME is the durable identity we care about — numbers are per-version. -->
+             The NAME is the durable identity we care about - numbers are per-version. -->
         <EmbeddedResource Include="opcodes.min.json" />
     </ItemGroup>
 
     <ItemGroup>
         <!--
-          S246: Glamourer.Api — the official consumer IPC package (Glamourer.Api.IpcSubscribers.*,
+          S246: Glamourer.Api - the official consumer IPC package (Glamourer.Api.IpcSubscribers.*,
           Glamourer.Api.Enums.*). Used to drive cosmetic visibility toggles (hat/visor/weapon/ears)
           through Glamourer when it's installed. The 2.x line is current; NuGet resolves the latest.
           Glamourer.Api.dll MUST ship next to HMSync.dll — a plain PackageReference copies it to

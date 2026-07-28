@@ -5,6 +5,20 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0.1] - 2026-07-28
+
+### Fixed
+
+- **Map reveal in newly patched zones**: automatic HUD map reveal now works in zones added by patch 7.55, such as The North Horn. The game's discovery table grew with the patch and the previous build silently skipped the new maps.
+
+### Added
+
+- **Installer buttons**: the plugin's entry in the Dalamud installer now has working **Open** and **Settings** buttons, opening the main window and jumping to the config tab respectively.
+
+### Changed
+
+- **Relay key check**: a pasted relay key is now verified against the real relay handshake, so the status light reflects whether the key is actually accepted instead of lighting green for any input.
+
 ## [1.0.0] - 2026-07-28
 
 Initial public release.
@@ -25,4 +39,5 @@ Initial public release.
 - **Curated spawns** for every zone, with your own spawn points recorded via `/hms memo`.
 - **Optional integrations**: Glamourer for cosmetic visibility toggles, and Moniker for in-session nameplate changes.
 
+[1.0.0.1]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.1
 [1.0.0]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.0
