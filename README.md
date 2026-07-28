@@ -12,10 +12,10 @@ Enter any in-game map and explore it with friends. HMS puts you behind a firewal
 ## Highlights
 
 - Load any zone client-side and roam it freely from your apartment, estate, FC room or even a world map
-- Packet filter keeps you secure while in-session, letting only heartbeat signals and optionally allowing /say so you can chat with your friends normally while in-session, making it seem you're just standing and chatting
+- Packet filter automatically engages once you load a virtual zone and keeps you secure while in-session, letting only heartbeat signals and optionally allowing `/say`, `/yell` and `/shout` though, making it seem you're just standing and chatting to any outside observer
 - Access cutscene-only zones (pre-war Garlemald, Garlean throne room, Steps of Faith bridge or Werlytian countryside)
 - Co-op mode: enter any map with up to 20 friends without any time limits or action restrictions. Ever wanted to roleplay in a dungeon for longer than 90 minutes and use flying mounts indoors? Now you can
-- Enter solo instances like Terncliff, inn rooms or raids and hang out there with friends 
+- Enter question, raid and solo instances like Terncliff, NPC rooms or raids and freely explore them
 
 
 ## Features
