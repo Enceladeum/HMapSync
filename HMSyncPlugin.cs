@@ -439,6 +439,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             ClearCapture = () => packetFilter.ClearCapture(),
             SnapshotCapture = () => packetFilter.SnapshotCapture(),
             OpcodeName = op => opcodeMap.InboundName(op),
+            OpcodeMapStatus = () => opcodeMap.StatusLine(),
             LocalEntityId = () => objectTable.LocalPlayer?.EntityId ?? 0u,
             EntityName = eid => objectTable.SearchByEntityId(eid)?.Name.TextValue ?? "",
             FlyActive = () => noclip.FlightActive,                  // S326m: folded movement toggle states
@@ -498,6 +499,10 @@ public sealed class HMSyncPlugin : IDalamudPlugin
 
         var asmVer = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
         log.Information("[HMSync] Plugin loaded v" + (asmVer != null ? asmVer.ToString(3) : "?"));
+
+        // F3: best-effort once-per-session refresh of the packet-inspector opcode-name map from GitHub. Non-blocking;
+        // falls back to the bundled map if GitHub is unreachable. Labels only — cannot affect the firewall.
+        opcodeMap.StartRefresh(GetGameVersion());
     }
 
     // Teleport hold — a one-shot SetPosition gets re-grounded/reverted by the engine each tick (which is why noclip

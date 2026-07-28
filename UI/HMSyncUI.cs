@@ -212,6 +212,7 @@ public class HMSyncUI
     public System.Action? ClearCapture;                               // clear the buffer
     public Func<List<PacketFilterService.CapturedPacket>>? SnapshotCapture;   // current captured packets
     public Func<ushort, string>? OpcodeName;                                 // resolve inbound opcode → packet name (or "")
+    public Func<string>? OpcodeMapStatus;                                    // opcode-name map source/staleness line
     public Func<uint>? LocalEntityId;                                        // local player's entity id (for the local-only filter)
     public Func<uint, string>? EntityName;                                  // resolve entity id → actor name (or "")
 
@@ -2732,6 +2733,8 @@ ImGui.Spacing();
         // Status line + a display-only filter (narrows what's shown without restarting capture).
         var packets = SnapshotCapture?.Invoke() ?? new List<PacketFilterService.CapturedPacket>();
         ImGui.TextDisabled((active ? "Capturing" : "Stopped") + " — " + packets.Count + " packets in buffer (max 500).");
+        var mapStatus = OpcodeMapStatus?.Invoke();
+        if (!string.IsNullOrEmpty(mapStatus)) ImGui.TextDisabled(mapStatus);
         ImGui.SetNextItemWidth(240f);
         ImGui.InputTextWithHint("##pktdisp", "filter shown rows by opcode\u2026", ref pktDisplayFilter, 64);
         ImGui.SameLine();
