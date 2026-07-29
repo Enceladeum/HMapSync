@@ -2187,13 +2187,19 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             for (int i = 0; i < regionCount; i++) after.Append(((byte*)tablePtr)[i] != 0 ? '1' : '0');
 
             // v0.7.479: post-write confirmation. We wrote through a pointer computed from measured constants; this asks
-            // the GAME (via its own mapId->slot resolution) whether region 0 now reads as discovered. It prevents
-            // nothing and gates nothing - if the base offset ever drifts, reveal would write to the wrong slot and the
-            // fog would simply stay with no error, and this line is the difference between "wrong address" and "render
-            // didn't refresh" without an investigation.
+            // the GAME (via its own mapId->slot resolution) whether a region we just set now reads as discovered. It
+            // prevents nothing and gates nothing - if the base offset ever drifts, reveal would write to the wrong slot
+            // and the fog would simply stay with no error, and this line is the difference between "wrong address" and
+            // "render didn't refresh" without an investigation.
+            // v0.7.480: probe region 1, not region 0. DiscoveryFlag bit 0 is clear on every one of the 501 discovery
+            // maps in the 7.55 sheet - region numbering starts at 1 (North Horn 0x1FFFFFFE, South Horn 0x7FFFFFFE), so
+            // slot 0 is dead space no map owns. It only reads back today because the write loop above is unconditional;
+            // if that ever masks to DiscoveryFlag, a region-0 probe would cry "UNDISCOVERED" on every successful reveal.
+            // Bit 1 is the lowest set region on every discovery map, so it is always written and always a valid slot.
+            const byte probeRegion = 1;
             bool agrees = false;
-            try { var d = FFXIVClientStructs.FFXIV.Client.Game.MapDiscoveryManager.Instance(); if (d != null) agrees = d->IsMapRegionDiscovered(mapId, (byte)0); } catch { }
-            log.Information("[HMSync] [MAPREVEAL] game reads region 0 as "
+            try { var d = FFXIVClientStructs.FFXIV.Client.Game.MapDiscoveryManager.Instance(); if (d != null) agrees = d->IsMapRegionDiscovered(mapId, probeRegion); } catch { }
+            log.Information("[HMSync] [MAPREVEAL] game reads region " + probeRegion + " as "
                 + (agrees ? "discovered - address confirmed" : "UNDISCOVERED - our address may not be the game's slot"));
 
             log.Information("[HMSync] [MAPREVEAL] map=" + mapId + " DiscoveryIndex=" + discoveryIndex + " use16=" + use16

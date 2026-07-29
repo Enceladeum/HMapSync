@@ -12,10 +12,13 @@ measured the 16/32-region array as holding only M entries". (The `IndexOutOfRang
 
 1. Sig-scan `MapDiscoveryManager.IsRegionDiscovered` in `ffxiv_dx11.exe`:
    `33 C0 4C 8B D1 66 3B C2 7F ?? 45 84 C9 74 ?? B8 ?? ?? ?? ?? 66 3B D0 73 ?? 48 0F BF C2`
-2. Disassemble it:
+2. Disassemble it (actually disassemble - do not read a fixed byte at sig+offset; see the caveat):
    - 16-region bound → `mov eax, imm32`   (0xA2 = 162 in 7.55)
    - 32-region bound → `cmp dx, imm8`     (0x31 =  49 in 7.55)
    - 32-region base  → `add rax, 0x51` then `shl 5` → 0x51 * 0x20 = 0xA20
+   - Caveat: `cmp dx, imm8` holds only while the bound <= 127. If a future patch pushes the count past
+     that, the encoding becomes `66 81 FA imm16` and the immediate moves - so read it from the decode,
+     never from a fixed offset.
 3. `ReportCooldown` sits after both arrays — find via the update fn
    (`movss xmm0,[rcx+off]; subss; movss`) or a reset (`mov [rcx+off], 0`). Struct size = off + 4.
 4. Cross-check against the Map sheet: the max `DiscoveryIndex` in each `DiscoveryArrayByte` family
