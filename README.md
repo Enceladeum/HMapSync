@@ -197,6 +197,12 @@ HMapSync is distributed through a custom Dalamud plugin repository.
 2. Add the custom plugin repository URL: `https://raw.githubusercontent.com/Enceladeum/DalamudPlugins/main/repo.json`.
 3. Open the plugin installer (`/xlplugins`), search for HMapSync, and install.
 
+## Demo
+
+Copied Factory exploration (click to view)
+
+[![Copied Factory tour](https://img.youtube.com/vi/xFMyCv2BwzA/0.jpg)](https://www.youtube.com/watch?v=xFMyCv2BwzA)
+
 ## Credits
 
 - Author: The Enceladeum
