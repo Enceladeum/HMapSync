@@ -149,6 +149,7 @@ public class HMSyncUI
     public System.Action? ConfirmRelayKey;
     public System.Action? ResetRelayKeyEdit;
     private bool relayKeyLocked;   // when true the key field is non-editable (confirmed); editing re-opens it
+    private bool relayKeyLockInit; // NB-5: false until the first key-field draw derives the lock from the saved key
     public Func<string>? ActiveRelayUrl;
     public Func<RelayLight>? RelayLightFn;                 // relay reachability light (green/red/grey) for the uplink dot
 
@@ -1662,6 +1663,14 @@ ImGui.Spacing();
             if (sel >= 0 && sel < services.Count)
             {
                 var svc = services[sel];
+                // NB-5: on the first draw after a client restart, relayKeyLocked is a fresh runtime bool (false), so a
+                // saved-and-validated key showed as editable again. Derive the lock once from the saved key: if a key is
+                // already stored, start locked (confirmed). Manual edit/confirm/service-switch drive it thereafter.
+                if (!relayKeyLockInit)
+                {
+                    relayKeyLocked = !string.IsNullOrWhiteSpace(svc.Key);
+                    relayKeyLockInit = true;
+                }
                 string keyEdit = svc.Key ?? "";
                 float btnW = 30f;
                 ImGui.SetNextItemWidth(-(PanelPad + btnW + 6f));

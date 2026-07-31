@@ -89,7 +89,7 @@ public unsafe class StateCaptureService : IDisposable
 
     // S328x: supplies the local player's Moniker nameplate name (name, hideFc); ("",false) if none/absent. Wired by
     // the plugin so the capture service stays decoupled from the Moniker IPC.
-    public System.Func<(string name, bool hideFc, bool hideName)>? MonikerNameSupplier;
+    public System.Func<(string name, bool hideFc, bool hideName, bool hideTitle)>? MonikerNameSupplier;
 
     // COSM_1_016: supplies the last locally-accepted cast (id, type, epoch, target position) for the WARM lane.
     public System.Func<(uint id, byte type, uint epoch, System.Numerics.Vector3 target, ulong targetCid)>? SkillCastSupplier;
@@ -346,10 +346,11 @@ public unsafe class StateCaptureService : IDisposable
         // S328x: Moniker nameplate name (always-present so late joiners get it). Empty if no Moniker / no name set.
         if (MonikerNameSupplier != null)
         {
-            var (mkName, mkHideFc, mkHideName) = MonikerNameSupplier();
+            var (mkName, mkHideFc, mkHideName, mkHideTitle) = MonikerNameSupplier();
             transform.MonikerName = mkName;
             transform.MonikerHideFc = mkHideFc;
             transform.MonikerHideName = mkHideName;
+            transform.MonikerHideTitle = mkHideTitle;
         }
 
         // S328ah: change-detection gate. Suppress a send if nothing a receiver renders from has changed since the last

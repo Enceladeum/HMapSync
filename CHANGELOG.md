@@ -5,6 +5,19 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0.2] - 2026-07-31
+
+### Added
+
+- **Hide-title syncing (HMoniker)**: when a session member uses HMoniker's new "hide title" option, other members now see that nameplate title hidden too, matching what the wearer sees. Requires HMoniker.
+
+### Fixed
+
+- **`/em` emotes now reach session members**: custom text emotes (`/em`) from co-located session members are now visible, alongside the existing `/say`, `/yell`, and `/shout` passthrough.
+- **Aetherial Sea location**: loading the Aetherial Sea (the login-screen backdrop) now places you on solid footing instead of an unusable spot.
+- **Bayside Battleground spawn**: loading the Bayside Battleground (PvP) now drops you at a better starting position.
+- **Relay key stays confirmed across restarts**: a saved relay key now shows as confirmed after you restart the game, instead of appearing editable again.
+
 ## [1.0.0.1] - 2026-07-28
 
 ### Fixed

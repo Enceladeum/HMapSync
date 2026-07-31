@@ -290,7 +290,12 @@ public unsafe class PacketFilterService : IDisposable
         try
         {
             ushort chatType = *(ushort*)(pkt + 0x26);
-            if (chatType != 10 && chatType != 11 && chatType != 30) return false;   // not say/shout/yell
+            // NB-7: say/yell/shout AND /em all ride the SAME inbound "public-chat" opcode (825 on 7.55); the chat-type
+            // byte is the only discriminator. /em is CustomEmote=28 (0x1C), MEASURED from a live capture (two peers) -
+            // not guessed. Widening the accepted set here (vs. a separate lane) is correct because the /em packet
+            // already arrives on the say opcode; it just needs to pass the shape gate. StandardEmote is a DIFFERENT
+            // code and is NOT whitelisted until measured - fail-closed by omission.
+            if (chatType != 10 && chatType != 11 && chatType != 30 && chatType != 28) return false;   // say/shout/yell/em
             ulong senderContentId = *(ulong*)(pkt + 0x10);
             if (senderContentId == 0) return false;                                 // chat always has a sender
             byte nameFirst = *(byte*)(pkt + 0x28);
@@ -406,7 +411,7 @@ public unsafe class PacketFilterService : IDisposable
                         {
                             log.Information("[HMSync] [SAY-FINDER] MATCH - opcode=" + fop + " (0x" + fop.ToString("X3") +
                                 ") carries '" + SayFinderText + "' at payload offset 0x" + matchAt.ToString("X") +
-                                ". THIS is the /say inbound opcode.");
+                                ". THIS is the /say inbound opcode (also carries /em - same opcode, chat-type distinguishes).");
                             SayFinderText = null;   // one-shot: clear after the first hit
                             OnSayOpcodeFound?.Invoke(fop);   // re-learn: let the plugin update + verify config
                         }
@@ -459,6 +464,15 @@ public unsafe class PacketFilterService : IDisposable
                                 log.Information("[HMSync] [RECV-DIAG] inbound say opcode=" + op + " (0x" + op.ToString("X3") + ") → PASS (chat-shaped, rendering)");
                             receiveHook!.Original(a1, a2, a3);   // pass this chat packet
                             return;
+                        }
+                        // NB-7: say/yell/shout/em all ride this one opcode and all now pass ValidateChatShape, so a
+                        // shape-fail here is genuine drift (the opcode rotated to something that ISN'T public chat),
+                        // not an unhandled chat channel. Count consecutive failures → shut + notify if the opcode moved.
+                        if (SendDiag)
+                        {
+                            ushort ct = 0; try { ct = *(ushort*)(a3 + 0x26); } catch { }
+                            log.Information("[HMSync] [RECV-DIAG] inbound say opcode=" + op + " (0x" + op.ToString("X3") +
+                                ") chatType=" + ct + " (0x" + ct.ToString("X2") + ") ∉ {Say=10,Shout=11,Yell=30,Em=28} → REJECTED (drift candidate).");
                         }
                         // On the configured opcode but NOT chat-shaped: candidate drift. Count consecutive failures;
                         // enough of them means the opcode rotated to something else → shut the passthrough + notify.

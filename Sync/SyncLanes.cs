@@ -114,6 +114,7 @@ public static class LaneCensus
         ["MonikerName"] = SyncLane.Cold,
         ["MonikerHideFc"] = SyncLane.Cold,
         ["MonikerHideName"] = SyncLane.Cold,
+        ["MonikerHideTitle"] = SyncLane.Cold,
         ["VisorToggled"] = SyncLane.Cold,
         ["HatHidden"] = SyncLane.Cold,
 

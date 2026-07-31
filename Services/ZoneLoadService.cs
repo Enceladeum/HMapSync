@@ -299,6 +299,9 @@ public unsafe class ZoneLoadService : IDisposable
         // v1.0.0 post-release curates (coords supplied X,Y,Z):
         { 1279, new Vector3(0.0f, 0.0f, 100.0f) },        // curated spawn
         { 389,  new Vector3(476.0f, 16.4f, 449.2f) },     // curated spawn
+        // NB-6: Bayside Battleground (PvP). Resolver spot was poor; fast+reliable hardcode beats the smarter
+        // LGB alt-spawn read here. Centre-ish flat ground.
+        { 1293, new Vector3(100.0f, 0.5f, 100.0f) },      // Bayside Battleground
     };
 
     public ZoneLoadService(

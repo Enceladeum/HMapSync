@@ -82,7 +82,7 @@ public sealed class CutsceneStageService : IDisposable
         new("Ul'dah tunnel", "ffxiv/wil_w1/evt/w1e9/level/w1e9", false, "The Parting Glass", Spawn: (8.6721f, 0.6649f, -0.8728f), Facing: -1.6616f),
         new("Empty Ul'dah inn", "ffxiv/wil_w1/evt/w1ea/level/w1ea", false, "Friends Forever", Spawn: (0.1282f, 0.0f, 5.9394f), Facing: -3.1301f),
         new("Correction Chamber", "ffxiv/wil_w1/evt/w1ec/level/w1ec", false, "Blood of Emerald / Before the Dawn", Spawn: (-3.5f, 0f, 3.4f)),
-        new("Aetherial sea", "ffxiv/zon_z1/evt/z1e3/level/z1e3", true, ""),
+        new("Aetherial sea", "ffxiv/zon_z1/evt/z1e3/level/z1e3", false, "", Spawn: (0.151f, -123.305f, 0.061f)),   // NB-4: login-screen bg; tiny collision box where you're meant to stand
         new("Zodiark intro", "ffxiv/zon_z1/evt/z1e4/level/z1e4", false, "The Ultimate Weapon"),
         new("Old Mordion Gaol", "ffxiv/zon_z1/evt/z1e6/level/z1e6", false, "Alisaie's Path", Spawn: (0.4626f, -0.1172f, -2.6083f), Facing: 0.0873f),
         new("Ascian meeting", "ffxiv/zon_z1/evt/z1e7/level/z1e7", false, "Shadows of the Past", Spawn: (-0.056f, 0.0085f, -0.1209f), Facing: -3.136f),

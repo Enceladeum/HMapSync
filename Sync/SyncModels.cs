@@ -249,6 +249,7 @@ public class TransformData
     [JsonPropertyName("mkn")] public string MonikerName { get; set; } = "";
     [JsonPropertyName("mkf")] public bool MonikerHideFc { get; set; }
     [JsonPropertyName("mkh")] public bool MonikerHideName { get; set; }
+    [JsonPropertyName("mkt")] public bool MonikerHideTitle { get; set; }
 
     // ── S326: map-state backbone (host-authoritative environment; broadcast + replayed to peers) ──
     [JsonPropertyName("msw")] public byte MapWeatherId { get; set; }     // forced weather (0 = default/atmospheric, valid)
@@ -382,7 +383,7 @@ public class TransformData
             OrnamentId == o.OrnamentId && OrnamentTimeline == o.OrnamentTimeline &&
             OrnamentActionTimeline == o.OrnamentActionTimeline && OrnamentActionEpoch == o.OrnamentActionEpoch &&
             // moniker
-            MonikerName == o.MonikerName && MonikerHideFc == o.MonikerHideFc && MonikerHideName == o.MonikerHideName &&
+            MonikerName == o.MonikerName && MonikerHideFc == o.MonikerHideFc && MonikerHideName == o.MonikerHideName && MonikerHideTitle == o.MonikerHideTitle &&
             // map-state (host)
             MapWeatherId == o.MapWeatherId && MapTimeForced == o.MapTimeForced &&
             MapEorzeaHour == o.MapEorzeaHour && MapEorzeaMinute == o.MapEorzeaMinute && MapBgmId == o.MapBgmId &&

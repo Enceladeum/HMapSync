@@ -16,11 +16,11 @@ using MessagePack;
 //
 //   • LANE PAYLOADS (Hot/Warm/Cold/Host) - MAY LEGALLY LEAD ON THE CLIENT. The relay never deserializes a lane
 //     payload (control is read, cargo is not), so client-only lane keys cost it nothing. The plugin's copy is
-//     AHEAD by design: WarmPayload Keys 27–49 (face-camera, gaze, skill replay) and ColdPayload Key 5
-//     (MonikerHideName) exist here and NOT in the relay's copy.
+//     AHEAD by design: WarmPayload Keys 27–49 (face-camera, gaze, skill replay) and ColdPayload Keys 5-6
+//     (MonikerHideName, MonikerHideTitle) exist here and NOT in the relay's copy.
 //
-//   ⛔ NEVER "resync" this file by copying the relay's copy over the plugin's - that silently DELETES the five
-//      shipped features above. Sync the control surface only; diff the lane blocks by eye, never by overwrite.
+//   ⛔ NEVER "resync" this file by copying the relay's copy over the plugin's - that silently DELETES the
+//      shipped client-ahead lane features above. Sync the control surface only; diff the lane blocks by eye, never by overwrite.
 //
 // Authoritative spec: docs/architecture/HMSync-Frame-Format-v4.md. Field ORDER = Key(n) = wire order. NEVER
 // reorder or reuse a Key; new fields APPEND with the next Key number (forward-compat, spec §7).
@@ -227,6 +227,7 @@ public class ColdPayload
     [Key(1)] public string MonikerName { get; set; } = "";
     [Key(2)] public bool MonikerHideFc { get; set; }
     [Key(5)] public bool MonikerHideName { get; set; }   // additive (Moniker IPC 2.2): NEW key index so VisorToggled(3)/HatHidden(4) keep theirs; old peers ignore key 5, missing key 5 → false
+    [Key(6)] public bool MonikerHideTitle { get; set; }  // additive (Moniker IPC 2.3): next free key after HideName(5); old peers ignore key 6, missing key 6 → false (title shown)
     [Key(3)] public bool VisorToggled { get; set; }
     [Key(4)] public bool HatHidden { get; set; }
 }

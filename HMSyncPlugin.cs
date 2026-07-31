@@ -243,7 +243,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // S328x: Moniker nameplate integration - capture the local chosen name into outgoing transforms, and apply a
         // peer's chosen name to their puppet. Both no-op if Moniker isn't installed (MonikerService.Available == false).
         stateCapture.MonikerNameSupplier = () => moniker.GetLocalName();
-        stateApply.ApplyMonikerName = (idx, name, hideFc, hideName, redraw) => moniker.ApplyName(idx, name, hideFc, hideName, redraw);
+        stateApply.ApplyMonikerName = (idx, name, hideFc, hideName, hideTitle, redraw) => moniker.ApplyName(idx, name, hideFc, hideName, hideTitle, redraw);
         moniker.LocalPlayerIndex = () => { var lp = objectTable.LocalPlayer; return lp != null ? (int)lp.ObjectIndex : -1; };
         relay.OnPeerJoined += OnPeerJoined;
         relay.OnPeerLeft += OnPeerLeft;
@@ -1918,7 +1918,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             packetFilter.EnableCaptureOnly();
             chat.Print("[HMSync] Re-learn armed. Out of session (filter off):");
             chat.Print("[HMSync]   1. YOU /say this exactly: " + marker + "   → captures the OUTBOUND opcode");
-            chat.Print("[HMSync]   2. A co-located friend /says the same → captures the INBOUND opcode");
+            chat.Print("[HMSync]   2. A co-located friend /says the same → captures the INBOUND opcode (this also covers /em - same opcode)");
             chat.Print("[HMSync] (Inbound needs someone else - your own /say is local echo, never received.) Both verify automatically.");
             return;
         }
@@ -1968,7 +1968,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             packetFilter.ConfigureSayOpcodes(config.SayOutboundOpcode, config.SayInboundOpcode);
             if (packetFilter.IsActive) { packetFilter.PassSayChat = true; packetFilter.PassSayChatOut = true; }
             chat.Print("[HMSync] Re-learn complete - both opcodes captured and verified for game version " + config.SayOpcodesGameVersion +
-                " (outbound " + config.SayOutboundOpcode + ", inbound " + config.SayInboundOpcode + ").");
+                " (outbound " + config.SayOutboundOpcode + ", inbound " + config.SayInboundOpcode + "). /em uses the same inbound opcode.");
         }
         else if (relearnGotOut)
         {
