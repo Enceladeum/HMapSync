@@ -67,12 +67,6 @@ Enter any in-game map and explore it with friends. HMS puts you behind a firewal
 <img width="617" height="236" alt="Screenshot_14" src="https://github.com/user-attachments/assets/86c03eae-6c1b-4eb6-8ecb-10c315808d56" />
 
 
-(Click to view the video)
-
-
-[![Carpet demo](https://img.youtube.com/vi/ZkZxXGvuWtw/0.jpg)](https://youtu.be/ZkZxXGvuWtw)
-
-
 ### Face control
 - Tilt your head or move your eyes outside of gpose - broadcasted in-HMS for a more expressive roleplaying experience
 - Both body posture, gaze tracking and head tilt are broadcast to peers - you can now roll your eyes mid-RP and others will see it
@@ -204,11 +198,16 @@ HMapSync is distributed through a custom Dalamud plugin repository.
 2. Add the custom plugin repository URL: `https://raw.githubusercontent.com/Enceladeum/DalamudPlugins/main/repo.json`.
 3. Open the plugin installer (`/xlplugins`), search for HMapSync, and install.
 
-## Demo
+## Demos
 
-Copied Factory exploration (click to view)
+Copied Factory freeroam
 
-[![Copied Factory tour](https://img.youtube.com/vi/xFMyCv2BwzA/0.jpg)](https://www.youtube.com/watch?v=xFMyCv2BwzA)
+[![Copied Factory tour](https://img.youtube.com/vi/xFMyCv2BwzA/1.jpg)](https://www.youtube.com/watch?v=xFMyCv2BwzA)
+
+Carpet feature
+
+[![Carpet demo](https://img.youtube.com/vi/ZkZxXGvuWtw/2.jpg)](https://youtu.be/ZkZxXGvuWtw)
+
 
 ## Credits
 
