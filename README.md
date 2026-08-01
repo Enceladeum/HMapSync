@@ -200,13 +200,25 @@ HMapSync is distributed through a custom Dalamud plugin repository.
 
 ## Demos
 
-Copied Factory freeroam
+  ▶️ <b>Carpet feature ↗️</b>
+  
+<a href="https://youtu.be/ZkZxXGvuWtw">
+  <img src="https://img.youtube.com/vi/ZkZxXGvuWtw/maxresdefault.jpg" width="600" alt="Carpet demo">
+</a>
 
-[![Copied Factory tour](https://img.youtube.com/vi/xFMyCv2BwzA/1.jpg)](https://www.youtube.com/watch?v=xFMyCv2BwzA)
 
-Carpet feature
+  ▶️ <b>Live face tracking ↗️</b>
 
-[![Carpet demo](https://img.youtube.com/vi/ZkZxXGvuWtw/2.jpg)](https://youtu.be/ZkZxXGvuWtw)
+  <a href="https://youtu.be/FJbYoHjaAoU">
+  <img src="https://img.youtube.com/vi/FJbYoHjaAoU/maxresdefault.jpg" width="600" alt="Carpet demo">
+</a>
+
+
+  ▶️ <b>Copied Factory freeroam ↗️</b>
+
+<a href="https://youtu.be/xFMyCv2BwzA">
+  <img src="https://img.youtube.com/vi/xFMyCv2BwzA/maxresdefault.jpg" width="600" alt="Carpet demo">
+</a>
 
 
 ## Credits
