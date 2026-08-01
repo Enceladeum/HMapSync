@@ -232,6 +232,7 @@ public class HMSyncUI
     public Func<uint, bool>? HasUserSpawn;
     public Func<Vector3?>? LivePosition;                 // live player position (raw XYZ) for the teleport fields
     public Action<Vector3>? OnTeleport;                  // teleport the player to an XYZ target
+    public Action<float>? OnTeleportForward;             // propel the player N units along current facing
 
     // S326p: "is X currently out" for the dynamic single action buttons (Play/Stop, Summon/Dismiss, Mount/Dismount).
     public Func<bool>? EmotePlaying;
@@ -278,10 +279,10 @@ public class HMSyncUI
     // S328am: relay-service picker - custom-add input buffers.
     private string customServiceUrl = "";
     private string customServiceName = "";
-    private bool showCoords;                             // spawn: "Show coordinates" toggle (live readout; off by default - the reserved line prevents reflow)
     private float tpX, tpY, tpZ;                         // teleport target (live readout; editable on double-click)
     private bool coordsEditing;                          // false = live readout, true = user is editing (entered via double-click)
     private int coordFocusField = -1;                    // which coord field to keyboard-focus on entering edit (-1 = none)
+    private float tpForwardUnits = 500f;                  // "Teleport forward" distance (editable), along current facing
 
     // S328am: hide the ?k=<token> in a displayed URL (log/screenshot hygiene - the token is a bearer credential).
     private static string RedactToken(string url)
@@ -617,8 +618,15 @@ public class HMSyncUI
         var connected = relay.IsSessionActive;
         if (connected && !relay.HasMapAuthority)
         {
-            // Guest - the host owns the map. Mirror the language used on the Session guest view.
+            // Guest - the host owns the SYNCED map state (time / weather / music), so those stay host-only.
             ImGui.TextDisabled("The host controls time, weather, and music for the loaded map.");
+
+            // NB-8: spawn + teleport are NOT synced map control - they're private, local-only conveniences. A peer
+            // can privately tag a spawn point while exploring and teleport to get around the map quicker, without
+            // touching anyone else's session. So a guest gets the same Spawn point panel as host/solo.
+            BeginPanel("Spawn point");
+            DrawThisMapControls();
+            EndPanel();
         }
         else
         {
@@ -1396,7 +1404,11 @@ public class HMSyncUI
     private void DrawThisMapControls()
     {
         uint loadedZone = CurrentLoadedZone?.Invoke() ?? 0;
-        bool live = (CanLoad?.Invoke() ?? false) && loadedZone != 0;
+        // NB-8: spawn/teleport is a LOCAL, peer-inclusive convenience - gate only on "a virtual zone is loaded on
+        // THIS client" (CurrentLoadedZone!=0 tracks IsZoneLoaded 1:1), NOT on map authority. CanLoad = HasMapAuthority
+        // is false for a peer, so requiring it here left peers stuck on "Load a map..." even while standing in the
+        // host's loaded map. Time & weather (DrawTimeAndWeather) stays authority-gated - that's synced map control.
+        bool live = loadedZone != 0;
 
         if (!live) { ImGui.TextDisabled("Load a map to set its spawn point."); return; }
 
@@ -1430,11 +1442,11 @@ public class HMSyncUI
 
 ImGui.Spacing();
 
-        // Live coordinates: the fields show your position continuously; DOUBLE-CLICK one to edit it into a teleport
-        // target, then Teleport. No "Set to here" - the fields already read "here". (Only reachable with a zone loaded,
-        // so teleport can't move you on an un-loaded real map.)
-        if (ImGui.Checkbox("Show coordinates", ref showCoords)) coordsEditing = false;
-        if (showCoords)
+        // Live coordinates: always shown (NB-8: the "Show coordinates" toggle is gone - coords are useful enough,
+        // for host/solo and for exploring peers, that gating them behind a tickbox was pure friction). The fields
+        // show your position continuously; DOUBLE-CLICK one to edit it into a teleport target, then Teleport. No
+        // "Set to here" - the fields already read "here". (Only reachable with a zone loaded, so teleport can't move
+        // you on an un-loaded real map.)
         {
             var livePos = LivePosition?.Invoke();
             if (!coordsEditing && livePos.HasValue) { tpX = livePos.Value.X; tpY = livePos.Value.Y; tpZ = livePos.Value.Z; }
@@ -1465,13 +1477,22 @@ ImGui.Spacing();
             ImGui.SetNextItemWidth(76); ImGui.InputFloat("##tpz", ref tpZ, 0f, 0f, "%.3f", cf);
             if (!coordsEditing && ImGui.IsItemHovered() && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left)) { coordsEditing = true; coordFocusField = 2; }
 
-            // Focus applied for one frame on entering edit, then cleared. Edit mode PERSISTS until Teleport (or toggling
-            // Show coordinates) so a set target isn't lost by clicking elsewhere; Teleport resumes the live readout.
+            // Focus applied for one frame on entering edit, then cleared. Edit mode PERSISTS until Teleport so a set
+            // target isn't lost by clicking elsewhere; Teleport resumes the live readout.
             if (coordFocusField >= 0) coordFocusField = -1;
 
             ImGui.Spacing();
             if (PrimaryButton("Teleport", new Vector2(-PanelPad, 0f))) { OnTeleport?.Invoke(new Vector3(tpX, tpY, tpZ)); coordsEditing = false; }
             if (ImGui.IsItemHovered()) ImGui.SetTooltip(coordsEditing ? "Teleport to the coordinates above (X, Y, Z)." : "Double-click a coordinate to edit it (X, Y, Z), then press Teleport.");
+
+            // Forward hop: propel the actor N units along its current facing (Y preserved). Editable distance + button
+            // on one row. Handy for punching through a wall/gap without editing raw coords. Local-only, like Teleport.
+            ImGui.Spacing();
+            ImGui.SetNextItemWidth(76);
+            if (ImGui.InputFloat("##tpfwd", ref tpForwardUnits, 0f, 0f, "%.0f")) { if (tpForwardUnits < 0f) tpForwardUnits = 0f; }
+            ImGui.SameLine(0f, 6f);
+            if (ImGui.Button("Teleport forward", new Vector2(-PanelPad, 0f))) OnTeleportForward?.Invoke(tpForwardUnits);
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Propel yourself " + tpForwardUnits.ToString("F0") + " units in the direction you're facing.");
         }
     }
 
@@ -2094,8 +2115,30 @@ ImGui.Spacing();
 
     // v0.7.232: build version in the window title so it's never a guess which build is running (e.g. the Dalamud
     // assembly-cache cases where the plugin list shows a version the running code doesn't match). Computed once.
+    // NB-8/NB-9: the "· Testing b<N>" suffix is compiled in ONLY when HMS_TESTING is defined (see the testing
+    // HMSync.csproj). Prod's csproj does NOT define it, so even though this source file is copied verbatim on
+    // promotion, the suffix #if-compiles-out and the shipped build's stamp stays clean. Do NOT promote the
+    // HMS_TESTING DefineConstants line.
+#if HMS_TESTING
+    // Internal build number baked by the testing csproj (AssemblyMetadata "InternalBuild"). Post-GA counter,
+    // monotonic, never reset - a separate lineage from the pre-release S###/v0.7.### markers. Bumped by ONE in the
+    // testing csproj each time a build is cut for testing/handoff (logged in WORKING-CHANGELOG). Declared BEFORE
+    // WindowTitle: static field initializers run in textual order, and WindowTitle reads this.
+    private static readonly string InternalBuild =
+        System.Reflection.Assembly.GetExecutingAssembly()
+            .GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute), false)
+            .OfType<System.Reflection.AssemblyMetadataAttribute>()
+            .FirstOrDefault(a => a.Key == "InternalBuild")?.Value ?? "?";
+#endif
     private static readonly string WindowTitle =
-        "HM-Sync  v" + (System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "?");
+        "HM-Sync  v" +
+#if HMS_TESTING
+        (System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "?")
+        + "  · Testing b" + InternalBuild
+#else
+        (System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "?")
+#endif
+        ;
     public Action<int>? OnLoadCutscene;
 
     // Territory -> quest/duty name (from the cutscene-territory-index join). Replaces the generic "Quest battle"/

@@ -5,6 +5,22 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0.3] - 2026-08-01
+
+### Added
+
+- **Teleport forward**: a new button in the Spawn point panel propels you a set distance in the direction you're facing (distance is editable), for quickly crossing gaps or punching through geometry without typing coordinates.
+- **Spawn point & teleport for session guests**: peers now get the same Spawn point panel as the host/solo view. Tagging a spawn and teleporting are private, local-only conveniences — synced map state (weather, music, time of day) remains host-controlled.
+
+### Fixed
+
+- **Chat restrictions no longer leak into loaded zones**: virtual-loading a duty or the Mordion Gaol no longer inherits that zone's chat lockdown (e.g. "/tell unavailable while bound by duty", or disabled shout/party). Chat now follows your real location's rules.
+
+### Changed
+
+- **Coordinates always shown**: the live X/Y/Z readout and Teleport controls now display without the "Show coordinates" toggle.
+- **The Clyteum visual cleanup**: leftover combat-event debris that no longer fits a free-roam visit is now hidden, so the factory floor reads clean.
+
 ## [1.0.0.2] - 2026-07-31
 
 ### Added
@@ -52,5 +68,7 @@ Initial public release.
 - **Curated spawns** for every zone, with your own spawn points recorded via `/hms memo`.
 - **Optional integrations**: Glamourer for cosmetic visibility toggles, and Moniker for in-session nameplate changes.
 
+[1.0.0.3]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.3
+[1.0.0.2]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.2
 [1.0.0.1]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.1
 [1.0.0]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.0

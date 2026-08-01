@@ -1154,7 +1154,10 @@ public unsafe class ZoneLoadService : IDisposable
     // v0.7.265: hide the graphics of specific wreck models by path substring (wep02/wep05 for 1345), and suppress
     // their collision meshes. Graphics hide = cosmetic (no floating wreck); collision suppress = removes their bump
     // collision. Tracked in hiddenInstanceKeys so the existing KillHiddenColliders pass zeroes their mesh colliders.
-    private static readonly string[] BarrierModelMarkers = { "wep01", "wep06" };
+    // NB-15: m6d2_a3_nat01/_nat02 are combat-event visual clutter (debris no longer live in-lore for a free-roam
+    // visit). Same treatment as the wrecks - hide graphics + suppress their collision. m6d2 prefix keeps the match
+    // scoped to 1345 (the pass is 1345-gated anyway, but the full path stem is self-documenting and future-proof).
+    private static readonly string[] BarrierModelMarkers = { "wep01", "wep06", "m6d2_a3_nat01", "m6d2_a3_nat02" };
 
     // v0.7.277: PRECISION model+collision suppression for a SINGLE instance of a repeated asset. Name/pcb matching
     // hits ALL instances (all 4 arch gates); to isolate ONE (gate #1 only), match by world POSITION - the same
@@ -4225,6 +4228,16 @@ public unsafe class ZoneLoadService : IDisposable
         log.Information("[HMSync] Loaded zone " + territoryId + " at (" +
             spawn.X.ToString("F1") + ", " + spawn.Y.ToString("F1") + ", " + spawn.Z.ToString("F1") + ")");
 
+        // NB-10: restore the REAL zone's chat rules. SetupTerritoryType (above) set GameMain.CurrentTerritoryIntendedUseId
+        // (+0x410C) to the VIRTUAL territory's intended-use. The client re-resolves per-map chat permissions from that
+        // byte on EVERY chat send (IntendedUse → TerritoryIntendedUse.ChatRule → TerritoryChatRule → per-channel bytes)
+        // and refuses to send client-side - the server blocks nothing. So a virtual duty/gaol load INHERITS the zone's
+        // restriction ("/tell unavailable while bound by duty", gaol shout/party lockdown). Writing the byte back to the
+        // REAL origin zone's intended-use reverts every channel to real-zone rules instantly - and that's the CORRECT
+        // semantics, not a bypass: the server routes chat by the REAL zone, so aligning the client removes a FALSE
+        // restriction. ID-only write (0x410C); chat reads the ID (disasm-verified). Mechanism briefing: 2026-08-01.
+        RestoreRealChatRules();
+
         // Re-enable draw on session peers after zone load
         ReEnablePreservedObjects(sessionPeerIndices);
 
@@ -5110,6 +5123,35 @@ public unsafe class ZoneLoadService : IDisposable
         }
         catch (Exception ex) { log.Debug("[HMSync] GetCurrentTerritoryId failed: " + ex.Message); }
         return 0;
+    }
+
+    // NB-10: align GameMain.CurrentTerritoryIntendedUseId with the REAL origin zone so per-map chat restrictions
+    // (tells-in-duty, gaol lockdown) don't leak onto virtual loads. See the LoadZone call site for the mechanism.
+    // One-shot ID write; if a late load-settle re-clobbers the byte (watch the [CHATRULE] "CLOBBERED" line in-game),
+    // escalate to a short reassert poll like ArmHomeRestore. ID-only by design - the cached row ptr (+0x4148) drives
+    // non-chat systems and is left alone unless a restriction survives the ID write (then point it at the real row too).
+    private unsafe void RestoreRealChatRules()
+    {
+        try
+        {
+            if (savedZoneId == null) return;                 // no origin captured yet - nothing to restore to
+            var gm = GameMain.Instance();
+            if (gm == null) return;
+
+            byte virtualUse = (byte)gm->CurrentTerritoryIntendedUseId;
+
+            var sheet = dataManager.GetExcelSheet<TerritoryType>();
+            var row = sheet?.GetRowOrDefault(savedZoneId.Value);
+            byte realUse = row != null ? (byte)row.Value.TerritoryIntendedUse.RowId : (byte)1;   // 1 = overworld fallback
+
+            gm->CurrentTerritoryIntendedUseId = (FFXIVClientStructs.FFXIV.Client.Enums.TerritoryIntendedUse)realUse;
+            byte afterUse = (byte)gm->CurrentTerritoryIntendedUseId;
+
+            log.Information("[HMSync] [CHATRULE] IntendedUse virtual=" + virtualUse + " → real=" + realUse +
+                " (origin zone " + savedZoneId.Value + "); after write=" + afterUse +
+                (afterUse == realUse ? " OK" : " CLOBBERED"));
+        }
+        catch (Exception ex) { log.Error("[HMSync] [CHATRULE] restore failed: " + ex.Message); }
     }
 
     /// <summary>

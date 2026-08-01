@@ -448,6 +448,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             HereCoords = () => ReadHereCoords(),                    // S326m: spawn management
             LivePosition = () => ReadLivePosition(),
             OnTeleport = pos => RunOnMainThread(() => DoTeleport(pos)),
+            OnTeleportForward = units => RunOnMainThread(() => DoTeleportForward(units)),
             CaptureSpawnFor = terr => CaptureSpawn(terr),
             RevertSpawnFor = terr => RevertSpawn(terr),
             // v0.7.230: stage-aware. On a swap cutscene stage the user spawn lives in UserStageSpawns keyed by bg
@@ -497,6 +498,17 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             HelpMessage = "Open the HMapSync window.",
             ShowInHelp = true,
         });
+#if HMS_TESTING
+        // NB-11: TESTING-BUILD ONLY. Registers "/hmst" (hms + t for testing) as an alias so a testing build can run
+        // side-by-side with a prod install without command collision - every /hms subcommand works identically via
+        // /hmst (OnCommand dispatches on args, ignoring the command name). Gated on HMS_TESTING, so the shared source
+        // file copies to prod with no /hmst handler. Do NOT promote the HMS_TESTING DefineConstants line.
+        commands.AddHandler("/hmst", new CommandInfo(OnCommand)
+        {
+            HelpMessage = "Open the HMapSync window (testing build alias).",
+            ShowInHelp = true,
+        });
+#endif
 
         var asmVer = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
         log.Information("[HMSync] Plugin loaded v" + (asmVer != null ? asmVer.ToString(3) : "?"));
@@ -2492,6 +2504,24 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         teleportHoldTarget = pos; teleportHoldFrames = 12;   // ...and hold, so the engine doesn't re-ground/revert it
     }
 
+    // Teleport the local player N units along their current facing (the "Teleport forward" button). Reads the live
+    // rotation (yaw, radians) and current position, then offsets along the FFXIV forward vector (sin(r), 0, cos(r)) -
+    // r=0 faces +Z (south), the game's convention. Y (elevation) is preserved, so this slides along the ground plane.
+    // Reuses DoTeleport's SetPosition + hold so the engine doesn't re-ground/revert the jump.
+    private unsafe void DoTeleportForward(float units)
+    {
+        var player = objectTable.LocalPlayer;
+        if (player == null) return;
+        var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)player.Address;
+        var p = go->Position;
+        float r = player.Rotation;
+        var target = new System.Numerics.Vector3(
+            p.X + (float)System.Math.Sin(r) * units,
+            p.Y,
+            p.Z + (float)System.Math.Cos(r) * units);
+        DoTeleport(target);
+    }
+
     private unsafe void ApplyTeleportHold()
     {
         var player = objectTable.LocalPlayer;
@@ -4158,6 +4188,9 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     {
         framework.Update -= OnFrameworkUpdate;
         commands.RemoveHandler("/hms");
+#if HMS_TESTING
+        commands.RemoveHandler("/hmst");   // NB-11: testing-build alias (see AddHandler)
+#endif
         try { mountHudDismount.Dispose(); } catch { }   // v0.7.339: drop the mount-icon click handler + listeners
         try { deckFloor.Clear(); } catch { }   // v0.7.351: remove any box floor patches
         try { skillSync.Dispose(); } catch { }   // COSM_1_016: drop the UseAction hook

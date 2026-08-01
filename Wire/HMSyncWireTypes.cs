@@ -22,7 +22,7 @@ using MessagePack;
 //   ⛔ NEVER "resync" this file by copying the relay's copy over the plugin's - that silently DELETES the
 //      shipped client-ahead lane features above. Sync the control surface only; diff the lane blocks by eye, never by overwrite.
 //
-// Authoritative spec: docs/architecture/HMSync-Frame-Format-v4.md. Field ORDER = Key(n) = wire order. NEVER
+// Authoritative spec: docs/HMSync-Wire-Protocol-v4.md. Field ORDER = Key(n) = wire order. NEVER
 // reorder or reuse a Key; new fields APPEND with the next Key number (forward-compat, spec §7).
 //
 // MessagePack options (BOTH sides must use the same): integer-keyed [MessagePackObject], default resolver,
