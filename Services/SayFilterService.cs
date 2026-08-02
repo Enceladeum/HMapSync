@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Dalamud.Game.Chat;
 using Dalamud.Game.Text;
+using Dalamud.Game.Text.SeStringHandling.Payloads;
 using Dalamud.Plugin.Services;
 
 namespace HMSync.Services;
@@ -72,10 +73,11 @@ public sealed class SayFilterService : IDisposable
             // session for a remote sender ⇒ dropped upstream). Logs regardless of Enabled/session; observe-only.
             if (Diag)
             {
-                var s = ExtractName(message.Sender.TextValue);
+                var rendered = ExtractName(message.Sender.TextValue);
+                var pn = RealNameFromPayload(message.Sender);
                 var m = message.Message.TextValue;
                 if (m.Length > 40) m = m[..40] + "…";
-                log.Information("[HMSync] [SAY-DIAG] kind=" + message.LogKind + " (" + (int)message.LogKind + ") sender='" + s + "' text='" + m + "'");
+                log.Information("[HMSync] [SAY-DIAG] kind=" + message.LogKind + " (" + (int)message.LogKind + ") rendered='" + rendered + "' payload='" + (pn ?? "<none>") + "' text='" + m + "'");
             }
 
             // Active only while a session runs. When active: hide non-session /say AND range-cull members' /say/yell.
@@ -88,7 +90,23 @@ public sealed class SayFilterService : IDisposable
             bool isShout = message.LogKind == XivChatType.Shout;
             if (!isSay && !isYell && !isShout) return;
 
-            var senderName = ExtractName(message.Sender.TextValue);
+            // NB-17: COSMETIC-PROOF sender match. Match on the player's REAL identity from the SeString's PlayerPayload,
+            // not the rendered TextValue. Nameplate/chat mods (Moniker, class-abbrev prefixers like "WAR Name",
+            // Honorific-in-chat) rewrite the DISPLAYED sender, which broke the old TextValue match - a member whose chat
+            // name showed a prefix never matched the real-name set, so their /say was wrongly HIDDEN (while /em, which
+            // bypasses this filter entirely, still showed - the fingerprint of this bug). The PlayerPayload carries the
+            // true name under any cosmetic. Everything else in HMS binds by ContentId; this is the one name-keyed seam,
+            // and the payload is the closest stable identity available at the chat-display layer.
+            //
+            // Own-message handling: the local player's own flat-printed spatial chat carries NO PlayerPayload (only remote
+            // players' names are wrapped in a clickable PlayerPayload). So "Say/Yell/Shout with no payload" = your own
+            // message → never cull it (you always see your own chat, regardless of any local name-prefix mod).
+            var senderName = RealNameFromPayload(message.Sender);
+            if (senderName == null)
+            {
+                if (Diag) log.Information("[HMSync] [SAYCULL] no PlayerPayload (own message) → SHOW");
+                return;
+            }
             if (string.IsNullOrEmpty(senderName)) return;
 
             var isMember = sessionMemberNames().Contains(senderName.ToLowerInvariant());
@@ -119,6 +137,18 @@ public sealed class SayFilterService : IDisposable
         {
             log.Error("[HMSync] SayFilter error: " + ex.Message);
         }
+    }
+
+    // NB-17: pull the player's REAL name out of the sender SeString's PlayerPayload - the true identity, immune to any
+    // cosmetic that rewrites the DISPLAYED name (nameplate mods, class-abbrev prefixers, chat-name replacers). Returns
+    // null when the sender carries no PlayerPayload, which is the local player's own flat-printed message (own chat is
+    // never wrapped in a clickable player link) - the caller treats null as "own message → always show".
+    private static string? RealNameFromPayload(Dalamud.Game.Text.SeStringHandling.SeString sender)
+    {
+        foreach (var p in sender.Payloads)
+            if (p is PlayerPayload pp && !string.IsNullOrEmpty(pp.PlayerName))
+                return pp.PlayerName;
+        return null;
     }
 
     // The Sender SeString often includes server/world glyphs and formatting; reduce to the bare character name for

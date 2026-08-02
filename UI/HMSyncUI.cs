@@ -618,8 +618,15 @@ public class HMSyncUI
         var connected = relay.IsSessionActive;
         if (connected && !relay.HasMapAuthority)
         {
-            // Guest - the host owns the SYNCED map state (time / weather / music), so those stay host-only.
-            ImGui.TextDisabled("The host controls time, weather, and music for the loaded map.");
+            // NB-16: guest map state (zone / weather / time / music) shown here READ-ONLY. The host owns synced map
+            // state, but a peer should still SEE it - moved out of the Session tab to sit right beside where the host's
+            // authoring surface lives (same tab, same "Map control" panel, just non-interactive). Easy "where am I /
+            // what's the scene" lookup.
+            BeginPanel("Map control");
+            ImGui.TextDisabled("Read-only - the host controls time, weather, and music.");
+            ImGui.Spacing();
+            DrawGuestMapReadOnly();
+            EndPanel();
 
             // NB-8: spawn + teleport are NOT synced map control - they're private, local-only conveniences. A peer
             // can privately tag a spawn point while exploring and teleport to get around the map quicker, without
@@ -831,46 +838,51 @@ public class HMSyncUI
         DrawMovementToggles();
         ImGui.Spacing();
         DrawAppearanceToggles();
-        ImGui.Spacing();
-        ImGui.TextDisabled("The host controls time, weather, and music. Your emotes, mounts, and movement are your own.");
 
-        // Read-only sight on what the host has applied (weather/time now, BGM below). Mirrors the live game state so a
-        // guest can SEE the scene settings even though they can't change them.
-        ImGui.Spacing();
-        if (MapSettings != null)
+        // NB-16: the read-only map state mirror (zone / weather / time / music) that used to live here moved to the
+        // Map Control tab, next to where the host's authoring surface sits - see DrawGuestMapReadOnly. A guest's
+        // "what's the scene" lookup now lives in one predictable place rather than split across two tabs.
+    }
+
+    // NB-16: read-only sight on the synced map state (zone / weather / time / music) for a guest. Mirrors the live game
+    // state so a peer can SEE the scene settings even though the host owns them. Rendered inside the Map Control tab's
+    // "Map control" panel, mirroring the host's DrawTimeAndWeather layout but non-interactive.
+    private void DrawGuestMapReadOnly()
+    {
+        if (MapSettings == null)
+            return;
+
+        // Zone header - identical to the host's "Zone: <name> (ID)".
+        uint gz = CurrentLoadedZone?.Invoke() ?? 0;
+        if (gz != 0)
         {
-            // Zone header - identical to the host's "Zone: <name> (ID)" (was host-only; guests should see it too).
-            uint gz = CurrentLoadedZone?.Invoke() ?? 0;
-            if (gz != 0)
-            {
-                string? stg = CurrentStageName?.Invoke();
-                string gzn = !string.IsNullOrEmpty(stg) ? stg : MapSettings.GetZoneName(gz);
-                ImGui.TextDisabled("Zone:"); ImGui.SameLine();
-                ImGui.TextUnformatted((string.IsNullOrEmpty(gzn) ? "Unnamed" : gzn) + " (" + gz + ")");
-                ImGui.Spacing();
-            }
-            byte liveW = MapSettings.GetActiveWeather();
-            string wName = liveW == 0 ? "None / atmospheric" : MapSettings.WeatherName(liveW);
-            ImGui.TextDisabled("Weather:"); ImGui.SameLine(); ImGui.TextUnformatted(wName);
-
-            bool tOverride = MapSettings.IsTimeOverridden();
-            var (eh, em) = MapSettings.GetEorzeaTimeOfDay();
-            // Read-only time slider for visual orientation (guests can't edit - the host drives it). Shows the same
-            // value the host sees once time-sync is holding.
-            int gTotal = (eh * 60 + em) % 1440;
-            string gLabel = eh.ToString("D2") + ":" + em.ToString("D2") + (tOverride ? " (frozen)" : "");
-            ImGui.BeginDisabled();
-            ImGui.SetNextItemWidth(240);
-            ImGui.SliderInt("##guesttime", ref gTotal, 0, 1439, gLabel);
-            ImGui.EndDisabled();
-
-            // Peer Music display: read the LIVE playing track (what's actually audible here) - the peer's config pick is
-            // not synced to the host, so reading it showed a stale/wrong name that never refreshed. The live read always
-            // reflects reality and updates as the host changes the track.
-            uint peerLive = MapSettings.GetCurrentBgm();
-            string bgm = peerLive != 0 ? MapSettings.BgmName(peerLive) : "None";
-            ImGui.TextDisabled("Music:"); ImGui.SameLine(); ImGui.TextUnformatted(bgm);
+            string? stg = CurrentStageName?.Invoke();
+            string gzn = !string.IsNullOrEmpty(stg) ? stg : MapSettings.GetZoneName(gz);
+            ImGui.TextDisabled("Zone:"); ImGui.SameLine();
+            ImGui.TextUnformatted((string.IsNullOrEmpty(gzn) ? "Unnamed" : gzn) + " (" + gz + ")");
+            ImGui.Spacing();
         }
+        byte liveW = MapSettings.GetActiveWeather();
+        string wName = liveW == 0 ? "None / atmospheric" : MapSettings.WeatherName(liveW);
+        ImGui.TextDisabled("Weather:"); ImGui.SameLine(); ImGui.TextUnformatted(wName);
+
+        bool tOverride = MapSettings.IsTimeOverridden();
+        var (eh, em) = MapSettings.GetEorzeaTimeOfDay();
+        // Read-only time slider for visual orientation (guests can't edit - the host drives it). Shows the same
+        // value the host sees once time-sync is holding.
+        int gTotal = (eh * 60 + em) % 1440;
+        string gLabel = eh.ToString("D2") + ":" + em.ToString("D2") + (tOverride ? " (frozen)" : "");
+        ImGui.BeginDisabled();
+        ImGui.SetNextItemWidth(240);
+        ImGui.SliderInt("##guesttime", ref gTotal, 0, 1439, gLabel);
+        ImGui.EndDisabled();
+
+        // Peer Music display: read the LIVE playing track (what's actually audible here) - the peer's config pick is
+        // not synced to the host, so reading it showed a stale/wrong name that never refreshed. The live read always
+        // reflects reality and updates as the host changes the track.
+        uint peerLive = MapSettings.GetCurrentBgm();
+        string bgm = peerLive != 0 ? MapSettings.BgmName(peerLive) : "None";
+        ImGui.TextDisabled("Music:"); ImGui.SameLine(); ImGui.TextUnformatted(bgm);
     }
 
     // v0.7.465: a section header that IS its own pop-out control. Replaces the separate grey "Pop out" button that

@@ -5,6 +5,16 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0.4] - 2026-08-02
+
+### Fixed
+
+- **Session /say, /yell and /shout no longer vanish for members using name mods**: spatial chat from a session member is now matched by the speaker's underlying character identity rather than the displayed chat name. Members running a nameplate or name-prefix mod (e.g. one that prepends a class abbreviation) had all their proximity chat wrongly hidden while in a session; it now shows correctly.
+
+### Changed
+
+- **Guest map state moved to the Map Control tab**: for session guests, the read-only zone / weather / time / music readout now lives under Map Control alongside the Spawn point panel, instead of the Session tab — keeping all map-related information in one place.
+
 ## [1.0.0.3] - 2026-08-01
 
 ### Added
@@ -68,6 +78,7 @@ Initial public release.
 - **Curated spawns** for every zone, with your own spawn points recorded via `/hms memo`.
 - **Optional integrations**: Glamourer for cosmetic visibility toggles, and Moniker for in-session nameplate changes.
 
+[1.0.0.4]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.4
 [1.0.0.3]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.3
 [1.0.0.2]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.2
 [1.0.0.1]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.1
