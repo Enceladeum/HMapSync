@@ -214,6 +214,12 @@ HMapSync is distributed through a custom Dalamud plugin repository.
 </a>
 
 
+  ▶️ <b>Cutscene location co-op access ↗️</b>
+
+<a href="https://youtu.be/UddbA2rMVsQ">
+  <img src="https://img.youtube.com/vi/UddbA2rMVsQ/maxresdefault.jpg" width="600" alt="Carpet demo">
+</a>
+
   ▶️ <b>Copied Factory freeroam ↗️</b>
 
 <a href="https://youtu.be/xFMyCv2BwzA">
