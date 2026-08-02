@@ -31,6 +31,7 @@ public unsafe class StateCaptureService : IDisposable
         public uint BgmId;
         public bool RemoveNpcs;
         public bool HideQuestSigns;
+        public uint[]? HiddenNpcDataIds;   // NB-20: granular per-map hide set (ENpc DataIds); null/empty = none
         public uint Epoch;
     }
     public MapStateSnapshot MapState;
@@ -316,6 +317,7 @@ public unsafe class StateCaptureService : IDisposable
             MapBgmId = MapState.BgmId,
             MapRemoveNpcs = MapState.RemoveNpcs,
             MapHideQuestSigns = MapState.HideQuestSigns,
+            MapHiddenNpcDataIds = MapState.HiddenNpcDataIds,
             MapStateEpoch = MapState.Epoch,
 
             // Visual body offset (swim / chair-sit / future): values ride every

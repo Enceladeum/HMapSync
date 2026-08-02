@@ -86,8 +86,46 @@ public unsafe class ZoneLoadService : IDisposable
     public string? ActiveStageBg;
     private bool cutsceneSceneActive;   // a swapped cutscene scene is live under the origin's territory id
 
+    // NB-18-RETEST (2026-08-02, Fable): one-shot layer-filter-key override consumed by CreateSceneDetour. Per the
+    // disassembly, FindFilter (0x717930) consults the key ONLY when the layout TT is 0; the game zeroes the TT upstream
+    // in SetTerritory's cmove (0x6034FF) when key!=0, so CreateScene's territoryId arg IS the value FindFilter keys on.
+    // The earlier NB-18 test overrode only the key and left TT=919 → FindFilter(919) → base cast for every key (the
+    // confound). When armed we reproduce the native key!=0 argument set at the seam: pass the override key AND zero the
+    // territoryId arg (geometry still streams from territoryPath). Consume-once. Dual use: (a) the /hms casttest debug
+    // harness arms it manually; (b) NB-18-SHIP arms it from ForcedCastKeys inside LoadZone (see below).
+    public uint? PendingCastKeyOverride;
+
+    // NB-18-SHIP (2026-08-02): per-zone forced layer-filter key for HMS virtual loads. The b10 retest CONFIRMED the
+    // layer key drives layer-filtered LAYOUT/geometry (e.g. Terncliff 919's war-memorial cenotaph) independent of quest
+    // state; it does NOT touch the ENPC cast (director/quest-owned). Baking the latest/finale key here makes an HMS
+    // virtual load render that geometry deterministically on EVERY client — a static constant, so peers converge with
+    // NO broadcast. Armed by LoadZone right before the native loader (so it fires ONLY on HMS's own loader, NEVER on a
+    // real game visit to the same zone) and consumed by the synchronous CreateScene. Discipline: ONLY keys confirmed
+    // in-game via /hms casttest belong here — measure, don't guess (same rule as the chat whitelist).
+    private static readonly Dictionary<uint, uint> ForcedCastKeys = new()
+    {
+        { 919, 257010 },   // Terncliff — max/finale key: war-memorial cenotaph present (in-game validated 2026-08-02)
+    };
+
+    // NB-19 Phase 1: quest-populace spoof lifecycle callbacks (wired by the plugin to QuestSpoofService). ArmQuestSpoof
+    // is invoked with the target territoryId immediately BEFORE the native loader (Gate 2 populace visibility is decided
+    // during the load phases, so the spoof MUST be live before the load runs). DisarmQuestSpoof fires on Revert. Arming
+    // inside HMS's own loader is the gate that keeps the spoof off real game visits — same discipline as ForcedCastKeys.
+    public System.Action<uint>? ArmQuestSpoof;
+    public System.Action? DisarmQuestSpoof;
+
     private int CreateSceneDetour(string territoryPath, uint territoryId, nint p3, uint layerFilterKey, nint festivals, int p6, uint cfcId)
     {
+        uint effTT = territoryId;
+        uint effKey = layerFilterKey;
+        if (PendingCastKeyOverride.HasValue)
+        {
+            effKey = PendingCastKeyOverride.Value;
+            effTT = 0;   // FindFilter consults the key only when TT==0 (mirrors the native key!=0 flow)
+            PendingCastKeyOverride = null;   // consume-once
+            log.Information("[HMSync] [CASTTEST] CreateScene terr " + territoryId + "->0  key " + layerFilterKey + "->" + effKey + "  path=" + territoryPath);
+        }
+
         if (!string.IsNullOrEmpty(PendingStageBg))
         {
             var stageBg = PendingStageBg!;
@@ -97,7 +135,7 @@ public unsafe class ZoneLoadService : IDisposable
             return createSceneHook!.Original(stageBg, territoryId, p3, layerFilterKey, festivals, p6, cfcId);
         }
         cutsceneSceneActive = false;   // a real, un-swapped scene is now live (incl. the return reload)
-        return createSceneHook!.Original(territoryPath, territoryId, p3, layerFilterKey, festivals, p6, cfcId);
+        return createSceneHook!.Original(territoryPath, effTT, p3, effKey, festivals, p6, cfcId);
     }
     // S223: the MapEffect apply function (the game's door/wall/barrier toggle). Hyperborea sig.
     // Args: (mapEffectModule, layoutId:uint, state:ushort, flags:ushort). Driving this is how the
@@ -4145,7 +4183,26 @@ public unsafe class ZoneLoadService : IDisposable
             ((GameObject*)obj.Address)->DisableDraw();
         }
 
+        // NB-18-SHIP: arm the per-zone forced layer-filter key (if any) for THIS load only, immediately before the
+        // native loader so the synchronous CreateScene consumes it (TT->0 + forced key). Arming here — inside HMS's own
+        // loader — is the gate that keeps it off real game visits. De-armed right after as belt-and-suspenders: once the
+        // load's CreateScene has consumed it this is a no-op, but it guarantees a stale key can never leak into a later
+        // real load even if a given load skipped scene creation. The /hms casttest harness arms the same field manually.
+        if (!PendingCastKeyOverride.HasValue && ForcedCastKeys.TryGetValue(territoryId, out var forcedCastKey))
+        {
+            PendingCastKeyOverride = forcedCastKey;
+            log.Information("[HMSync] [CAST] forcing layer-filter key " + forcedCastKey + " for zone " + territoryId + " (TT->0)");
+        }
+
+        // NB-19 Phase 1: arm the quest-populace read-spoof for THIS zone (if a policy exists). Unlike the cast key —
+        // consumed synchronously inside CreateScene — Gate 2 populace visibility is evaluated across the ASYNC load
+        // phases (LoadState 0→6) that run over the following frames, so the spoof must stay live until Revert (it is
+        // disarmed there). No-op when the zone has no policy. Same virtual-load-only gate: armed only inside LoadZone.
+        ArmQuestSpoof?.Invoke(territoryId);
+
         loadZoneHook!.Original((nint)gameMain, territoryId, 0, 0, 1, 1);
+
+        PendingCastKeyOverride = null;   // NB-18-SHIP de-arm: CreateScene consumed it above; never leak to a real load
 
         var setupFunc = Marshal.GetDelegateForFunctionPointer<SetupTerritoryTypeDelegate>(setupTerritoryTypeAddr);
         setupFunc(EventFramework.Instance(), (ushort)territoryId);
@@ -4501,6 +4558,7 @@ public unsafe class ZoneLoadService : IDisposable
         }
 
         IsTransitioning = true;
+        DisarmQuestSpoof?.Invoke();   // NB-19 Phase 1: drop the quest-populace spoof before reloading the real origin zone
         // S284: SINGLE CLEAN RETURN (matched to Hyperborea's Revert) - return = reload the ORIGIN zone
         // + restore the ORIGIN coords. Nothing else. The old EntrySpawn mechanism (snap to the foreign
         // zone's in-bounds spawn pre-reload) was removed: it's unnecessary (your foreign-zone position

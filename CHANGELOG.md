@@ -5,6 +5,16 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0.5] - 2026-08-02
+
+### Added
+
+- **Granular NPC hide per map**: available in the Map Control tab. Hides selected NPC(s) for you and HMS peers. Hide settings persist between sessions.
+
+### Fixed
+
+- **Version stamp**: the version in the main window now reflects the actual build number.
+
 ## [1.0.0.4] - 2026-08-02
 
 ### Fixed
@@ -78,6 +88,7 @@ Initial public release.
 - **Curated spawns** for every zone, with your own spawn points recorded via `/hms memo`.
 - **Optional integrations**: Glamourer for cosmetic visibility toggles, and Moniker for in-session nameplate changes.
 
+[1.0.0.5]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.5
 [1.0.0.4]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.4
 [1.0.0.3]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.3
 [1.0.0.2]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.2

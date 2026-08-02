@@ -245,6 +245,10 @@ public class HostPayload
     [Key(6)] public bool MapRemoveNpcs { get; set; }
     [Key(7)] public bool MapHideQuestSigns { get; set; }
     [Key(8)] public uint MapStateEpoch { get; set; }
+    // NB-20: granular per-map NPC hide - the host's chosen set of ENpc DataIds to remove on THIS map. Only the current
+    // map's set rides the wire (peers are co-located with the host); per-map persistence is host-side config. Nullable +
+    // new key index so older peers ignore it and a missing key decodes to null (= no granular hides).
+    [Key(9)] public uint[]? HiddenNpcDataIds { get; set; }
 }
 
 // ═══════════════════════ CONTROL + JOIN PAYLOADS (shared encode/decode surface) ═══════════════════════

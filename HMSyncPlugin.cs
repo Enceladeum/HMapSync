@@ -39,6 +39,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     private bool sayDriftBanner;   // S328p: set when the say passthrough auto-shuts (drift/patch); shown in the Config tab + session strip
     private bool relearnGotOut, relearnGotIn;   // S328q: symmetric re-learn - track which direction's opcode has been captured
     private readonly ZoneLoadService zoneLoad;
+    private readonly QuestSpoofService questSpoof;   // NB-19 Phase 1: quest-populace read-spoof (per-zone policy) + /hms questprobe read-log
     private readonly CutsceneStageService cutscene;   // cutscene free-roam (Tier B LoadZone / Tier A donor-redirect)
     private readonly NoclipService noclip;
     private readonly CarpetService carpet;   // S315: ported HCollider ground-carpet (walk anywhere)
@@ -178,6 +179,9 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         });
         zoneLoad = new ZoneLoadService(objectTable, log, sigScanner, hooks, framework, dataManager);
         zoneLoad.DebugMode = config.ShowDebugCommands;      // v0.7.259: origin/map-hop notifications only in debug (must be AFTER construction)
+        questSpoof = new QuestSpoofService(sigScanner, hooks, framework, dataManager, log);   // NB-19 read-spoof (hooks created disabled)
+        zoneLoad.ArmQuestSpoof = questSpoof.ArmForZone;   // wire the virtual-load-only quest-populace spoof lifecycle
+        zoneLoad.DisarmQuestSpoof = questSpoof.Disarm;
         cutscene = new CutsceneStageService(pluginInterface, log, dataManager, zoneLoad);
         noclip = new NoclipService(objectTable, framework, log, sigScanner, hooks);
         carpet = new CarpetService(objectTable, framework, log, config);
@@ -259,6 +263,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         packetFilter.Initialize();
         sayFilter.Initialize();
         zoneLoad.Initialize();
+        questSpoof.Initialize();   // NB-19 Phase 1: create the three quest-read hooks (disabled until a policy arms or /hms questprobe)
         noclip.Initialize();
         carpet.Initialize();
         afkSuppressor.Initialize();
@@ -306,7 +311,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 // S328aa: NPC scene-cleanup - engage the host's chosen NPC modes locally (despawn all / hide quest signs).
                 // The service is a persistent watch (NPCs stream in by proximity), started when either mode is on and
                 // stopped when both are off. Same host-authoritative broadcast + late-join replay as the rest of map-state.
-                DriveNpcVisibility(td.MapRemoveNpcs, td.MapHideQuestSigns);
+                DriveNpcVisibility(td.MapRemoveNpcs, td.MapHideQuestSigns, td.MapHiddenNpcDataIds);
             }
         };
         // S291: once the deferred home-restore settles the actor at home, drop the packet filter. Held up
@@ -477,8 +482,16 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             SummonPeer = peerId => DoSummonPeer(peerId),            // S326f: host summons a peer to their position
             KickPeer = peerId => DoKickPeer(peerId),                // S326f: host removes a peer from the room
             TransferHost = peerId => DoTransferHost(peerId),        // S326h: host hands the session to a peer
+            // NB-20: granular NPC hide (dot-lens picker). Enumeration runs during UI Draw (main thread) so direct object
+            // access is safe; toggle/restore route through the main thread + host-authoritative push.
+            EnumerateNpcDots = BuildNpcDotList,
+            ToggleNpcHide = id => RunOnMainThread(() => ToggleHiddenNpc(id)),
+            RestoreNpcHides = () => RunOnMainThread(() => RestoreHiddenNpcs()),
+            HiddenNpcCount = () => config.MapHiddenNpcDataIds.Count,
+            CanEditNpcHides = () => relay.HasMapAuthority && zoneLoad.IsZoneLoaded,
         };
         pluginInterface.UiBuilder.Draw += ui.Draw;
+        pluginInterface.UiBuilder.Draw += ui.DrawNpcPickerOverlay;  // NB-20: NPC dot-lens picker (renders over the world)
         pluginInterface.UiBuilder.Draw += ui.DrawCarpetOverlay;   // S316: rings render even when window closed
         pluginInterface.UiBuilder.Draw += ui.DrawCarpetBar;       // v0.7.252: the tear-off carpet control bar
         pluginInterface.UiBuilder.Draw += ui.DrawFaceControlBar;  // dynamic face control tear-off
@@ -638,6 +651,9 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             mapReassertCountdown--;
             if (mapReassertCountdown == 0 && relay.HasMapAuthority)
             {
+                // NB-20: swap the effective NPC-hide cache to THIS map's saved per-map prefs BEFORE the push, so the
+                // host's recorded hide-all / hide-markers / granular set for the loaded map re-apply and broadcast.
+                config.LoadNpcHideCache(zoneLoad.CurrentLoadedZone);
                 mapSettings.Reassert(zoneLoad.CurrentLoadedZone);   // host engages the resolved track locally
                 PushMapState();   // + broadcast the resolved map-state so peers mirror the NEW zone's BGM (not stale)
             }
@@ -736,17 +752,40 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     // stop (restoring every NPC) when both are off, and push mode changes through live. Called from the map-state apply
     // (peers + host) and from Reassert (host/solo local engage) so despawn/quest-sign-hide behaves exactly like the
     // rest of the map-state backbone - host-authoritative, broadcast, late-join-replayed, solo-compatible.
-    private void DriveNpcVisibility(bool despawn, bool hideQuestSigns)
+    private void DriveNpcVisibility(bool despawn, bool hideQuestSigns, uint[]? granularHidden = null)
     {
-        if (despawn || hideQuestSigns)
+        bool anyGranular = granularHidden != null && granularHidden.Length > 0;
+        if (despawn || hideQuestSigns || anyGranular)
         {
-            npcVisibility.SetModes(despawn, hideQuestSigns);
+            npcVisibility.SetModes(despawn, hideQuestSigns, granularHidden);
             npcVisibility.Start();   // idempotent; SetModes already re-applied if it was already running
         }
         else
         {
-            npcVisibility.Stop();    // both off → restore all NPCs
+            npcVisibility.Stop();    // all off → restore all NPCs
         }
+    }
+
+    // NB-20: snapshot the currently-rendered EventNpcs for the dot-lens picker overlay. Runs during UI Draw (main
+    // thread), so direct native access is safe. Only NPCs with a live DrawObject (streamed/rendered) are included -
+    // phantoms (logic shells with no render) would give un-clickable dots. Name from the object table; DataId = BaseId
+    // (the ENpcResident row, the stable synced identity). Hidden flag mirrors the current map's granular set so a hidden
+    // NPC still shows a (red) dot to un-hide it.
+    private unsafe IReadOnlyList<HMSyncUI.NpcDotInfo> BuildNpcDotList()
+    {
+        var list = new List<HMSyncUI.NpcDotInfo>();
+        foreach (var obj in objectTable)
+        {
+            if (obj.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.EventNpc) continue;
+            var native = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)obj.Address;
+            if (native == null || native->DrawObject == null) continue;   // not rendered → skip (no clickable dot)
+            uint dataId = native->BaseId;
+            if (dataId == 0) continue;   // director-spawned actors with no stable DataId can't be hidden/synced
+            var pos = obj.Position;
+            pos.Y += 1.0f;   // lift the dot toward head height for an easier click target
+            list.Add(new HMSyncUI.NpcDotInfo(pos, dataId, obj.Name.TextValue ?? "", config.MapHiddenNpcDataIds.Contains(dataId)));
+        }
+        return list;
     }
 
     private bool uiWasOpen;
@@ -858,6 +897,8 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             case "dumpstructs":
             case "housingdiag":
             case "furndiag":
+            case "casttest":   // NB-18-RETEST: cold-entry layer-filter-key discriminator (Fable)
+            case "questprobe": // NB-19 Phase 1: quest-read diagnostic log toggle (Fable)
             case "debug":
             case "teardownhousing":
                 if (!config.ShowDebugCommands)
@@ -940,6 +981,8 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             case "roomlock": DoRoomLock(arg); break;         // S326f: lock room to new joiners (needs relay)
             case "transferhost": if (arg != null) DoTransferHost(arg); break; // S326h: hand host to a peer (needs relay)
             case "here": DoPrintHere(); break;
+            case "casttest": DoCastTest(arg); break;   // NB-18-RETEST: cold-entry layer-filter-key discriminator (Fable)
+            case "questprobe": DoQuestProbe(); break;   // NB-19 Phase 1: toggle the quest-read diagnostic log (spoof itself is automatic per-zone)
             case "debug":
                 // S262: toggle development/research mode at runtime (no recompile). ON = LoadZone sets
                 // up the InstanceContentDirector (re-arms MapEffect/director-update machinery for
@@ -1506,6 +1549,45 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         if (relay.IsSessionActive) DoLoad(territoryId);
     }
 
+    // NB-18-RETEST (2026-08-02, Fable): cold-entry discriminator for the layer-filter-key mechanism. Arms a
+    // one-shot key override on the CreateScene detour (see ZoneLoadService.PendingCastKeyOverride), which passes
+    // the forced key AND zeroes the territoryId arg - the argument set FindFilter (0x717930) keys on, since it
+    // consults the key only when the layout TT is 0. Earlier NB-18 test overrode only the key (left TT=919) so
+    // FindFilter(919) always returned the base cast - the confound. This MUST be a COLD entry: a same-zone reload
+    // can be served a cached/prefetched layout (0x70cb9b promotion, LoadedLayouts find at 0x70c960) regardless of
+    // key. Predicted observable if live: 919 + key 257010 + TT->0 -> war-memorial cenotaph, ~98 NPCs. Debug-gated.
+    private void DoCastTest(string? arg)
+    {
+        var parts = (arg ?? "").Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 2 || !uint.TryParse(parts[0], out var tt) || !uint.TryParse(parts[1], out var key))
+        {
+            chat.Print("[HMSync] usage: /hms casttest <territoryId> <key>   (e.g. /hms casttest 919 257010). Load COLD - not the zone you're already in.");
+            return;
+        }
+        if (zoneLoad.CurrentLoadedZone == tt)
+        {
+            chat.Print("[HMSync] Already in " + tt + " - that would be a WARM reload (cached layout). Leave the zone first, then re-run for a cold entry.");
+            return;
+        }
+        zoneLoad.PendingCastKeyOverride = key;
+        chat.Print("[HMSync] [CASTTEST] armed key " + key + " (TT->0) for the next load; loading " + tt + " cold...");
+        DoQuickLoad(tt);
+    }
+
+    // NB-19 Phase 1 (2026-08-02, Fable): toggle the quest-read DIAGNOSTIC log. The spoof itself is automatic — a
+    // per-zone policy arms inside LoadZone and drives populace visibility with NO command needed. This just turns on
+    // read-logging so you can watch the real→spoofed quest reads during a virtual load: each distinct (fn,questId,
+    // result) logs once, SPOOFED reads annotated, chain ids 4735-4743 flagged. Watch [QUESTSPOOF] in /xllog; auto-
+    // closes after ~2 min.
+    private void DoQuestProbe()
+    {
+        bool on = questSpoof.ToggleLogReads();
+        if (on)
+            chat.Print("[HMSync] [QUESTSPOOF] read-log on (~2 min). Load 1160 to see the spoofed quest reads in /xllog (chain 4735-4743).");
+        else
+            chat.Print("[HMSync] [QUESTSPOOF] read-log off.");
+    }
+
     // Engage the synthetic session - the packet filter plus everything that isolates you from the real server and
     // drives peers as puppets. This is phase two: it fires on ZONE-LOAD (host DoLoad, guest OnZoneLoadReceived), NOT
     // on host/join/solo start, so the lobby stays a normal-player gather where friends are real characters and Mare
@@ -1581,9 +1663,10 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         if (!relay.HasMapAuthority) { chat.Print("[HMSync] Only the host can load zones."); return; }
         if (!zoneLoad.IsValidTerritory(territoryId)) { chat.Print("[HMSync] Invalid territory ID."); return; }
 
-        // Hide NPCs is per-map - clear it on every load so a new map starts with its NPCs shown (flip it back on for
-        // this map if you want them gone). Quest markers are left as-is.
-        if (config.MapRemoveNpcs) { config.MapRemoveNpcs = false; config.Save(); DriveNpcVisibility(false, config.MapHideQuestSigns); }
+        // NB-20: NPC hides are per-map (durable store: config.MapNpcHide). Restore the OUTGOING map's NPCs at load start;
+        // the INCOMING map's saved prefs (hide-all / hide-markers / granular set) are re-applied from config once the load
+        // settles - LoadNpcHideCache runs in the post-load reassert block, then PushMapState broadcasts + engages them.
+        npcVisibility.Stop();
 
         // v0.7.227: resolve the active swap-stage bg. LoadStage sets BOTH PendingStageBg and ActiveStageBg together for
         // a swap; a plain zone load sets neither. So PendingStageBg==null at entry means this is a plain load → clear
@@ -1742,6 +1825,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         config.MapBgmId = 0;             // 0 = none/default
         config.MapRemoveNpcs = false;
         config.MapHideQuestSigns = false;   // S328aa
+        config.MapHiddenNpcDataIds.Clear();  // NB-20: reset the effective granular cache (durable per-map store is kept)
         npcVisibility.Stop();               // S328aa: restore all NPCs on session end
         config.Save();
         packetFilter.PassSayChat = false;    // S328i: stop passing spatial-chat packets once the session ends
@@ -3230,6 +3314,10 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         stateCapture.MapState.BgmId = effectiveBgm;
         stateCapture.MapState.RemoveNpcs = config.MapRemoveNpcs;
         stateCapture.MapState.HideQuestSigns = config.MapHideQuestSigns;
+        // NB-20: broadcast the current map's granular hidden-DataId set (a fresh array snapshot; null when empty so the
+        // wire stays compact and older peers see nothing new). Peers apply it host-authoritatively via ApplyMapState.
+        stateCapture.MapState.HiddenNpcDataIds = config.MapHiddenNpcDataIds.Count > 0
+            ? System.Linq.Enumerable.ToArray(config.MapHiddenNpcDataIds) : null;
         stateCapture.MapState.Epoch++;
         // Keep the service's own copy in sync (used by Reassert after a load).
         mapSettings.WeatherId = effectiveWeather;
@@ -3241,7 +3329,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         mapSettings.HideQuestSigns = config.MapHideQuestSigns;
         mapSettings.MarkStateSet();
         // S328aa: engage NPC cleanup live on the host when a map is loaded (peers get it via ApplyMapState).
-        if (MapApplyLive) DriveNpcVisibility(config.MapRemoveNpcs, config.MapHideQuestSigns);
+        if (MapApplyLive) DriveNpcVisibility(config.MapRemoveNpcs, config.MapHideQuestSigns, stateCapture.MapState.HiddenNpcDataIds);
         config.Save();
     }
 
@@ -3305,11 +3393,15 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // No chat notification on BGM change - the Music tab shows the current track; per-change chat lines are noise.
     }
 
+    // NB-20: the map these NPC-hide prefs belong to (the loaded virtual zone, 0 = none). Per-map persistence keys on it.
+    private uint NpcHideZone() => zoneLoad.IsZoneLoaded ? zoneLoad.CurrentLoadedZone : 0u;
+
     private void DoMapNpc(string? arg)
     {
         if (!relay.HasMapAuthority) { chat.Print("[HMSync] Only the host can set NPC removal."); return; }
         var a = arg?.Trim() ?? "";
         config.MapRemoveNpcs = a.Equals("on", StringComparison.OrdinalIgnoreCase);
+        var z = NpcHideZone(); if (z != 0) config.SaveNpcHideCache(z);   // record per-map (also Saves)
         PushMapState();
         if (config.ShowDebugCommands) chat.Print("[HMSync] Remove NPCs " + (config.MapRemoveNpcs ? "on (event NPCs hidden, striking dummies kept)." : "off (NPCs restored).")
             + (MapApplyLive ? "" : " (saved; applies on map load)."));
@@ -3320,9 +3412,33 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         if (!relay.HasMapAuthority) { chat.Print("[HMSync] Only the host can set quest-sign hiding."); return; }
         var a = arg?.Trim() ?? "";
         config.MapHideQuestSigns = a.Equals("on", StringComparison.OrdinalIgnoreCase);
+        var z = NpcHideZone(); if (z != 0) config.SaveNpcHideCache(z);   // record per-map (also Saves)
         PushMapState();
         if (config.ShowDebugCommands) chat.Print("[HMSync] Hide quest signs " + (config.MapHideQuestSigns ? "on (over-head quest markers hidden, NPCs kept)." : "off (quest markers restored).")
             + (MapApplyLive ? "" : " (saved; applies on map load)."));
+    }
+
+    /// <summary>NB-20: host toggles one ENpc DataId in the current map's granular hidden set (add if absent, remove if
+    /// present). Persists per-map and re-broadcasts. Called from the dot-lens picker (via HideNpcDataId) and any command.</summary>
+    private void ToggleHiddenNpc(uint dataId)
+    {
+        if (!relay.HasMapAuthority || dataId == 0) return;
+        if (!config.MapHiddenNpcDataIds.Add(dataId)) config.MapHiddenNpcDataIds.Remove(dataId);
+        var z = NpcHideZone(); if (z != 0) config.SaveNpcHideCache(z);
+        PushMapState();
+    }
+
+    /// <summary>NB-20: is this ENpc DataId currently hidden on the loaded map? (dot-lens colouring.)</summary>
+    private bool IsNpcDataIdHidden(uint dataId) => config.MapHiddenNpcDataIds.Contains(dataId);
+
+    /// <summary>NB-20: clear ALL granular hides for the current map (leaves hide-all / hide-markers alone). "restore".</summary>
+    private void RestoreHiddenNpcs()
+    {
+        if (!relay.HasMapAuthority) return;
+        if (config.MapHiddenNpcDataIds.Count == 0) return;
+        config.MapHiddenNpcDataIds.Clear();
+        var z = NpcHideZone(); if (z != 0) config.SaveNpcHideCache(z);
+        PushMapState();
     }
 
     // ── S326f: session participants (Wholist-style) + host per-peer actions ──────────────────────────────────────
@@ -4243,6 +4359,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         sayFilter.Dispose();
         cutscene.Dispose();
         zoneLoad.Dispose();
+        try { questSpoof.Dispose(); } catch { }   // NB-19 Phase 1: unhook the three quest reads
         relayHealth.Dispose();   // stop the background /health poll
         noclip.Dispose();
         timeFreeze.Dispose();   // S327f: unfreeze + dispose the time hook

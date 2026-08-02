@@ -73,6 +73,7 @@ public static class LaneProjection
         MapWeatherId = t.MapWeatherId, MapTimeForced = t.MapTimeForced, MapEorzeaHour = t.MapEorzeaHour,
         MapEorzeaMinute = t.MapEorzeaMinute, MapBgmId = t.MapBgmId, MapRemoveNpcs = t.MapRemoveNpcs,
         MapHideQuestSigns = t.MapHideQuestSigns, MapStateEpoch = t.MapStateEpoch,
+        HiddenNpcDataIds = t.MapHiddenNpcDataIds,
     };
 
     // ── Merge a wire payload into a composite (receiver side). Same as the JSON Merge* but from HMSync.Wire types. ──
@@ -114,6 +115,7 @@ public static class LaneProjection
         c.MapWeatherId = d.MapWeatherId; c.MapTimeForced = d.MapTimeForced; c.MapEorzeaHour = d.MapEorzeaHour;
         c.MapEorzeaMinute = d.MapEorzeaMinute; c.MapBgmId = d.MapBgmId; c.MapRemoveNpcs = d.MapRemoveNpcs;
         c.MapHideQuestSigns = d.MapHideQuestSigns; c.MapStateEpoch = d.MapStateEpoch;
+        c.MapHiddenNpcDataIds = d.HiddenNpcDataIds;
     }
 
     // ── Per-lane change detection (sender side) ── each returns true if THAT lane's fields differ between two
@@ -154,5 +156,23 @@ public static class LaneProjection
     public static bool HostEquals(TransformData a, TransformData b) =>
         a.MapWeatherId == b.MapWeatherId && a.MapTimeForced == b.MapTimeForced && a.MapEorzeaHour == b.MapEorzeaHour &&
         a.MapEorzeaMinute == b.MapEorzeaMinute && a.MapBgmId == b.MapBgmId && a.MapRemoveNpcs == b.MapRemoveNpcs &&
-        a.MapHideQuestSigns == b.MapHideQuestSigns && a.MapStateEpoch == b.MapStateEpoch;
+        a.MapHideQuestSigns == b.MapHideQuestSigns && a.MapStateEpoch == b.MapStateEpoch &&
+        UintSetEqual(a.MapHiddenNpcDataIds, b.MapHiddenNpcDataIds);
+
+    // Order-insensitive equality for the granular hidden-DataId set (null == empty). Sets are small (a handful of ids),
+    // so an O(n²) contains-scan is fine and avoids allocating a HashSet on the hot change-detection path for the common
+    // both-empty case.
+    private static bool UintSetEqual(uint[]? a, uint[]? b)
+    {
+        int na = a?.Length ?? 0, nb = b?.Length ?? 0;
+        if (na != nb) return false;
+        if (na == 0) return true;
+        foreach (var x in a!)
+        {
+            bool found = false;
+            foreach (var y in b!) if (x == y) { found = true; break; }
+            if (!found) return false;
+        }
+        return true;
+    }
 }

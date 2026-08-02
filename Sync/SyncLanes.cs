@@ -127,6 +127,7 @@ public static class LaneCensus
         ["MapRemoveNpcs"] = SyncLane.Host,
         ["MapHideQuestSigns"] = SyncLane.Host,
         ["MapStateEpoch"] = SyncLane.Host,
+        ["MapHiddenNpcDataIds"] = SyncLane.Host,   // NB-20: granular per-map NPC hide set
     };
 
     /// <summary>

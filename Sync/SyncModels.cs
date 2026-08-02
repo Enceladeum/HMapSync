@@ -260,6 +260,7 @@ public class TransformData
     [JsonPropertyName("msn")] public bool MapRemoveNpcs { get; set; }    // NPC-removal flag (despawn all event NPCs)
     [JsonPropertyName("msq")] public bool MapHideQuestSigns { get; set; } // hide over-head quest markers only (keep NPCs)
     [JsonPropertyName("mse")] public uint MapStateEpoch { get; set; }    // bumps on any host map-state change (apply gate)
+    [JsonPropertyName("msnd")] public uint[]? MapHiddenNpcDataIds { get; set; }  // NB-20: granular hide - ENpc DataIds removed on this map
 
     /// <summary>
     /// S196b: the MOUNT OBJECT's slot-0 ActionTimeline. The mount is a separate Character* whose

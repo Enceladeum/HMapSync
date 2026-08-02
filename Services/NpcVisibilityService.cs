@@ -34,6 +34,13 @@ public unsafe class NpcVisibilityService : IDisposable
     private bool despawnNpcs;
     private bool hideQuestSigns;
 
+    // NB-20: granular hide - a set of ENpc DataIds (GameObject.BaseId) the host chose to remove. Any live EventNpc whose
+    // BaseId is in this set gets the same full hide as DespawnNpcs (body + marker), but selectively. Keying on BaseId
+    // (the ENpcResident row, stable across visits/characters/peers) means hiding one id hides every live copy of that
+    // NPC kind on the map - which is exactly the wanted behaviour for the recurring-duplicate case, and is what lets the
+    // choice sync (object indices are transient table slots and can't). Independent of despawnNpcs; composes with it.
+    private readonly HashSet<uint> hiddenDataIds = new();
+
     private bool active;
 
     // Restore tracking. For each EventNpc we touched: the object index → its original NamePlateIconId (so HideQuestSigns
@@ -49,17 +56,34 @@ public unsafe class NpcVisibilityService : IDisposable
         this.log = log;
     }
 
-    /// <summary>Set the host modes (from config/wire). Applies live if a session is active; re-scans on any change.</summary>
-    public void SetModes(bool despawn, bool questSigns)
+    /// <summary>Set the host modes (from config/wire). Applies live if a session is active; re-scans on any change.
+    /// <paramref name="granularHidden"/> is the per-map set of ENpc DataIds to selectively remove (NB-20); pass null to
+    /// leave it empty. Any change to the modes OR the granular set forces a restore-then-reapply so an un-hidden NPC
+    /// comes back.</summary>
+    public void SetModes(bool despawn, bool questSigns, IEnumerable<uint>? granularHidden = null)
     {
-        bool changed = despawn != despawnNpcs || questSigns != hideQuestSigns;
+        bool granularChanged = !SameSet(granularHidden);
+        bool changed = despawn != despawnNpcs || questSigns != hideQuestSigns || granularChanged;
         despawnNpcs = despawn;
         hideQuestSigns = questSigns;
+        hiddenDataIds.Clear();
+        if (granularHidden != null)
+            foreach (var id in granularHidden) hiddenDataIds.Add(id);
         if (!active || !changed) return;
 
-        // A mode may have turned OFF - restore anything that mode was responsible for before re-applying the new state.
+        // A mode may have turned OFF (or an id removed from the set) - restore anything we touched before re-applying,
+        // so a now-unhidden NPC re-appears rather than staying stuck hidden.
         RestoreAll();
         ApplyAll();
+    }
+
+    // True if the incoming granular set is identical to the one we already hold (so we can skip a needless re-scan).
+    private bool SameSet(IEnumerable<uint>? incoming)
+    {
+        var next = incoming as ICollection<uint> ?? (incoming == null ? System.Array.Empty<uint>() : new List<uint>(incoming));
+        if (next.Count != hiddenDataIds.Count) return false;
+        foreach (var id in next) if (!hiddenDataIds.Contains(id)) return false;
+        return true;
     }
 
     /// <summary>Begin acting on NPCs per the current modes. Idempotent.</summary>
@@ -91,7 +115,7 @@ public unsafe class NpcVisibilityService : IDisposable
     public void Update()
     {
         if (!active) return;
-        if (!despawnNpcs && !hideQuestSigns) return;   // nothing to maintain
+        if (!despawnNpcs && !hideQuestSigns && hiddenDataIds.Count == 0) return;   // nothing to maintain
         throttle++;
         if (throttle < 30) return;
         throttle = 0;
@@ -109,7 +133,11 @@ public unsafe class NpcVisibilityService : IDisposable
             if (native->ObjectKind != ObjectKind.EventNpc) continue;   // KEEP BattleNpc (striking dummies) and everything else
             var idx = (ushort)obj.ObjectIndex;
 
-            if (despawnNpcs)
+            // Full hide if either: DespawnNpcs (all), OR this NPC's DataId is in the granular hidden set (NB-20). The
+            // granular check keys on BaseId so every live instance of that ENpc kind is hidden together.
+            bool fullHide = despawnNpcs || (hiddenDataIds.Count > 0 && hiddenDataIds.Contains(native->BaseId));
+
+            if (fullHide)
             {
                 // Full hide. Suppress the marker too (a hidden NPC must not leave a floating icon), and hide the body.
                 CaptureMarker(idx, native);

@@ -134,9 +134,68 @@ public class HMSyncConfig : IPluginConfiguration
     public ushort MapEorzeaHour { get; set; } = 12;
     public byte MapEorzeaMinute { get; set; }
     public uint MapBgmId { get; set; }                     // 0 = none
+    // NB-20: these two are now the "effective for the CURRENTLY-LOADED map" cache. The durable, per-map store is
+    // MapNpcHide below; LoadNpcHideCache/SaveNpcHideCache copy between the dict entry (persisted) and these three
+    // runtime values (MapRemoveNpcs, MapHideQuestSigns, MapHiddenNpcDataIds). They stay serialized for back-compat and
+    // because PushMapState/DriveNpcVisibility already read them; the dict is what makes the choice per-map.
     public bool MapRemoveNpcs { get; set; }
     public bool MapHideQuestSigns { get; set; }   // S328aa: hide over-head quest markers (keep NPC bodies)
     // (S328ag DirtyCheckEnabled removed at release hardening - change-detection is always on, no longer configurable.)
+
+    // ── NB-20: per-map NPC-hide store (host prefs recorded per territory, so a host's choices re-apply on the maps
+    // they set them on). All three toggles are per-map: hide-all, hide-quest-markers, and the granular hidden-DataId
+    // set. Identity is (TerritoryId → DataId=ENpcResident BaseId), stable across visits and characters, so hiding a
+    // DataId hides every live instance of that NPC kind on that map (and syncs cleanly - object indices don't). Ships
+    // empty; entries are pruned when a map's prefs all clear. ──
+    public sealed class MapNpcHideEntry
+    {
+        public bool RemoveAll { get; set; }               // hide ALL event NPCs on this map
+        public bool HideMarkers { get; set; }             // null just the over-head quest markers
+        public List<uint> HiddenDataIds { get; set; } = new();  // granular: specific ENpc BaseIds to hide (set semantics)
+    }
+    public Dictionary<uint, MapNpcHideEntry> MapNpcHide { get; set; } = new();
+
+    // Runtime cache: the current loaded map's granular hidden-DataId set. NOT persisted directly (the dict is the
+    // store) - JsonIgnore so the transient copy never leaks into the config file. Mirror of MapNpcHide[zone].HiddenDataIds.
+    [Newtonsoft.Json.JsonIgnore] public HashSet<uint> MapHiddenNpcDataIds { get; set; } = new();
+
+    /// <summary>Load the persisted per-map NPC-hide prefs for <paramref name="zone"/> into the effective cache
+    /// (MapRemoveNpcs / MapHideQuestSigns / MapHiddenNpcDataIds). Absent entry → all-clear. Call on loaded-zone change.</summary>
+    public void LoadNpcHideCache(uint zone)
+    {
+        if (MapNpcHide.TryGetValue(zone, out var e))
+        {
+            MapRemoveNpcs = e.RemoveAll;
+            MapHideQuestSigns = e.HideMarkers;
+            MapHiddenNpcDataIds = new HashSet<uint>(e.HiddenDataIds);
+        }
+        else
+        {
+            MapRemoveNpcs = false;
+            MapHideQuestSigns = false;
+            MapHiddenNpcDataIds = new HashSet<uint>();
+        }
+    }
+
+    /// <summary>Persist the current effective cache back into the per-map store for <paramref name="zone"/> and Save().
+    /// An all-clear map prunes its entry so the dict stays sparse.</summary>
+    public void SaveNpcHideCache(uint zone)
+    {
+        if (!MapRemoveNpcs && !MapHideQuestSigns && MapHiddenNpcDataIds.Count == 0)
+        {
+            MapNpcHide.Remove(zone);
+        }
+        else
+        {
+            MapNpcHide[zone] = new MapNpcHideEntry
+            {
+                RemoveAll = MapRemoveNpcs,
+                HideMarkers = MapHideQuestSigns,
+                HiddenDataIds = new List<uint>(MapHiddenNpcDataIds),
+            };
+        }
+        Save();
+    }
 
     // S328d: when true, /say from players NOT in the HMS session is hidden from chat while a session is active
     // (a privacy-safe display filter - hides strangers' /say during RP sessions; no chat is collected or relayed).

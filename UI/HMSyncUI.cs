@@ -41,6 +41,15 @@ public class HMSyncUI
     private string minionSearch = "";
 
     private bool showMain;
+    // NB-21: ImGui-style minimise (collapse-to-header). The window is NoTitleBar, so ImGui's built-in
+    // title-bar collapse triangle isn't available - this reproduces it by hand. When minimised, the
+    // window is clamped to the header band (tab strip + close/min buttons); the tab bodies still submit
+    // but are clipped away, so only the header shows - exactly what ImGui's collapse does for a titled
+    // window. savedWindowSize preserves the restored height across the collapsed frames.
+    private bool minimised;
+    private Vector2 savedWindowSize;
+    private bool restoreSizePending;
+    private float measuredHeaderHeight;
     // v0.7.252: the tear-off carpet control bar - a separate floating ImGui window with the carpet controls you reach
     // for mid-session (toggle / downhill / uphill / rings / settings), so you don't need the main window open. This is
     // the first instance of the planned "HMS hotbar" idea (custom floating bars of plugin actions - summons, mounts,
@@ -259,6 +268,19 @@ public class HMSyncUI
     public Action<string>? TransferHost;                      // S326h: hand host to a peer (by peerId)
 
     public MapSettingsService? MapSettings;
+
+    // ── NB-20: granular NPC hide (dot-lens picker, ported from Begone!). The plugin supplies the current rendered
+    // EventNpc list (world pos + DataId + name + already-hidden), and receives host-authoritative toggle/restore. The
+    // picker overlay draws a clickable dot over each NPC via GetBackgroundDrawList + WorldToScreen; clicking a dot
+    // toggles that NPC's DataId in the current map's hidden set. Host-only (CanEditNpcHides gates the UI). ──
+    public readonly record struct NpcDotInfo(System.Numerics.Vector3 World, uint DataId, string Name, bool Hidden);
+    public Func<IReadOnlyList<NpcDotInfo>>? EnumerateNpcDots;   // rendered EventNpcs this frame
+    public Action<uint>? ToggleNpcHide;                        // host toggles one DataId in the current map's hidden set
+    public System.Action? RestoreNpcHides;                     // host clears ALL granular hides for the current map
+    public Func<int>? HiddenNpcCount;                          // count of granular hides on the current map (button enable/label)
+    public Func<bool>? CanEditNpcHides;                        // host authority + a virtual map is loaded
+    private bool npcPickerActive;                              // the dot-lens overlay is engaged
+
     public bool TimeDragHold;   // S326u: true while the time slider is being actively dragged (previews live even if not frozen)
     public Func<string>? BgmNowPlaying;   // S326w: title of the currently-selected BGM track (for host + guest display)
     public Action<ushort, byte, bool>? SetHostTime;   // S327g: (hour, minute, forced) - silent host time-set: apply + push epoch, no chat spam
@@ -426,6 +448,16 @@ public class HMSyncUI
         }
 
         ImGui.SetNextWindowSize(new Vector2(400, 600), ImGuiCond.FirstUseEver);
+        // NB-21: minimise clamp. While minimised, force the window height down to just the header band
+        // (measured last un-minimised frame); on restore, push the saved full size back once, then let
+        // the user resize freely again. Width is preserved in both directions.
+        if (minimised && measuredHeaderHeight > 0f)
+            ImGui.SetNextWindowSize(new Vector2(savedWindowSize.X, measuredHeaderHeight), ImGuiCond.Always);
+        else if (restoreSizePending)
+        {
+            ImGui.SetNextWindowSize(savedWindowSize, ImGuiCond.Always);
+            restoreSizePending = false;
+        }
         // v0.7.400 - the tab strip IS the window header.
         //   NoTitleBar   : no redundant chrome band; name + version moved into the Session strip.
         //   NoBackground : the window paints nothing, so the strip above the tab underline is
@@ -435,7 +467,9 @@ public class HMSyncUI
         // v0.7.403: NoScrollbar/NoScrollWithMouse - since v0.7.400 each tab body scrolls inside its own
         // child, so the WINDOW's scrollbar was a second, redundant one sitting outside the panel. The
         // child keeps its scrollbar; the window no longer competes for the wheel.
-        if (!ImGui.Begin(WindowTitle, ref showMain,
+        // Stable ImGui id: the window's saved size/position key off the label id, so the version string (shown
+        // by the grey header text below) must NOT leak into it. "###HMSyncMain" pins the id across version bumps.
+        if (!ImGui.Begin(WindowTitle + "###HMSyncMain", ref showMain,
                 ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoBackground
                 | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse))
         {
@@ -481,6 +515,13 @@ public class HMSyncUI
         // no gap, and the band height equals the tab height.
         float stripTopScreen = winPos.Y + tabRowY;
         float accentDividerY = winPos.Y + tabRowY + ImGui.GetFrameHeight();
+        // NB-21: while un-minimised, record how tall the header band is (window-local), so the minimise
+        // clamp above can shrink the window to exactly this next frame. tabRowY is the strip top in
+        // window coords; +frame height reaches the accent divider; +bottom WindowPadding leaves the
+        // same breathing room under the divider that the full window has, so the collapsed box doesn't
+        // crop the divider line.
+        if (!minimised)
+            measuredHeaderHeight = tabRowY + ImGui.GetFrameHeight() + ImGui.GetStyle().WindowPadding.Y;
         {
             // v0.7.436 - band = the BODY surface exactly (WindowBg), opaque, so header and body read as
             // one continuous panel. Uses the GetColorU32(ImGuiCol) overload that returns a packed uint
@@ -534,7 +575,8 @@ public class HMSyncUI
 
             // Against contentRegionMax, not window width - past that edge ImGui clips it away entirely,
             // which is where it went in v0.7.401.
-            ImGui.SetCursorPos(new Vector2(ImGui.GetWindowContentRegionMax().X - barH, tabRowY));
+            float rightX = ImGui.GetWindowContentRegionMax().X;
+            ImGui.SetCursorPos(new Vector2(rightX - barH, tabRowY));
 
             // Distinct from the tabs: muted red at rest, brighter on hover, so it reads as "close"
             // rather than as one more tab.
@@ -549,6 +591,36 @@ public class HMSyncUI
             ImGui.PopStyleVar();   // v0.7.437 - FrameRounding
 
             if (ImGui.IsItemHovered()) ImGui.SetTooltip("Close");
+
+            // NB-21: MINIMISE button, immediately LEFT of the close button on the same row, same square
+            // shape/size. Neutral grey (not red) so it reads as "collapse", not "close". Glyph flips
+            // "-" (minimise) / "+" (restore) to mirror ImGui's collapse affordance. Positioned one
+            // button-width + a small gap left of the close button.
+            const float btnGap = 3f;
+            ImGui.SetCursorPos(new Vector2(rightX - barH * 2f - btnGap, tabRowY));
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
+            ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.20f, 0.20f, 0.22f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.34f, 0.34f, 0.38f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive,  new Vector4(0.44f, 0.44f, 0.50f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.Text,          new Vector4(0.90f, 0.90f, 0.92f, 1f));
+            if (ImGui.Button((minimised ? "+" : "-") + "##hmsmin", new Vector2(barH, barH)))
+            {
+                if (!minimised)
+                {
+                    savedWindowSize = ImGui.GetWindowSize();   // remember full size before collapsing
+                    minimised = true;
+                }
+                else
+                {
+                    minimised = false;
+                    restoreSizePending = true;                 // push saved size back next frame
+                }
+            }
+            ImGui.PopStyleColor(4);
+            ImGui.PopStyleVar();
+
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip(minimised ? "Restore" : "Minimise");
+
             ImGui.SetCursorPos(savePos);
         }
 
@@ -1368,6 +1440,71 @@ public class HMSyncUI
         bool signHide = config.MapHideQuestSigns;
         if (ImGui.Checkbox("Hide quest markers", ref signHide))
         { config.MapHideQuestSigns = signHide; config.Save(); RunCommand?.Invoke("qbubble", signHide ? "on" : "off"); }
+
+        // NB-20: granular per-NPC hide. A dot-lens picker (ported from Begone!): toggle it on, then click any NPC's dot
+        // in the world to hide/show that NPC kind on this map. Host-authoritative and synced; recorded per map.
+        bool canEdit = CanEditNpcHides?.Invoke() ?? false;
+        int hiddenCount = HiddenNpcCount?.Invoke() ?? 0;
+        ImGui.Spacing();
+        if (!canEdit) ImGui.BeginDisabled();
+        bool picking = npcPickerActive;
+        if (ImGui.Checkbox("Pick NPCs to hide", ref picking)) npcPickerActive = picking;
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Toggle the world overlay, then click an NPC's dot to hide/show it.\nHiding one hides every copy of that NPC on this map. Synced to the session.");
+        ImGui.SameLine();
+        if (hiddenCount == 0) ImGui.BeginDisabled();
+        if (ImGui.Button("Restore hidden (" + hiddenCount + ")")) RestoreNpcHides?.Invoke();
+        if (hiddenCount == 0) ImGui.EndDisabled();
+        if (!canEdit) ImGui.EndDisabled();
+        if (npcPickerActive && canEdit)
+            ImGui.TextDisabled("Picker on: click a dot in the world. Green = shown, red = hidden.");
+    }
+
+    /// <summary>NB-20: the dot-lens NPC picker overlay (ported from Begone!). Registered as a standalone UiBuilder.Draw
+    /// handler so it renders over the game world even when the main window is on another tab. Draws a clickable dot at
+    /// each rendered EventNpc; hover within ~12px highlights, a click toggles that NPC's DataId in the map's hidden set.
+    /// Only active while the picker checkbox is on AND the host can edit (a virtual map is loaded).</summary>
+    public void DrawNpcPickerOverlay()
+    {
+        if (!npcPickerActive) return;
+        if (!(CanEditNpcHides?.Invoke() ?? false)) { npcPickerActive = false; return; }
+        var dots = EnumerateNpcDots?.Invoke();
+        if (dots == null || dots.Count == 0) return;
+
+        var draw = ImGui.GetBackgroundDrawList();
+        var mouse = ImGui.GetMousePos();
+        bool clicked = ImGui.IsMouseClicked(ImGuiMouseButton.Left);
+        uint toToggle = 0;
+        bool anyHover = false;
+
+        foreach (var d in dots)
+        {
+            if (!gameGui.WorldToScreen(d.World, out var screen)) continue;   // behind camera / off-screen
+            float dx = screen.X - mouse.X, dy = screen.Y - mouse.Y;
+            bool hover = (dx * dx + dy * dy) <= (12f * 12f);
+            if (hover) anyHover = true;
+
+            // Green = currently shown (click to hide), red = currently hidden (click to show). Brighter/larger on hover.
+            uint col = d.Hidden
+                ? ImGui.GetColorU32(new Vector4(0.90f, 0.25f, 0.25f, hover ? 1f : 0.75f))
+                : ImGui.GetColorU32(new Vector4(0.30f, 0.85f, 0.35f, hover ? 1f : 0.75f));
+            float r = hover ? 7f : 5f;
+            draw.AddCircleFilled(new Vector2(screen.X, screen.Y), r, col);
+            draw.AddCircle(new Vector2(screen.X, screen.Y), r, ImGui.GetColorU32(new Vector4(0f, 0f, 0f, 0.85f)), 0, 1.5f);
+
+            if (hover)
+            {
+                string label = (string.IsNullOrEmpty(d.Name) ? "NPC" : d.Name) + "  #" + d.DataId + (d.Hidden ? "  (hidden)" : "");
+                var ts = ImGui.CalcTextSize(label);
+                var tp = new Vector2(screen.X + 10f, screen.Y - ts.Y * 0.5f);
+                draw.AddRectFilled(new Vector2(tp.X - 3f, tp.Y - 2f), new Vector2(tp.X + ts.X + 3f, tp.Y + ts.Y + 2f), ImGui.GetColorU32(new Vector4(0f, 0f, 0f, 0.70f)));
+                draw.AddText(tp, ImGui.GetColorU32(new Vector4(1f, 1f, 1f, 1f)), label);
+                if (clicked) toToggle = d.DataId;
+            }
+        }
+
+        // Claim the click so it doesn't also target/interact with the game world underneath the dot.
+        if (anyHover) ImGui.SetNextFrameWantCaptureMouse(true);
+        if (toToggle != 0) ToggleNpcHide?.Invoke(toToggle);
     }
 
     // Two-column searchable BGM picker in a popup - the smart alternative to a giant dropdown. Search by title, click
@@ -2148,7 +2285,9 @@ ImGui.Spacing();
         (System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "?")
         + "  · Testing b" + InternalBuild
 #else
-        (System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "?")
+        // Full 4-part version (HMS's patch number is the 4th component, e.g. 1.0.0.4): ToString(), not ToString(3),
+        // or the prod header freezes at "1.0.0" across every patch.
+        (System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "?")
 #endif
         ;
     public Action<int>? OnLoadCutscene;
