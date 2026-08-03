@@ -725,7 +725,11 @@ public unsafe class MapSettingsService
     // loadedZoneId MUST be the real synthetic-loaded zone (zoneLoad.CurrentLoadedZone), NOT GameMain's
     // CurrentTerritoryTypeId - under the packet filter GameMain still reports the apartment/previous zone, which caused
     // weather-legality and BGM-default to resolve against the WRONG map ("plays the last map's track").
-    public void Reassert(uint loadedZoneId)
+    // NB-25: returns the concrete weather id it ENGAGED, so the caller broadcasts that exact value verbatim (see the
+    // host reassert tick in HMSyncPlugin) instead of reading GetActiveWeather()'s lagging displayed byte - reading the
+    // live byte right after a load is the map-load "weather not uniform on peers" settle-race. Apply behaviour below is
+    // unchanged; only the resolved value is now also handed back (0 = None/atmospheric is a legitimate return).
+    public byte Reassert(uint loadedZoneId)
     {
         // Held HOST STATE (weather/time/explicit BGM pick) is only re-asserted if the host actually set something this
         // session - that's what HasState gates. But it does NOT gate the BGM BASELINE below.
@@ -741,11 +745,17 @@ public unsafe class MapSettingsService
         // synthetic load can otherwise land as a stale/generic sky (fair skies) rather than the map's real weather. If
         // no explicit host weather is held (or it's illegal here), assert the zone's NATIVE weather so the host shows
         // the true sky and broadcasts a concrete id. Explicit legal pick already applied above; this is the baseline.
+        byte resolvedWeather = 0;   // NB-25: what we engaged and hand back for verbatim broadcast
         bool heldWeatherApplied = HasState && WeatherId != 0 && loadedZoneId != 0 && GetLegalWeather(loadedZoneId).Exists(x => x.id == WeatherId);
-        if (!heldWeatherApplied && loadedZoneId != 0)
+        if (heldWeatherApplied)
+        {
+            resolvedWeather = WeatherId;   // the held, still-legal pick
+        }
+        else if (loadedZoneId != 0)
         {
             byte nativeWeather = GetDefaultWeather(loadedZoneId);
             if (nativeWeather != 0) ApplyWeather(nativeWeather);
+            resolvedWeather = nativeWeather;   // the zone's deterministic native (from the live WeatherManager)
         }
 
         // BGM ENGAGE - runs on EVERY load, HasState or not. Playing the zone's own default music is the BASELINE, not
@@ -756,5 +766,7 @@ public unsafe class MapSettingsService
         // CFC→InstanceContent for instanced zones like 1345 → BGM 20264).
         uint toEngage = BgmId != 0 ? BgmId : (loadedZoneId != 0 ? GetDefaultBgm(loadedZoneId) : 0);
         if (toEngage != 0) PlayBgm(toEngage);
+
+        return resolvedWeather;   // NB-25: caller broadcasts this verbatim (not the lagging live displayed byte)
     }
 }

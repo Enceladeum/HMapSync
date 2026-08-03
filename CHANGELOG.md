@@ -5,6 +5,18 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0.6] - 2026-08-04
+
+### Added
+
+- **Teleport to a session member**: right-click a participant in the lobby list and choose "Teleport to" to jump straight to their live position, handy on large maps where it's easy to lose the group. It's a private, local-only move (no host control, no relay traffic), and the option is disabled for anyone not currently visible to you.
+
+### Fixed
+
+- **Leaving or ending a session while airborne no longer strands a frozen body**: a member who disconnects, is kicked, or stops the session while falling, flying, or noclipping is now returned to solid ground and reset to a neutral idle before their character unloads. Other members could previously see them frozen mid-fall or left hanging in the air.
+- **Seated members stand up when the group changes maps**: hopping to a new map no longer drops a seated participant into a stuck seated pose above the ground on everyone else's screen; they now stand as the new map loads.
+- **Weather matches for everyone after a map change**: the host now lets the new map's sky settle before sharing it, so every member sees the same weather. Previously a mistimed read right after loading could briefly hand peers a stale or generic sky (often plain fair skies) that didn't match the host's.
+
 ## [1.0.0.5] - 2026-08-02
 
 ### Added
@@ -88,6 +100,7 @@ Initial public release.
 - **Curated spawns** for every zone, with your own spawn points recorded via `/hms memo`.
 - **Optional integrations**: Glamourer for cosmetic visibility toggles, and Moniker for in-session nameplate changes.
 
+[1.0.0.6]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.6
 [1.0.0.5]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.5
 [1.0.0.4]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.4
 [1.0.0.3]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.3

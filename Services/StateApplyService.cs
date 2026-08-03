@@ -392,16 +392,29 @@ public class StateApplyService : IDisposable
             // therefore iterated nothing - peers were never posture-cleaned). Here the roster is
             // still populated, so the cleanup actually reaches the actors. Full clear: EmoteId,
             // Mode, BaseOverride, DrawOffset, base-lane clip - same shape as SanitiseLocalPosture.
-            // Covers both InPositionLoop and EmoteLoop.
+            //
+            // Emote/pose modes need the extra Mode + EmoteId reset (these gate the native cpose loop
+            // resolver, which would otherwise re-assert the seated/pose clip). Keep that part gated.
             if (character->Mode == CharacterModes.InPositionLoop
              || character->Mode == CharacterModes.EmoteLoop)
             {
                 character->EmoteController.EmoteId = 0;
                 character->SetMode(CharacterModes.Normal, 0);
-                character->Timeline.BaseOverride = 0;
-                ((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)obj.Address)->SetDrawOffset(0, 0, 0);
-                character->Timeline.TimelineSequencer.PlayTimeline(3);
             }
+            // NB-29: ALWAYS neutralise the animation clip, regardless of Mode. The clear above USED to be
+            // wholly gated on the two emote/pose modes - but a peer torn down mid-FALL (noclip out-of-bounds)
+            // has Mode == Normal with a fall clip pinned in Timeline.BaseOverride (see ComputeJumpTimeline),
+            // so that peer was skipped entirely and stayed FROZEN MID-FALL on every OTHER participant's screen
+            // after a simultaneous /hms stop. (`/hms stop` = whole-session teardown = THIS path; NB-28 closed
+            // the identical gap on the single-peer UnregisterPeer/leave path.) SanitizePeerStates does NOT
+            // DisableDraw peers - the home-zone reload rebuilds them - but the rebuilt DrawObject reads the
+            // Character's still-falling timeline, so the clip must be evicted here. Clear the override, zero the
+            // draw offset, and PLAY the base idle (tl 3): clearing BaseOverride alone can freeze the body on the
+            // clip's last frame; PlayTimeline forces the transition. Idempotent for a normally-standing peer
+            // (BaseOverride already 0, idle is what they'd show anyway), so no regression for the common case.
+            character->Timeline.BaseOverride = 0;
+            ((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)obj.Address)->SetDrawOffset(0, 0, 0);
+            character->Timeline.TimelineSequencer.PlayTimeline(3);
             // (future: appearance-override revert, etc. go here)
         }
 
@@ -868,19 +881,54 @@ public class StateApplyService : IDisposable
                     // Created event we never received can't leave the address stuck-suppressed.
                     rebuildingActors.Remove((nint)native);
 
-                    // v0.7.370: undo the synthetic-coord freeze for THIS peer as they leave. The firewall pins a peer's
-                    // real actor at its session-start spot server-side, so once they're no longer a puppet the actor
-                    // must be put back there - otherwise it sits at the last synthetic position (the "peer is ~70u
-                    // away until they move" bug). This previously only happened at session END, via
-                    // SnapshotPeerOrigins() - which iterates the LIVE roster, so a peer who left FIRST was already
-                    // removed and contributed nothing. Hence the bug only showed in the leave-then-stop order.
-                    if (info.OriginPosition.HasValue)
+                    // v0.7.370 + ground-snap on exit: return the departing peer's real actor to solid ground before we
+                    // unload it. Two problems compound here:
+                    //   (1) The firewall pins a peer's real actor at its session-start spot server-side, so once they
+                    //       stop being a puppet the actor must be put back there or it sits at the last synthetic
+                    //       position (the "~70u away until they move" bug). That's the origin X/Z restore below. (This
+                    //       used to run only at session END via SnapshotPeerOrigins(), which walks the LIVE roster - so
+                    //       a peer who left FIRST was already removed and contributed nothing; hence the bug showed only
+                    //       in the leave-then-stop order.)
+                    //   (2) That origin's Y can itself be in the air: a peer who joined the lobby already mounted/flying
+                    //       had an AIRBORNE spot captured as their origin, and a mounted/noclip peer is driven up to
+                    //       saddle height / flight altitude. Restoring the raw origin (or, with no origin, leaving them
+                    //       where the last transform put them) then DisableDraw despawns a body hanging in mid-air: the
+                    //       mounted/noclip exit bug. So we keep the origin's X/Z but drop the Y onto solid ground.
+                    //
+                    // Ground reference = the LOCAL player, who is always natively grounded (Principle 1: native systems
+                    // pilot the local player), so their Y is a reliable floor height in this zone. Deliberately the
+                    // simple, crash-safe route - no native downward raycast. The actor despawns next frame and the
+                    // server repaints its true position once the firewall lifts, so nothing past "not left floating"
+                    // needs to be exact.
+                    var restore = info.OriginPosition ?? obj.Position;
+                    var groundRef = objectTable.LocalPlayer;
+                    if (groundRef != null) restore.Y = groundRef.Position.Y;
+                    WritePeerPosition(info.ObjectIndex.Value, restore);
+                    // Retain the grounded spot so the session-end restore (and its re-assert window) still covers this
+                    // actor - and re-asserts the GROUNDED position, not a stale airborne origin - if a late settle-write
+                    // disturbs it after we've dropped the roster entry.
+                    departedOrigins[info.ObjectIndex.Value] = restore;
+                    log.Debug("[HMSync] Ground-snapped departing peer " + info.CharacterName + " before unload.");
+
+                    // NB-28: NEUTRALISE POSTURE for EVERY departing peer, not just mounted ones. Companion to F2's
+                    // position ground-snap: F2 fixed WHERE the departed body sits, this fixes what it's DOING. A peer
+                    // who leaves mid-fall (noclip/jump) has a fall clip pinned in Timeline.BaseOverride (see
+                    // ComputeJumpTimeline). DisableDraw is a ONE-SHOT that destroys the DrawObject, but the game
+                    // rebuilds it from the Character's still-falling timeline, so every OTHER client is left staring at
+                    // the departed peer frozen mid-fall. The mount branch above already cleared BaseOverride/DrawOffset
+                    // - but ONLY when mounted; a falling, unmounted peer fell through that gap. The whole-session
+                    // teardown (SanitizePeerStates) already does this exact idle-reset on every peer; the single-peer
+                    // leave path was simply missing it. /sit "usually" un-sticks a stuck clip, but nobody can /sit a
+                    // puppet they don't drive - so WE issue the idle here: clear the override, zero any draw offset,
+                    // and PLAY the base idle (tl 3) to actively EVICT the fall clip (clearing BaseOverride alone lets
+                    // the rebuilt DrawObject freeze on the fall clip's last frame; PlayTimeline forces the transition).
+                    // Idempotent for a normally-standing peer (BaseOverride already 0; idle is what they'd show anyway)
+                    // and consistent with the session-end path, so no regression for the common case.
+                    if (character != null)
                     {
-                        WritePeerPosition(info.ObjectIndex.Value, info.OriginPosition.Value);
-                        // Retain it so the session-end restore (and its re-assert window) still covers this actor if a
-                        // late settle-write disturbs the position after we've dropped the roster entry.
-                        departedOrigins[info.ObjectIndex.Value] = info.OriginPosition.Value;
-                        log.Debug("[HMSync] Restored origin for departing peer " + info.CharacterName + ".");
+                        character->Timeline.BaseOverride = 0;
+                        native->SetDrawOffset(0, 0, 0);
+                        character->Timeline.TimelineSequencer.PlayTimeline(3);
                     }
 
                     native->DisableDraw();

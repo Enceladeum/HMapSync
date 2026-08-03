@@ -266,6 +266,7 @@ public class HMSyncUI
     public Action<string>? SummonPeer;                        // summon a peer to host (by peerId)
     public Action<string>? KickPeer;                          // remove a peer from the room (by peerId)
     public Action<string>? TransferHost;                      // S326h: hand host to a peer (by peerId)
+    public Action<string>? TeleportToPeer;                    // teleport local player to a peer's live position (by peerId)
 
     public MapSettingsService? MapSettings;
 
@@ -1690,11 +1691,21 @@ ImGui.Spacing();
                     ImGui.Selectable(display + "##row" + (string.IsNullOrEmpty(p.PeerId) ? "self" + n : p.PeerId),
                         false, ImGuiSelectableFlags.SpanAllColumns);
                     if (p.IsHost) ImGui.PopStyleColor();
-                    if (!p.IsSelf && relay.IsHost && ImGui.BeginPopupContextItem("##ctx" + p.PeerId))
+                    // Right-click menu. "Teleport to" is a purely local self-move (no host authority, no relay), so
+                    // it's offered to every member - guests get lost on the big map too. It greys out until the peer's
+                    // live body is resolved this frame (no position to jump to otherwise). Host-only actions (transfer
+                    // host / kick) sit below a separator, gated on relay.IsHost inside the same popup.
+                    if (!p.IsSelf && ImGui.BeginPopupContextItem("##ctx" + p.PeerId))
                     {
-                        if (ImGui.MenuItem("Transfer host")) TransferHost?.Invoke(p.PeerId);
-                        ImGui.Separator();
-                        if (ImGui.MenuItem("Kick")) KickPeer?.Invoke(p.PeerId);
+                        if (!p.Resolved) ImGui.BeginDisabled();
+                        if (ImGui.MenuItem("Teleport to")) TeleportToPeer?.Invoke(p.PeerId);
+                        if (!p.Resolved) ImGui.EndDisabled();
+                        if (relay.IsHost)
+                        {
+                            ImGui.Separator();
+                            if (ImGui.MenuItem("Transfer host")) TransferHost?.Invoke(p.PeerId);
+                            if (ImGui.MenuItem("Kick")) KickPeer?.Invoke(p.PeerId);
+                        }
                         ImGui.EndPopup();
                     }
                     ImGui.TableNextColumn(); ImGui.TextUnformatted(p.World ?? "");
@@ -1715,8 +1726,10 @@ ImGui.Spacing();
         }
         GridResizeHandle("##partsresize", () => config.DashParticipantsHeight,
             v => config.DashParticipantsHeight = v, () => config.Save());
-        if (relay.IsHost && parts.Count > 1)
-            ImGui.TextDisabled("Right-click a participant for host actions (transfer host / kick).");
+        if (parts.Count > 1)
+            ImGui.TextDisabled(relay.IsHost
+                ? "Right-click a participant to teleport to them, or for host actions (transfer host / kick)."
+                : "Right-click a participant to teleport to them.");
     }
 
     // v0.7.430 - compass arrow, adapted from Wholist (UserInterface/.../NearbyPlayers.window.cs

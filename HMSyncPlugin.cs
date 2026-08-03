@@ -482,6 +482,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             SummonPeer = peerId => DoSummonPeer(peerId),            // S326f: host summons a peer to their position
             KickPeer = peerId => DoKickPeer(peerId),                // S326f: host removes a peer from the room
             TransferHost = peerId => DoTransferHost(peerId),        // S326h: host hands the session to a peer
+            TeleportToPeer = peerId => RunOnMainThread(() => DoTeleportToPeer(peerId)),  // local self-move to a peer's spot
             // NB-20: granular NPC hide (dot-lens picker). Enumeration runs during UI Draw (main thread) so direct object
             // access is safe; toggle/restore route through the main thread + host-authoritative push.
             EnumerateNpcDots = BuildNpcDotList,
@@ -651,11 +652,30 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             mapReassertCountdown--;
             if (mapReassertCountdown == 0 && relay.HasMapAuthority)
             {
-                // NB-20: swap the effective NPC-hide cache to THIS map's saved per-map prefs BEFORE the push, so the
-                // host's recorded hide-all / hide-markers / granular set for the loaded map re-apply and broadcast.
-                config.LoadNpcHideCache(zoneLoad.CurrentLoadedZone);
-                mapSettings.Reassert(zoneLoad.CurrentLoadedZone);   // host engages the resolved track locally
-                PushMapState();   // + broadcast the resolved map-state so peers mirror the NEW zone's BGM (not stale)
+                // NB-25 WEATHER SETTLE-RACE FIX - two hardening changes over the old blind-countdown reassert:
+                //   (1) The 150-frame countdown is a lower-bound settle DELAY, not the trigger. A slow/big load can
+                //       exceed 2.5s, and reasserting against a not-yet-loaded zone resolves weather/BGM against the
+                //       WRONG (stale) territory. So HOLD (re-arm to 1) until the zone has actually finished loading -
+                //       exactly the guard the guest re-apply path below already has.
+                //   (2) Broadcast the RESOLVED weather, not the live displayed byte. Reassert() now returns the
+                //       concrete id it engaged (held-legal pick, else the zone's deterministic native), and we hand
+                //       THAT to PushMapState as the override. That skips GetActiveWeather() (EnvManager+0x26), whose
+                //       displayed value LAGS the load and could ship a stale/transition sky to peers ("weather not
+                //       uniform on load"). Same verbatim-broadcast principle the explicit-pick path uses (v0.7.475).
+                if (!zoneLoad.IsZoneLoaded)
+                {
+                    mapReassertCountdown = 1;   // zone still loading - hold and re-check next frame
+                }
+                else
+                {
+                    // NB-20: swap the effective NPC-hide cache to THIS map's saved per-map prefs BEFORE the push, so the
+                    // host's recorded hide-all / hide-markers / granular set for the loaded map re-apply and broadcast.
+                    config.LoadNpcHideCache(zoneLoad.CurrentLoadedZone);
+                    byte resolvedWeather = mapSettings.Reassert(zoneLoad.CurrentLoadedZone);   // engages locally + returns the resolved id
+                    PushMapState(resolvedWeather);   // broadcast the RESOLVED map-state (deterministic weather, BGM) - not a lagging live read
+                    log.Debug("[HMSync] [WX-REASSERT] host reassert broadcast: zone=" + zoneLoad.CurrentLoadedZone
+                        + " resolvedWeather=" + resolvedWeather + " (" + mapSettings.WeatherName(resolvedWeather) + ")");
+                }
             }
         }
 
@@ -1723,6 +1743,15 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // sees us at the synthetic coordinates. Idempotent (no-op if already synthetic on a subsequent load); aborts
         // the load if the filter can't engage.
         if (!EngageSyntheticSession()) return;
+
+        // NB-32: CLEAN-SPAWN ON HOP (host). Stand this client up (clear any seated/looped emote) BEFORE the zone
+        // changes, mirroring the standup EngageSyntheticSession does once on the initial session load and then
+        // early-returns on every subsequent hop - so a mid-session hop needs this explicit call. By stopping the
+        // seated broadcast BEFORE LoadZone, the idle state propagates during peers' own load window and they rebuild
+        // this body clean by construction, rather than squatting mid-air then being swept to idle post-settle.
+        // Mount-safe: SanitiseLocalPosture no-ops on Mounted (neither InPositionLoop nor EmoteLoop). Purely local /
+        // behind the filter, so the origin posture captured at first engage (and exit-time reconciliation) is untouched.
+        SanitiseLocalPosture("map-hop");
 
         var peerIndices = stateApply.GetPeerObjectIndices();
         zoneLoad.LoadZone(territoryId, peerIndices, spawn, spawnFacing);
@@ -3610,6 +3639,21 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         _ = relay.SendHostTransfer(peerId);
     }
 
+    // Teleport the local player to a lobby participant's live position. Purely local: it reuses DoTeleport (SetPosition
+    // + the 12-frame hold), no host authority and no relay traffic - so any member can jump to any other member. We read
+    // the peer's CURRENT rendered object position (not a stored/synthetic coord) so the landing spot is where the body
+    // actually is this frame. If the peer isn't bound to a live object yet, there's nothing to jump to - tell the user.
+    private void DoTeleportToPeer(string peerId)
+    {
+        if (!stateApply.Peers.TryGetValue(peerId, out var info) || info.ObjectIndex is not { } idx
+            || objectTable[idx] is not Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter pc)
+        {
+            chat.Print("[HMSync] Can't teleport - " + PeerName(peerId) + " isn't visible right now.");
+            return;
+        }
+        DoTeleport(pc.Position);
+    }
+
     // Resolve a relay PeerId to a display name for notifications/menus; falls back to the id if not yet resolved.
     private string PeerName(string peerId)
         => stateApply.Peers.TryGetValue(peerId, out var pi) && !string.IsNullOrEmpty(pi.CharacterName) ? pi.CharacterName : peerId;
@@ -4151,6 +4195,11 @@ public sealed class HMSyncPlugin : IDalamudPlugin
 
             // Guest goes synthetic before loading the host's zone - same filter-first-then-load invariant as the host.
             if (!EngageSyntheticSession()) return;
+
+            // NB-32: CLEAN-SPAWN ON HOP (guest). Symmetric with the host DoLoad path - stand this client up BEFORE
+            // LoadZone so its idle state broadcasts during peers' load window and they rebuild it clean, mirroring the
+            // first-engage standup. Mount-safe; purely local / behind the filter (origin posture untouched).
+            SanitiseLocalPosture("map-hop");
 
             // v0.7.332: for a cutscene, arm the same bg-swap the host used - set BOTH stage fields before the donor load
             // so the guest's CreateScene detour substitutes the stage bg (mirrors CutsceneStageService.LoadStage).
