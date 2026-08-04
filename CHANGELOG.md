@@ -5,6 +5,16 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0.7] - 2026-08-04
+
+### Added
+
+- **Live join and leave**: session members who arrive or leave partway through a session are now handled live. A late joiner is bound and driven as soon as they join, and a member who leaves no longer leaves a lingering frozen copy behind on other members' screens. HMS also re-learns the game's player spawn and despawn packets automatically if a game patch shifts them, so this keeps working across patches without waiting for a plugin update.
+
+### Fixed
+
+- **Facing preserved on session end**: when a session ends, members are handed back facing their true direction instead of snapping to the last synced heading.
+
 ## [1.0.0.6] - 2026-08-04
 
 ### Added
@@ -100,6 +110,7 @@ Initial public release.
 - **Curated spawns** for every zone, with your own spawn points recorded via `/hms memo`.
 - **Optional integrations**: Glamourer for cosmetic visibility toggles, and Moniker for in-session nameplate changes.
 
+[1.0.0.7]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.7
 [1.0.0.6]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.6
 [1.0.0.5]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.5
 [1.0.0.4]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.4
