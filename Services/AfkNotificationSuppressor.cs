@@ -9,8 +9,9 @@ namespace HMSync.Services;
 /// S250: suppresses the duty AFK / "you will be expelled" system notification, but ONLY while an
 /// HMS session is active. This exists because HMS's raw zone loads spin up an InstanceContent
 /// director (for the wall-down convenience) whose Lua still runs the idle-watch and prints the
-/// 5-minute inactivity warning - even though the actual expel never fires (that needs full duty
-/// machinery HMS doesn't run). The nag is harmless but annoying during long explore sessions.
+/// inactivity warning (the client's "inactive for 10 minutes" nag - see ExpelWarningFragments
+/// below for the actual matched text) - even though the actual expel never fires (that needs full
+/// duty machinery HMS doesn't run). The nag is harmless but annoying during long explore sessions.
 ///
 /// DESIGN (deliberately surgical - see handover §9):
 ///   * We do NOT touch the director Lua. It bundles many behaviours (objective tracking, sequence

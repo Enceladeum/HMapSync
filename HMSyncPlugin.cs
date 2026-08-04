@@ -212,6 +212,12 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // (different object index than the live local player) and the mount inherited the hide.
         actorVisibility.IsGPosing = () => clientState.IsGPosing;
 
+        // D-16.2/.3: when the packet filter passes a real walk-in's spawn through (inbound), it fires this on the NETWORK
+        // thread. QueueImmediateHide only enqueues (thread-safe); ActorVisibility.Update drains it next frame so the
+        // newcomer is hidden before the throttled sweep would catch it, avoiding a real-room flash into the virtual
+        // scene. If they later join the session, the ContentId-bind → RegisterPeer path reveals + drives them.
+        packetFilter.OnRoomActorArrived = eid => actorVisibility.QueueImmediateHide(eid);
+
         // COSM_1_016: skills. Capture hooks UseAction (original runs first, so the game keeps enforcing cooldowns/
         // restrictions); the sender carries the cast on WARM; the receiver replays it on the peer's puppet via the
         // engine's own ActionEffectHandler.Receive, which cascades animation + VFX + sound for free.
@@ -354,7 +360,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             // Re-assert for a short window since a stray late settle-write could re-touch it right after the reload.
             if (retPeerOrigins.Count > 0)
             {
-                foreach (var (idx, pos) in retPeerOrigins) stateApply.WritePeerPosition(idx, pos);
+                foreach (var (idx, pos, rot) in retPeerOrigins) stateApply.WritePeerPosition(idx, pos, rot);
                 retOriginFrames = 120;   // ~2s of re-assert
             }
         };
@@ -507,19 +513,22 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // Replay those restores once the discovery manager is live (deferred poll), then delete the file.
         ArmRevealCrashRecovery();
 
+#if HMS_TESTING
+        // NB-11 / NB-22: TESTING-BUILD ONLY. The testing build registers ONLY "/hmst" (hms + t for testing) and NOT
+        // "/hms". This lets a testing build run side-by-side with a prod install with no command collision AND —
+        // the point of NB-22 — means typing "/hms" during testing always reaches the PROD plugin, never the testing
+        // one by accident. OnCommand dispatches on args and ignores the command name, so every subcommand works
+        // identically via /hmst. Gated on HMS_TESTING; the prod build (no symbol) registers the real "/hms" in the
+        // #else branch. Do NOT promote the HMS_TESTING DefineConstants line.
+        commands.AddHandler("/hmst", new CommandInfo(OnCommand)
+        {
+            HelpMessage = "Open the HMapSync window (testing build).",
+            ShowInHelp = true,
+        });
+#else
         commands.AddHandler("/hms", new CommandInfo(OnCommand)
         {
             HelpMessage = "Open the HMapSync window.",
-            ShowInHelp = true,
-        });
-#if HMS_TESTING
-        // NB-11: TESTING-BUILD ONLY. Registers "/hmst" (hms + t for testing) as an alias so a testing build can run
-        // side-by-side with a prod install without command collision - every /hms subcommand works identically via
-        // /hmst (OnCommand dispatches on args, ignoring the command name). Gated on HMS_TESTING, so the shared source
-        // file copies to prod with no /hmst handler. Do NOT promote the HMS_TESTING DefineConstants line.
-        commands.AddHandler("/hmst", new CommandInfo(OnCommand)
-        {
-            HelpMessage = "Open the HMapSync window (testing build alias).",
             ShowInHelp = true,
         });
 #endif
@@ -537,7 +546,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     private System.Numerics.Vector3? teleportHoldTarget;
     private int teleportHoldFrames;
     private int retOriginFrames;   // v0.7.328: post-return re-assert window for restoring peer origin positions
-    private System.Collections.Generic.List<(ushort idx, System.Numerics.Vector3 pos)> retPeerOrigins = new();
+    private System.Collections.Generic.List<(ushort idx, System.Numerics.Vector3 pos, float? rot)> retPeerOrigins = new();
 
     // v0.7.419 - origin posture state, captured at engage BEFORE SanitiseLocalPosture clears it.
     // Used in post-settle to execute a server-acknowledged standup if the server still thinks we're
@@ -583,7 +592,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         {
             retOriginFrames--;
             if (retOriginFrames % 15 == 0)
-                foreach (var (idx, pos) in retPeerOrigins) stateApply.WritePeerPosition(idx, pos);
+                foreach (var (idx, pos, rot) in retPeerOrigins) stateApply.WritePeerPosition(idx, pos, rot);
         }
 
         // v0.7.320: guarantee the furniture de-draw poll is running on EVERY client in a session on a virtual map -
@@ -652,7 +661,8 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             mapReassertCountdown--;
             if (mapReassertCountdown == 0 && relay.HasMapAuthority)
             {
-                // NB-25 WEATHER SETTLE-RACE FIX - two hardening changes over the old blind-countdown reassert:
+                // NB-25 WEATHER SETTLE-RACE FIX - two hardening changes over the old "blind countdown → Reassert →
+                // PushMapState()":
                 //   (1) The 150-frame countdown is a lower-bound settle DELAY, not the trigger. A slow/big load can
                 //       exceed 2.5s, and reasserting against a not-yet-loaded zone resolves weather/BGM against the
                 //       WRONG (stale) territory. So HOLD (re-arm to 1) until the zone has actually finished loading -
@@ -877,6 +887,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 case "accessory":  // S322k: client-side self-ornament (fashion accessory; locked gated in DoAccessory)
                 case "senddiag":   // v0.7.418: outbound observer - must run OUT of session (that is the window under test)
                 case "pktcap":     // S327: packet inspector capture - a diagnostic; useful out of session (passes packets through when not filtering)
+                case "rosterdump": // b31 (D-16 measurement): read-only spawn/despawn struct dump - MUST run out of session (idle in a populated area, no filter)
                 case "firecut":    // P1 cutscene probe - arms capture; must run in an inn (out of session)
                 case "cutstop":    // P1 safety escape - must work anywhere
                     break; // allowed outside a session
@@ -1036,6 +1047,32 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                         " - watch [SEND-DIAG] in /xllog. Nothing is filtered while out of session.");
                 }
                 break;
+            case "rosterdump":
+                // b31 (D-16 opcode-agnostic redesign, measurement step): READ-ONLY full-payload dump of
+                // PlayerSpawn/DespawnCharacter so we can measure the 7.55 struct (ContentId/name/customize/length for
+                // spawn; leaver-id offset for despawn) before writing the structural validators. Seeds the spawn/despawn
+                // opcodes from the live map so the packets are recognised, then installs capture-only (no session
+                // needed - idle in a populated area and watch players walk in/out). Nothing is filtered while off-session.
+                {
+                    packetFilter.RosterDump = !packetFilter.RosterDump;
+                    if (packetFilter.RosterDump)
+                    {
+                        packetFilter.ConfigureRosterOpcodes(
+                            opcodeMap.InboundOpcodesForNames("PlayerSpawn"),
+                            opcodeMap.InboundOpcodesForNames("DespawnCharacter"));
+                        packetFilter.EnableCaptureOnly();
+                        chat.Print("[HMSync] Roster struct dump ON - seeded spawn=[" +
+                            string.Join(",", packetFilter.SpawnOpcodes) + "] despawn=[" +
+                            string.Join(",", packetFilter.DespawnOpcodes) + "]. Idle in a populated area; watch " +
+                            "[ROSTER-DUMP] in /xllog as players spawn/despawn. Nothing is filtered out of session.");
+                    }
+                    else
+                    {
+                        if (!packetFilter.SendDiag && !packetFilter.CaptureInbound) packetFilter.DisableCaptureOnly();
+                        chat.Print("[HMSync] Roster struct dump OFF.");
+                    }
+                }
+                break;
             case "pktcap": DoPktCap(arg); break;
             case "mapdiag": DoMapDiag(); break;   // S328ab: map-reveal investigation (logs AgentMap + discovery state)
             case "mapreveal": DoMapReveal(); break;   // v0.7.447: TEST - snapshot + reveal the current map's discovery table (research mode)
@@ -1121,10 +1158,9 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 chat.Print("[HMSync] VFX dump written to /xllog - look for [VFXDUMP]. MATCH = a current pattern hits it.");
                 break;
             // v0.7.456: /hms gposemount (the gpose mount-flicker diagnostic probe) REMOVED - a spent v0.7.357
-            // investigation tool (its finding is recorded in GPoseMountDrawService). The probe object, per-tick
-            // Update, and wiring are gone; the null-safe GPoseProbe?.NoteClear stubs in StateApplyService become
-            // permanent no-ops (left in place - they're ?.-guarded and woven into working mount-clear paths; a
-            // later deep-clean can strip them). Not user-facing; pure dev scaffolding.
+            // investigation tool (its finding is recorded in GPoseMountDrawService). NB-26 (2026-08-03): the deep-clean
+            // is now done - the GPoseMountProbe class, the GPoseProbe field, and the five null-safe
+            // GPoseProbe?.NoteClear stubs in StateApplyService are all gone. Nothing left to strip.
             // v0.7.456: /hms deckfloor (the manual place-and-see collision-patch authoring tool) REMOVED - it was
             // a one-off used to dial in the o1e1 ship-cabin observation-deck floor, now baked into DeckFloorService
             // (StagePatches) and auto-applied via EnsureStagePatches on stage load. The service + baked patch stay;
@@ -1380,6 +1416,26 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 "(Config tab → Say opcodes → Re-learn). Everything else is unaffected.");
         });
 
+        // Stage 2 (D-16): PlayerSpawn opcode SELF-HEAL. Fires on the network thread when the room pass-through detects the
+        // spawn signature on a rotated opcode and re-seeds itself (walk-in instantiation recovers WITHOUT a plugin update).
+        // Positive event - inform the user their session self-repaired; no config to change on their side.
+        packetFilter.OnSpawnOpcodeRelearned = op => RunOnMainThread(() =>
+        {
+            log.Information("[HMSync] [RELEARN] PlayerSpawn opcode self-healed to " + op + " (0x" + op.ToString("X3") + ").");
+            chat.Print("[HMSync] Auto-recovered: the game's player-spawn packet had shifted (likely a patch), and HMS re-learned " +
+                "it on its own. Late-joining session members will appear normally again — no action needed.");
+        });
+
+        // Stage 2b (D-16): DespawnCharacter opcode SELF-HEAL. Fires on the network thread when the correlation scan (a2==me
+        // + a known-spawned leaver, repeated across distinct departures) re-seeds the despawn opcode. Restores phantom
+        // cleanup for departed players without a plugin update.
+        packetFilter.OnDespawnOpcodeRelearned = op => RunOnMainThread(() =>
+        {
+            log.Information("[HMSync] [RELEARN] DespawnCharacter opcode self-healed to " + op + " (0x" + op.ToString("X3") + ").");
+            chat.Print("[HMSync] Auto-recovered: the game's player-despawn packet had shifted (likely a patch), and HMS re-learned " +
+                "it on its own. Players who leave the area will stop leaving a lingering copy behind — no action needed.");
+        });
+
         string gameVersion = GetGameVersion();
         // F1: only run the patch-detection when we could actually READ the live version. An empty read (CS not ready /
         // exception) is NOT evidence of a patch - comparing "" against a real stamp would falsely trip the drift branch
@@ -1629,6 +1685,21 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         packetFilter.Enable();
         sayFilter.Active = true;   // S328v: hide non-session /say + range-cull members
         PrepareSayPassthrough();   // S328p: version-check + configure opcodes + arm (fail-closed if unverified/patched)
+        // D-16: arm the read-only room roster. Resolve PlayerSpawn/DespawnCharacter by NAME from the opcode map (the
+        // durable identity - numbers rotate per patch) and push them in. A name absent from the loaded map yields an
+        // empty set → tracking is inert for that packet (fail-closed). The register only READS the spawn/despawn keys to
+        // know who's physically in the firewalled room; it never passes a packet through, so nothing is instantiated.
+        packetFilter.RoomTrackingEnabled = true;
+        // D-16.2/.3: also PASS validated player spawn/despawn through (inbound only) so the object table stays truthful -
+        // a real walk-in is instantiated (hidden by ActorVisibility until they join) and a leaver is removed (no
+        // phantom). Enables live late-join binding + phantom cleanup with no new render code. Torn down at session end.
+        packetFilter.RoomPassthrough = true;
+        packetFilter.ConfigureRosterOpcodes(
+            opcodeMap.InboundOpcodesForNames("PlayerSpawn"),
+            opcodeMap.InboundOpcodesForNames("DespawnCharacter"));
+        // Cache our own entity id for the network-thread despawn re-learn correlation (a despawn's a2 == local player).
+        // Framework thread here; read as an atomic uint off-thread. Stable for the session, so a one-shot cache is enough.
+        packetFilter.LocalPlayerEntityId = objectTable.LocalPlayer?.EntityId ?? 0u;
         stateCapture.Start();
         stateApply.Start();
         detector.Reset();   // baselines from the LIVE actor (v0.7.413) - must precede the stand-up below
@@ -1744,13 +1815,14 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // the load if the filter can't engage.
         if (!EngageSyntheticSession()) return;
 
-        // NB-32: CLEAN-SPAWN ON HOP (host). Stand this client up (clear any seated/looped emote) BEFORE the zone
-        // changes, mirroring the standup EngageSyntheticSession does once on the initial session load and then
-        // early-returns on every subsequent hop - so a mid-session hop needs this explicit call. By stopping the
-        // seated broadcast BEFORE LoadZone, the idle state propagates during peers' own load window and they rebuild
-        // this body clean by construction, rather than squatting mid-air then being swept to idle post-settle.
-        // Mount-safe: SanitiseLocalPosture no-ops on Mounted (neither InPositionLoop nor EmoteLoop). Purely local /
-        // behind the filter, so the origin posture captured at first engage (and exit-time reconciliation) is untouched.
+        // NB-32: CLEAN-SPAWN ON HOP (host). Stand THIS client up BEFORE the zone changes - the same relative timing
+        // as the first-engage standup inside EngageSyntheticSession, which is exactly what makes peers spawn upright
+        // on initial session load. EngageSyntheticSession does this once then early-returns on every subsequent hop,
+        // so a mid-session hop needs the explicit call here. By stopping the seated broadcast BEFORE LoadZone, the
+        // idle state propagates during peers' own load window, so they rebuild this body clean by construction rather
+        // than squatting mid-air then being swept to idle post-settle (the old NB-31 approach). Mount-safe:
+        // SanitiseLocalPosture no-ops on Mounted (not InPositionLoop/EmoteLoop). Purely local/behind the filter, so
+        // the origin posture captured at first engage - and thus exit-time server reconciliation - is untouched.
         SanitiseLocalPosture("map-hop");
 
         var peerIndices = stateApply.GetPeerObjectIndices();
@@ -1841,6 +1913,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         retPeerOrigins = stateApply.SnapshotPeerOrigins();
         stateApply.SanitizePeerStates();
         sayFilter.Active = false;            // S328v: chat returns fully to normal once the session ends (stop/leave/crash all route here)
+        packetFilter.RoomTrackingEnabled = false; packetFilter.RoomPassthrough = false; packetFilter.ClearRoster();   // D-16: stop tracking + pass-through, drop the register on session end
 
         // S328u - reset the host's per-session map overrides to neutral so nothing (experimental weather especially)
         // leaks into a LATER session. These are only ever SET by the map* handlers and were never reset, so a value
@@ -4198,7 +4271,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
 
             // NB-32: CLEAN-SPAWN ON HOP (guest). Symmetric with the host DoLoad path - stand this client up BEFORE
             // LoadZone so its idle state broadcasts during peers' load window and they rebuild it clean, mirroring the
-            // first-engage standup. Mount-safe; purely local / behind the filter (origin posture untouched).
+            // first-engage standup. Mount-safe; purely local/behind the filter (origin posture untouched).
             SanitiseLocalPosture("map-hop");
 
             // v0.7.332: for a cutscene, arm the same bg-swap the host used - set BOTH stage fields before the donor load
@@ -4352,9 +4425,10 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     public void Dispose()
     {
         framework.Update -= OnFrameworkUpdate;
-        commands.RemoveHandler("/hms");
 #if HMS_TESTING
-        commands.RemoveHandler("/hmst");   // NB-11: testing-build alias (see AddHandler)
+        commands.RemoveHandler("/hmst");   // NB-22: testing build registers ONLY /hmst (see AddHandler)
+#else
+        commands.RemoveHandler("/hms");
 #endif
         try { mountHudDismount.Dispose(); } catch { }   // v0.7.339: drop the mount-icon click handler + listeners
         try { deckFloor.Clear(); } catch { }   // v0.7.351: remove any box floor patches

@@ -195,11 +195,13 @@ public unsafe class NoclipService : IDisposable
         var imguiIo = Dalamud.Bindings.ImGui.ImGui.GetIO();
         if (imguiIo.WantTextInput) return;
 
-        // Check if game window is in foreground
+        // Check if game window is in foreground. NB-27: use the cached gamePid (set once in Enable) instead of
+        // System.Diagnostics.Process.GetCurrentProcess() - this runs every frame while noclip is active, and
+        // GetCurrentProcess() allocates a Process object per call (the exact S234 lesson called out at gamePid's
+        // declaration). Comparing the foreground PID against the cached value is allocation-free and identical.
         var gameWindow = GetForegroundWindow();
-        var currentProcess = System.Diagnostics.Process.GetCurrentProcess();
         GetWindowThreadProcessId(gameWindow, out var foregroundPid);
-        if (foregroundPid != currentProcess.Id) return;
+        if (foregroundPid != gamePid) return;
 
         var player = objectTable.LocalPlayer;
         if (player == null) return;

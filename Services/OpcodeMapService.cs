@@ -152,4 +152,21 @@ public sealed class OpcodeMapService
     // Name for an inbound (ServerZone) opcode, or "" if unknown. Inbound is what the packet inspector captures.
     public string InboundName(ushort opcode) { lock (gate) return serverZone.TryGetValue(opcode, out var n) ? n : ""; }
     public string OutboundName(ushort opcode) { lock (gate) return clientZone.TryGetValue(opcode, out var n) ? n : ""; }
+
+    // D-16: reverse lookup - resolve durable packet NAMEs (e.g. "PlayerSpawn", "DespawnCharacter") to their current
+    // per-patch inbound opcode from whichever map is loaded (live GitHub map preferred, bundled fallback). The room-roster
+    // register keys off the NAME (the durable identity), never a hardcoded number: numbers rotate per patch, the name
+    // does not. Returns only the opcodes we could resolve; a name absent from the map is simply omitted, so the register
+    // fails CLOSED for it (nothing matches that opcode → nothing is tracked → no misparse) rather than guessing.
+    public HashSet<ushort> InboundOpcodesForNames(params string[] names)
+    {
+        var result = new HashSet<ushort>();
+        lock (gate)
+        {
+            foreach (var kv in serverZone)
+                foreach (var want in names)
+                    if (string.Equals(kv.Value, want, StringComparison.Ordinal)) { result.Add(kv.Key); break; }
+        }
+        return result;
+    }
 }

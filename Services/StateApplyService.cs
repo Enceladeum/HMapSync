@@ -69,10 +69,6 @@ public class StateApplyService : IDisposable
 
     public IReadOnlyDictionary<string, PeerInfo> Peers => peerInfos;
 
-    // v0.7.357: optional diagnostic hook - when the gpose mount probe is armed, every mount-clear site reports itself
-    // so the log shows whether an HMS call coincides with the mount vanishing in gpose. Null in normal operation.
-    public GPoseMountProbe? GPoseProbe;
-
     // COSM_1_016: set by the plugin → SkillSyncService.ReplayOn. Kept as a delegate so StateApplyService doesn't take
     // a new constructor dependency (and so HDM can later point it at the same primitive for NPCs).
     public unsafe delegate void SkillReplayDelegate(Character* caster, uint actionId, byte actionType, System.Numerics.Vector3 targetPos, Character* target);
@@ -186,7 +182,6 @@ public class StateApplyService : IDisposable
             // The native machine clears Mode→Normal as the dismount completes; the per-frame apply's
             // early-return (effectiveMountId==LastAppliedMountId) prevents re-entry. (The HARD teardown
             // in SanitizePeerStates keeps its immediate Mode=Normal - clean cut on exit, no animation.)
-            GPoseProbe?.NoteClear("ApplyMountState-dismiss", 0, character->Mount.MountId);
             character->Mount.CreateAndSetupMount(0, 0, 0, 0, 0, 0, 0);
             log.Debug("[HMSync] Mount cleared (native dismiss plays) on " + info.CharacterName);
         }
@@ -359,7 +354,6 @@ public class StateApplyService : IDisposable
             // torn down - no synthetic mount left on a puppet after the peer leaves / on /hms stop.
             if (info.LastAppliedMountId != 0 || character->Mode == CharacterModes.Mounted)
             {
-                GPoseProbe?.NoteClear("TransformApply-dismount", 0, character->Mount.MountId);
                 character->Mount.CreateAndSetupMount(0, 0, 0, 0, 0, 0, 0);
                 if (character->Mode == CharacterModes.Mounted)
                 {
@@ -405,7 +399,7 @@ public class StateApplyService : IDisposable
             // wholly gated on the two emote/pose modes - but a peer torn down mid-FALL (noclip out-of-bounds)
             // has Mode == Normal with a fall clip pinned in Timeline.BaseOverride (see ComputeJumpTimeline),
             // so that peer was skipped entirely and stayed FROZEN MID-FALL on every OTHER participant's screen
-            // after a simultaneous /hms stop. (`/hms stop` = whole-session teardown = THIS path; NB-28 closed
+            // after a simultaneous /hmst stop. (`/hmst stop` = whole-session teardown = THIS path; NB-28 closed
             // the identical gap on the single-peer UnregisterPeer/leave path.) SanitizePeerStates does NOT
             // DisableDraw peers - the home-zone reload rebuilds them - but the rebuilt DrawObject reads the
             // Character's still-falling timeline, so the clip must be evicted here. Clear the override, zero the
@@ -428,7 +422,6 @@ public class StateApplyService : IDisposable
             var self = (Character*)localPlayer;
             if (self->Mount.MountId != 0 || self->Mode == CharacterModes.Mounted)
             {
-                GPoseProbe?.NoteClear("SanitizeSelf", 0, self->Mount.MountId);
                 self->Mount.CreateAndSetupMount(0, 0, 0, 0, 0, 0, 0);
                 if (self->Mode == CharacterModes.Mounted)
                 {
@@ -534,7 +527,6 @@ public class StateApplyService : IDisposable
             // so once native clears Mode→Normal, mountId broadcasts 0 and peers dismount with their own
             // dismiss too. (The HARD teardown in SanitizePeerStates - stop/leave/disconnect/crash - keeps
             // its immediate Mode=Normal force: that's a clean cut on exit where no animation is wanted.)
-            GPoseProbe?.NoteClear("MountSelf-dismount", 0, character->Mount.MountId);
             character->Mount.CreateAndSetupMount(0, 0, 0, 0, 0, 0, 0);
             log.Information("[HMSync] Self-dismount requested (native dismiss plays; mode clears natively).");
             return MountResult.Dismounted;
@@ -728,12 +720,15 @@ public class StateApplyService : IDisposable
             ") on " + (string.IsNullOrEmpty(info.CharacterName) ? "peer" : info.CharacterName));
     }
 
-    public unsafe void WritePeerPosition(ushort idx, System.Numerics.Vector3 pos)
+    public unsafe void WritePeerPosition(ushort idx, System.Numerics.Vector3 pos, float? rot = null)
     {
         var obj = objectTable[(int)idx];
         if (obj == null) return;
         var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)obj.Address;
         go->SetPosition(pos.X, pos.Y, pos.Z);
+        // Restore the captured origin facing too, when we have it (session-end hand-back). SetRotation is the same call
+        // the live apply loop uses each frame: raw yaw, no FacingOffset (this is the real actor's own facing, not a puppet).
+        if (rot.HasValue) go->SetRotation(rot.Value);
     }
 
     // v0.7.419 - post-settle peer posture cleanup. The Stop() cleanup ran before the zone reload,
@@ -769,18 +764,19 @@ public class StateApplyService : IDisposable
 
     // Snapshot (idx, originPos) for every bound peer that has a captured origin - taken BEFORE SanitizePeerStates
     // clears the roster, so teardown can restore positions after the return settles.
-    public System.Collections.Generic.List<(ushort idx, System.Numerics.Vector3 pos)> SnapshotPeerOrigins()
+    public System.Collections.Generic.List<(ushort idx, System.Numerics.Vector3 pos, float? rot)> SnapshotPeerOrigins()
     {
-        var list = new System.Collections.Generic.List<(ushort, System.Numerics.Vector3)>();
+        var list = new System.Collections.Generic.List<(ushort, System.Numerics.Vector3, float?)>();
         foreach (var (_, info) in peerInfos)
             if (info.ObjectIndex.HasValue && info.OriginPosition.HasValue)
-                list.Add((info.ObjectIndex.Value, info.OriginPosition.Value));
+                list.Add((info.ObjectIndex.Value, info.OriginPosition.Value, info.OriginRotation));
         // v0.7.370: include peers who ALREADY LEFT this session. Their roster entry is gone (UnregisterPeer removes
         // it), so iterating peerInfos alone silently skipped them - which is why the 70-unit freeze came back in the
         // leave-then-stop order only. They were restored at departure; re-asserting here covers a later settle-write.
+        // (rot = null: a departed peer is despawned, so only its grounded position needs re-asserting, not its facing.)
         foreach (var (idx, pos) in departedOrigins)
             if (!list.Exists(e => e.Item1 == idx))
-                list.Add((idx, pos));
+                list.Add((idx, pos, null));
         return list;
     }
 
@@ -859,7 +855,6 @@ public class StateApplyService : IDisposable
                     // no dismiss) - the peer is gone, there's no view to animate for.
                     if (character != null && (character->Mount.MountId != 0 || character->Mode == CharacterModes.Mounted))
                     {
-                        GPoseProbe?.NoteClear("PeerDeparture", 0, character->Mount.MountId);
                         character->Mount.CreateAndSetupMount(0, 0, 0, 0, 0, 0, 0);
                         if (character->Mode == CharacterModes.Mounted)
                         {
@@ -903,7 +898,7 @@ public class StateApplyService : IDisposable
                     var restore = info.OriginPosition ?? obj.Position;
                     var groundRef = objectTable.LocalPlayer;
                     if (groundRef != null) restore.Y = groundRef.Position.Y;
-                    WritePeerPosition(info.ObjectIndex.Value, restore);
+                    WritePeerPosition(info.ObjectIndex.Value, restore, info.OriginRotation);
                     // Retain the grounded spot so the session-end restore (and its re-assert window) still covers this
                     // actor - and re-asserts the GROUNDED position, not a stale airborne origin - if a late settle-write
                     // disturbs it after we've dropped the roster entry.
@@ -917,13 +912,13 @@ public class StateApplyService : IDisposable
                     // rebuilds it from the Character's still-falling timeline, so every OTHER client is left staring at
                     // the departed peer frozen mid-fall. The mount branch above already cleared BaseOverride/DrawOffset
                     // - but ONLY when mounted; a falling, unmounted peer fell through that gap. The whole-session
-                    // teardown (SanitizePeerStates) already does this exact idle-reset on every peer; the single-peer
-                    // leave path was simply missing it. /sit "usually" un-sticks a stuck clip, but nobody can /sit a
-                    // puppet they don't drive - so WE issue the idle here: clear the override, zero any draw offset,
-                    // and PLAY the base idle (tl 3) to actively EVICT the fall clip (clearing BaseOverride alone lets
-                    // the rebuilt DrawObject freeze on the fall clip's last frame; PlayTimeline forces the transition).
-                    // Idempotent for a normally-standing peer (BaseOverride already 0; idle is what they'd show anyway)
-                    // and consistent with the session-end path, so no regression for the common case.
+                    // teardown (SanitizePeerStates ~L395-397) already does this exact idle-reset on every peer; the
+                    // single-peer-leave path was simply missing it. /sit "usually" un-sticks a stuck clip, but nobody
+                    // can /sit a puppet they don't drive - so WE issue the idle here: clear the override, zero any draw
+                    // offset, and PLAY the base idle (tl 3) to actively EVICT the fall clip (clearing BaseOverride
+                    // alone lets the rebuilt DrawObject freeze on the fall clip's last frame; PlayTimeline forces the
+                    // transition). Idempotent for a normally-standing peer (BaseOverride already 0; idle is what they'd
+                    // show anyway) and consistent with the session-end path, so no regression for the common case.
                     if (character != null)
                     {
                         character->Timeline.BaseOverride = 0;
@@ -1075,6 +1070,7 @@ public class StateApplyService : IDisposable
                 {
                     var bp = chara->Position;
                     info.OriginPosition = new System.Numerics.Vector3(bp.X, bp.Y, bp.Z);
+                    info.OriginRotation = chara->Rotation;   // capture true facing alongside position (restored on teardown)
                     info.OriginCaptured = true;
                 }
 
@@ -2834,6 +2830,10 @@ public class PeerInfo
     // preserved actor to undo the frozen synthetic override (the "peer stuck at ~75u on return" bug). Captured flag
     // guards against re-capture on later re-binds (which would grab the synthetic coords instead of the true origin).
     public System.Numerics.Vector3? OriginPosition { get; set; }
+    // Rotation counterpart to OriginPosition: the peer's REAL facing, captured at the same first bind. Restored with the
+    // position on teardown so a handed-back actor faces its true direction (not the last synthetic yaw) until the server
+    // repaints. Mirrors the local player's savedRotation in ZoneLoadService (peer origin was position-only before).
+    public float? OriginRotation { get; set; }
     public bool OriginCaptured { get; set; }
     public ushort LastAppliedAnim { get; set; }
     public byte LastMoveDir { get; set; }      // S322i: last locomotion direction bin (forward/strafe hysteresis)

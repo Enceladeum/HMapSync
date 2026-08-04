@@ -16,7 +16,6 @@ public class RelaySyncService : IDisposable
     private ClientWebSocket? ws;
     private CancellationTokenSource? cts;
     private Task? receiveTask;
-    private DateTime lastPongReceived = DateTime.UtcNow;
 
     public string LocalPeerId { get; private set; } = Guid.NewGuid().ToString("N")[..12];
     // S331 (Stage 4): true once the relay's RoomJoined has arrived (it mints our peer id). The capture/send loop must
@@ -590,7 +589,9 @@ public class RelaySyncService : IDisposable
                 break;
 
             case HMSync.Wire.WireKind.Pong:
-                lastPongReceived = DateTime.UtcNow;
+                // NB-27: Pong is a recognized-and-swallowed keepalive. The old lastPongReceived timestamp field was
+                // set here but never read anywhere (no timeout/health check consumed it) - dead state, removed. Keep
+                // the case so an inbound Pong is still consumed cleanly rather than falling through to the default.
                 break;
 
             // v0.7.464 (RMS QA F3, soft tier): the relay is dropping some of our ingress but keeping us connected.

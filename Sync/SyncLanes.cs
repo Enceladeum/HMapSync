@@ -6,18 +6,21 @@ using System.Reflection;
 namespace HMSync.Sync;
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════════════
-// SYNC-LANE SCAFFOLDING - Stage 1 (S329a)
+// SYNC-LANE CENSUS (S329a → SHIPPED, protocol v4)
 //
-// This file is SCAFFOLDING ONLY. Nothing here is wired into the send/receive path yet - the wire still carries the
-// monolithic TransformUpdate (0x10). What this establishes:
+// STATUS: the lane split is LIVE. The wire carries the per-lane frames (HotUpdate 0x11 / WarmUpdate 0x12 /
+// ColdUpdate 0x13 / HostUpdate 0x14, binary MessagePack); the old monolithic TransformUpdate (0x10) is RETIRED.
+// This file is the single source of truth the sender (StateCaptureService/LanePayloads) and receiver
+// (StateApplyService) both build against. What it establishes:
 //   1. The lane enum (which lane each field belongs to).
 //   2. The authoritative field→lane CENSUS MAP (every TransformData render field assigned to exactly one lane).
 //   3. A reflection-based validator (LaneCensus.Validate) that asserts the map is COMPLETE and DISJOINT - no field
 //      orphaned (in no lane), none double-assigned. This is the anti-orphan guard: the silent failure mode of the
 //      refactor is a field that lands in no lane and quietly stops syncing. This test makes that impossible to ship.
 //
-// Stage 2 splits the SENDER to emit per-lane using this map. Stage 3 splits the RECEIVER onto a per-peer composite.
-// The map here is the single source of truth both stages build against.
+// ⚠ KNOWN GAP: the census proves field→lane completeness, but NOT that LanePayloads actually maps the field in
+// To*Wire / Merge*Wire / *Equals. A field can pass Validate() and still never leave the machine if a mapper misses
+// it. See the "add a synced field" runbook in the Maintenance Manual (Part 5) - steps 4/5 are the unguarded ones.
 //
 // COUPLED FIELDS STAY CO-LANE (architecture decision): mount id + mount pitch, minion id + its offsets - so a coupled
 // change never splits across a frame boundary. That's why MountPitch is HOT-adjacent conceptually but the mount BLOCK

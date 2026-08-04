@@ -80,15 +80,19 @@ public unsafe class MapSettingsService
     //
     // 59 is in NONE of those sets, so the promotion is purely additive on all three.
     //
-    // ⚠ KNOWN BUG, NOT FIXED HERE - "None - Atmospheric" cannot be broadcast. GetLegalWeather is consulted by the
-    // peer-broadcast gate (HMSyncPlugin ~3034) and the held-weather reassert (ReassertHeldState). That gate reads
-    // `config.MapWeatherId == 0` as "host picked nothing" and substitutes the native default - but 0 is ALSO the
-    // id the host sets when explicitly choosing "None - Atmospheric". One sentinel, two meanings, and the guard
-    // can only see the first. Same shape one line earlier for any id not in this list.
-    //
-    // (This comment previously asserted the opposite, on the strength of a field observation that debug weathers
-    // broadcast fine. The code does not support that reading; the retraction was wrong and is retracted in turn.
-    // If debug weathers DO reach peers, there is a second path doing it and it has not been found.)
+    // WEATHER 0 ("None - Atmospheric") AND THE WeatherId==0 SENTINEL - the accurate, current picture (this block was
+    // reversed several times; the reversals are collapsed here). Two facts, not one:
+    //   (1) An EXPLICIT pick of 0 (or any debug id) DOES reach peers. Since v0.7.475 PushMapState ships an explicit
+    //       pick VERBATIM via the weatherOverride path (HMSyncPlugin.PushMapState) - it does NOT re-derive through
+    //       GetLegalWeather, so "cannot be broadcast" is FALSE for the pick itself. (An earlier revision of this
+    //       comment claimed the opposite; that revision predates the verbatim-broadcast refactor and is wrong.)
+    //   (2) What 0 does NOT do is PERSIST across a map-load reassert. Reassert() (below, ~line 735) and the load-time
+    //       native-weather engage (~line 744) both gate on `WeatherId != 0`, treating 0 as "host set nothing" and
+    //       falling back to the zone's native sky. So a held "None - Atmospheric" is dropped on the next load. Fixing
+    //       THAT cleanly needs a separate HasWeather bool (mirror TimeForced) so "explicitly None" is distinguishable
+    //       from "unset" - deferred as an edge case (see the Maintenance Manual known-issues, Part 7).
+    // GetLegalWeather still starts its list with (0, "Default / atmospheric") so the picker can offer it; the caveat
+    // above is only about persistence, not selectability.
     //
     // WHY NUMERIC IDS. The first cut of this resolved names against the Weather sheet, on the reasoning that an
     // unverified id fails silently-and-wrongly while a name miss fails visibly. That reasoning was sound and the

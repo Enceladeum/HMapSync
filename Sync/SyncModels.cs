@@ -25,18 +25,18 @@ public enum SyncMessageType : byte
     PeerLeft        = 0x05,
     HostTransfer    = 0x06,
 
-    // State (10Hz) - single authoritative actor snapshot
+    // State - the old monolithic single-actor snapshot. RETIRED (protocol v4): no longer emitted. The value is kept
+    // reserved so a stray/legacy 0x10 frame is recognised-and-ignored rather than mis-decoded. Do not reuse it.
     TransformUpdate = 0x10,
 
-    // ── SYNC LANES (S329a, Stage 1: DEFINED, NOT YET EMITTED) ──────────────────────────────────────────────
-    // The typed-lane replacement for the monolithic TransformUpdate. Stage 2 begins emitting these; Stage 3 retires
-    // TransformUpdate. Until then these values are reserved and unused - the wire still carries 0x10. See SyncLanes.cs
-    // for the field→lane census map that defines what each lane carries.
+    // ── SYNC LANES (S329a → SHIPPED, protocol v4) ──────────────────────────────────────────────────────────
+    // The typed-lane replacement for the retired TransformUpdate - these ARE the wire now (binary MessagePack).
+    // See SyncLanes.cs for the field→lane census map that defines what each lane carries.
     HotUpdate       = 0x11,   // pos/rot/movement/mount-pitch/body-offset - up to 10Hz while moving
     WarmUpdate      = 0x12,   // emote/pose/mount/minion/ornament/target/weapon/standup - on change
     ColdUpdate      = 0x13,   // Moniker + cosmetic toggles - session-start + on change
     HostUpdate      = 0x14,   // map-state block - host only, on change
-    EventPulse      = 0x15,   // fire-and-forget one-shots (future: CosmicClaw VFX, HDM fires) - reserved
+    EventPulse      = 0x15,   // fire-and-forget one-shots (future: CosmicClaw VFX, HDM fires) - RESERVED, not emitted
 
     // Zone control (host only)
     ZoneLoadExecute = 0x30,
