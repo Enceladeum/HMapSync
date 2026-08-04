@@ -2,7 +2,7 @@
 
 > Explore any zone together. Built for roleplayers and gposers.
 
-Enter any in-game map and explore it with friends. HMS puts you behind a firewall and lets you load any location client-side, including otherwise unavailable cutscenes while the server sees you as afk in your room.
+Enter any in-game map and explore it with friends. HMS puts you behind a firewall and lets you load any location client-side, including otherwise unavailable cutscenes while the server sees you sitting afk in your room.
 
 <img width="486" height="612" alt="Screenshot_5" src="https://github.com/user-attachments/assets/47849b11-343a-451b-9418-eb24be90b6e8" />
 
@@ -11,12 +11,14 @@ Enter any in-game map and explore it with friends. HMS puts you behind a firewal
 
 ## Highlights
 
-- Load any zone client-side and roam it freely from your apartment, estate, FC room or even a world map
+- Load any zone client-side, including cutscenes) and roam it freely from your apartment, estate, FC room or even a world map
 - Packet filter automatically engages once you load a virtual zone and keeps you secure while in-session, letting only heartbeat signals and optionally allowing `/say`, `/yell` and `/shout` though, making it seem you're just standing and chatting to any outside observer
 - Access cutscene-only zones (pre-war Garlemald, Garlean throne room, Steps of Faith bridge or Werlytian countryside)
 - Co-op mode: enter any map with up to 20 friends without any time limits or action restrictions. Ever wanted to roleplay in a dungeon for longer than 90 minutes and use flying mounts indoors? Now you can
 - Enter question, raid and solo instances like Terncliff, NPC rooms or raids and freely explore them
-
+- Teleport to peers by rightclicking on their name in the lobby - never get lost again
+- Free flight, noclip to get around quickly
+- Roleplaying tools - head tilt display, weather and BGM sync as well as NPC hide for immersive sessions
 
 ## Features
 
@@ -35,17 +37,13 @@ Enter any in-game map and explore it with friends. HMS puts you behind a firewal
 
 
 ### Play together (lobbies and sync, requires a beta key)
-- Gather in one location. Joiners should be within rendering range (about 1000 yalms) and in the same apartment / world map
+- Gather in one location. Joiners should be within rendering range (about 1000 yalms) and on the same map (world map, city, interior, etc.)
 - If you're the host, type `/hms start <password>` to start a lobby. Leave password blank to auto-generate one
 - Type `/hms join <password>` or use the plugin GUI to enter the lobby
 - Type `/hms leave` (or use plugin window) to leave the session
-- Type `/hms stop` to end the session for everyone when the host stops, otherwise works as the `/hms leave` command
-- You can only join late if your character was present when the lobby was being set up
+- Type `/hms stop` to end the session for everyone if you're host, otherwise the command works as the `/hms leave` command
+- If the host leaves, host is auto-transferred to a peer, so the session is never interrupted
 - You need a relay key to play together. Relay keys are currently available to closed beta testers only
-
-### Joining a lobby
-- Scenario A: you were with everyone in the room when the lobby was made, but were afk when everyone typed /join. You come back, type `/hms join <pw>` and auto load into the session with everyone. Late join works.
-- Scenario B: you were on another map or not in-game when everyone gathered and joined the lobby. You enter the apartment where everyone is in already in a HMS session and try to `/hms join <pw>`. Your character wouldn't be seen by others because they're behind firewall. Rehost to include the late joiner.
 
 ### Plugin interface
 
@@ -100,13 +98,13 @@ The relay is a **message forwarder**. It takes what your game client sends and c
 
 - **It never sees anything you say.** Chat doesn't go through the relay at all. Not `/say`, not `/tell`, not party chat. None of it. There is no conversation on the server, ever
 - **It never sees what you sync.** Your position, animation, emotes, mount, minion, appearance settings: all of it is forwarded as sealed bytes. The server measures how *big* the message was and what *category* it was, i.e. movement, map weather change, without details - just the message type. It does not, and cannot, read what's inside
-- **It does write down that you were there.** Your character name appears in the server log when you join a room. That is the main thing it records about you personally
+- **It does write down that you were there.** Your character name appears in the server log when you join a room. That is the main thing it records about you personally. It's not possible to say who's where with who or even what maps they have loaded
 
 ### Relay privacy
 
 - Your security and privacy are non-negotiable, so the server is configured to capture as little data as humanly possible, which is retained for 15 days after which it's permanently deleted
 - What it captures: your character name and ID when you begin hosting (it needs it to establish a session), the room password and the list of participants who join the lobby. The list is captured briefly once to validate who's in the rendering proximity and then discarded.
-- You can use solo session `/hms startsolo` to use the plugin locally where it never connects to the relay. Solo mode is recommended if you're not planning to coop
+- You can use solo session `/hms startsolo` to use the plugin locally where it never connects to the relay. Solo mode is recommended if you're not planning to co-op
 
 These live in the server's memory for as long as your session lasts, and vanish when it ends or the server restarts. **None of them is saved to disk.**
 
