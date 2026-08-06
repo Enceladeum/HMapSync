@@ -9,13 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Story zones load already finished**: virtual-loading a reconstruction zone now presents it the way it looks once its story questline is complete, instead of mid-rebuild. Doma Enclave arrives as the fully restored town, with its streets populated by the end-state residents. This happens automatically on load, with no extra step and no visible rebuild flicker.
-- **More zones show their intended built appearance**: additional locations, including Elysion and Terncliff, now load looking the way they should when explored through HMS, rather than an earlier or emptier version of the area.
+- **Two story zones now load already finished**: virtual-loading Doma Enclave or Elysion now presents the map the way it looks once its questline is complete, rather than mid-progress. This applies to these two maps specifically. Doma Enclave also arrives with its streets populated by the end-state residents, and both load automatically with no extra step and no visible rebuild flicker.
 - **Pin favourite cutscene stages**: cutscene stages can now be starred just like zones. Favourited stages pin to the top of the list with a filled star, matching how pinned zones already behave.
 
 ### Fixed
 
-- **Cosmic Exploration spawn point**: entering Sinus Ardorum now places you on the ground toward the center of the area, instead of dropping you into mid-air off to one side.
+- **Terncliff loading**: fixed a loading issue with Terncliff so the zone now comes up correctly.
+- **Cosmic Exploration spawn point (Auxesia)**: entering Auxesia now places you on the ground toward the center of the area, instead of dropping you into mid-air off to one side.
 
 ## [1.0.0.7] - 2026-08-04
 
