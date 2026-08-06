@@ -2663,6 +2663,7 @@ ImGui.Spacing();
                 ImGui.PopStyleColor();
             }
 
+
             // Outline pill for the name; a fixed toggle slot before EVERY pill keeps all pill left-edges aligned
             // (the disclosure triangle sits in that slot for clusters; the slot is just empty space otherwise -
             // no placeholder glyph, which would only add noise). depth 1 = a nested variant row.
@@ -2736,11 +2737,53 @@ ImGui.Spacing();
                 dl.PopClipRect();
             }
 
+            // One cutscene row (star + code + accent name-pill + info), rendered inside this zone table. Shared by the
+            // "All" Pinned section and the Cutscene-locations/Seaships fold-in so a cutscene row looks identical to a
+            // zone row wherever it appears.
+            void CutsceneRow(CutsceneEntry c)
+            {
+                ImGui.TableNextRow();
+                ImGui.TableSetColumnIndex(0); DrawCutsceneStar(c.Bg, acc2);
+                ImGui.TableSetColumnIndex(1); ImGui.AlignTextToFramePadding(); ImGui.TextDisabled(c.Code ?? "");
+                ImGui.TableSetColumnIndex(2);
+                var accCs = acc2;
+                ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(9f, 2f));
+                // Indent the pill by the fold-arrow slot a single zone row reserves (DrawNamePill's depth==0 spacer),
+                // so cutscene names line up under the zone name pills instead of sitting flush against the id column.
+                float csSlot = ImGui.GetFrameHeight();
+                ImGui.Dummy(new Vector2(csSlot, 1f)); ImGui.SameLine(0f, 4f);
+                ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1f);
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0f, 0f, 0f, 0f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, Darken(accCs, 0.55f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, Darken(accCs, 0.42f));
+                ImGui.PushStyleColor(ImGuiCol.Text, Lighten(accCs, 1.05f));
+                ImGui.PushStyleColor(ImGuiCol.Border, new Vector4(accCs.X, accCs.Y, accCs.Z, 0.30f));
+                if (ImGui.Button(c.Name + "##allcs" + c.Index)) OnLoadCutscene?.Invoke(c.Index);
+                ImGui.PopStyleColor(5);
+                ImGui.PopStyleVar(2);
+                if (ImGui.IsItemHovered()) ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                InfoCell(string.IsNullOrEmpty(c.Quest) ? c.Region : (c.Region + " · " + c.Quest));
+            }
+
+            // Favourited cutscenes pin into "All" exactly like favourited zones (they already pin in the Cutscenes tab).
+            // Respect the search box, same as zone favourites (which are derived from the already-filtered `list`).
+            List<CutsceneEntry> favCutscenes = new();
+            if (activeCat == "All" && CutsceneEntries.Count > 0)
+            {
+                favCutscenes = CutsceneEntries.Where(c => !string.IsNullOrEmpty(c.Bg) && config.FavouriteCutsceneBgs.Contains(c.Bg)).ToList();
+                if (f.Length > 0)
+                    favCutscenes = favCutscenes.Where(c => c.Name.Contains(f, StringComparison.OrdinalIgnoreCase)
+                        || c.Region.Contains(f, StringComparison.OrdinalIgnoreCase)
+                        || (c.Quest ?? "").Contains(f, StringComparison.OrdinalIgnoreCase)
+                        || (c.Code ?? "").Contains(f, StringComparison.OrdinalIgnoreCase)).ToList();
+            }
+
             var favClusters = list.Where(c => fav.Contains(c.Primary.Id)).ToList();
-            if (favClusters.Count > 0)
+            if (favClusters.Count > 0 || favCutscenes.Count > 0)
             {
                 SectionRow("Pinned", true);
                 foreach (var c in Sort(favClusters)) ClusterRows(c);
+                foreach (var c in favCutscenes.OrderBy(c => c.Name)) CutsceneRow(c);
             }
             var rest = list.Where(c => !fav.Contains(c.Primary.Id)).ToList();
 
@@ -2797,41 +2840,41 @@ ImGui.Spacing();
                     csMatches = csMatches.Where(c => c.Name.Contains(f, StringComparison.OrdinalIgnoreCase)
                         || (c.Code ?? "").Contains(f, StringComparison.OrdinalIgnoreCase)).ToList();
             }
+            // Drop any cutscene already shown in the "All" Pinned section above (no double-listing, mirrors how favourited
+            // zones appear only under Pinned and not again in the body).
+            if (favCutscenes.Count > 0)
+            {
+                var pinnedBgs = new HashSet<string>(favCutscenes.Select(c => c.Bg));
+                csMatches = csMatches.Where(c => !pinnedBgs.Contains(c.Bg)).ToList();
+            }
             if (csMatches.Count > 0)
             {
                 csShown = true;
                 SectionRow(activeCat == "Seaships" ? "Ship cutscenes" : "Cutscene locations", false);
-                foreach (var c in csMatches)
-                {
-                    ImGui.TableNextRow();
-                    ImGui.TableSetColumnIndex(0);   // star column - blank for cutscenes
-                    ImGui.TableSetColumnIndex(1); ImGui.AlignTextToFramePadding(); ImGui.TextDisabled(c.Code ?? "");
-                    ImGui.TableSetColumnIndex(2);
-                    // Accent pill - same recipe as DrawNamePill / the Cutscenes chip's NamePill, so a cutscene row
-                    // looks identical everywhere (was a flat grey button - the lone style outlier). Wired to load.
-                    var accCs = acc2;
-                    ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(9f, 2f));
-                    ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1f);
-                    ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0f, 0f, 0f, 0f));
-                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, Darken(accCs, 0.55f));
-                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, Darken(accCs, 0.42f));
-                    ImGui.PushStyleColor(ImGuiCol.Text, Lighten(accCs, 1.05f));
-                    ImGui.PushStyleColor(ImGuiCol.Border, new Vector4(accCs.X, accCs.Y, accCs.Z, 0.30f));
-                    if (ImGui.Button(c.Name + "##allcs" + c.Index)) OnLoadCutscene?.Invoke(c.Index);
-                    ImGui.PopStyleColor(5);
-                    ImGui.PopStyleVar(2);
-                    if (ImGui.IsItemHovered()) ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
-                    InfoCell(string.IsNullOrEmpty(c.Quest) ? c.Region : (c.Region + " · " + c.Quest));
-                }
+                foreach (var c in csMatches) CutsceneRow(c);
             }
 
-            if (list.Count == 0 && !csShown) { ImGui.TableNextRow(); ImGui.TableSetColumnIndex(2); ImGui.TextDisabled("No zones match."); }
+            if (list.Count == 0 && !csShown && favCutscenes.Count == 0) { ImGui.TableNextRow(); ImGui.TableSetColumnIndex(2); ImGui.TextDisabled("No zones match."); }
             ResumeWrap();
             ImGui.EndTable();
         }
     }
 
-    // Cutscene-stage list (own render path): region sections, name-as-load pill, quest inline as helper.
+    // Cutscene twin of DrawZones' DrawStar - same glyph/colour/hit-slot, but keyed by bg path (FavouriteCutsceneBgs)
+    // since cutscenes share a donor territory id and can't live in FavouriteZones. Shared by both cutscene surfaces
+    // (the All/Seaships fold-in rows and the dedicated Cutscenes tab) so a cutscene's star looks identical to a zone's.
+    private void DrawCutsceneStar(string bg, Vector4 acc)
+    {
+        bool s = !string.IsNullOrEmpty(bg) && config.FavouriteCutsceneBgs.Contains(bg);
+        ImGui.AlignTextToFramePadding();
+        ImGui.PushStyleColor(ImGuiCol.Text, s ? acc : new Vector4(0.34f, 0.35f, 0.39f, 1f));
+        if (ImGui.Selectable((s ? "\u2605" : "\u2606") + "##csstar" + bg, false, ImGuiSelectableFlags.None, new Vector2(16f, 0f)))
+            config.ToggleFavouriteCutscene(bg);
+        ImGui.PopStyleColor();
+    }
+
+    // Cutscene-stage list (own render path): star + region sections, name-as-load pill, quest inline as helper.
+    // Favourited stages pin to a "Pinned" section on top, mirroring the zone chip.
     private void DrawCutscenes(float tableHeight)
     {
         if (CutsceneEntries.Count == 0) { ImGui.TextDisabled("Cutscene stages unavailable."); return; }
@@ -2844,12 +2887,18 @@ ImGui.Spacing();
                                   || (e.Region ?? "").Contains(f, StringComparison.OrdinalIgnoreCase));
         var list = shown.ToList();
         var acc2 = Accent();
+        var favCs = config.FavouriteCutsceneBgs;
+
+        // The table's right edge (for spanning section labels across columns), matching DrawZones' SectionRow.
+        float rowRightEdge;
+        { var tl0 = ImGui.GetCursorScreenPos(); rowRightEdge = tl0.X + ImGui.GetContentRegionAvail().X - 12f; }
 
         var flags = ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY | ImGuiTableFlags.Resizable | ImGuiTableFlags.PadOuterX;
-        if (ImGui.BeginTable("##csstbl", 3, flags, new Vector2(0f, tableHeight)))
+        if (ImGui.BeginTable("##csstbl", 4, flags, new Vector2(0f, tableHeight)))
         {
             SuspendWrap();   // v0.7.432
             ImGui.TableSetupScrollFreeze(0, 1);
+            ImGui.TableSetupColumn("\u2605##csstarcol", ImGuiTableColumnFlags.WidthFixed | ImGuiTableColumnFlags.NoResize, 22f);
             ImGui.TableSetupColumn("ID", ImGuiTableColumnFlags.WidthFixed, 48f);
             ImGui.TableSetupColumn("Region / Stage", ImGuiTableColumnFlags.WidthStretch);
             ImGui.TableSetupColumn("Quest", ImGuiTableColumnFlags.WidthFixed, 210f);
@@ -2859,6 +2908,9 @@ ImGui.Spacing();
             {
                 var acc = acc2;
                 ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(9f, 2f));
+                // Match the zone tab's single-row indent (fold-arrow slot) so the cutscene tab reads consistently.
+                float slot = ImGui.GetFrameHeight();
+                ImGui.Dummy(new Vector2(slot, 1f)); ImGui.SameLine(0f, 4f);
                 ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1f);
                 ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0f, 0f, 0f, 0f));
                 ImGui.PushStyleColor(ImGuiCol.ButtonHovered, Darken(acc, 0.55f));
@@ -2871,27 +2923,51 @@ ImGui.Spacing();
                 if (ImGui.IsItemHovered()) ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
             }
 
-            static int ExpOrd(string x) => x switch { "ARR" => 0, "HW" => 1, "SB" => 2, "ShB" => 3, "EW" => 4, "DT" => 5, _ => 9 };
-            foreach (var g in list.GroupBy(e => string.IsNullOrEmpty(e.Region) ? "\u2014" : e.Region).OrderBy(gr => ExpOrd(gr.Key)))
+            void SectionRow(string label, bool pinned)
             {
                 ImGui.TableNextRow();
-                ImGui.TableSetBgColor(ImGuiTableBgTarget.RowBg0, ImGui.GetColorU32(new Vector4(0.14f, 0.15f, 0.18f, 1f)));
-                ImGui.TableSetColumnIndex(1);
-                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.66f, 0.70f, 0.78f, 1f));
-                ImGui.TextUnformatted(g.Key);
-                ImGui.PopStyleColor();
-                foreach (var e in g.OrderBy(en => en.Name))
-                {
-                    ImGui.TableNextRow();
-                    ImGui.TableSetColumnIndex(0);
-                    ImGui.AlignTextToFramePadding();
-                    ImGui.TextDisabled(e.Id != 0 ? e.Id.ToString() : (string.IsNullOrEmpty(e.Code) ? "\u2014" : e.Code));
-                    ImGui.TableSetColumnIndex(1); NamePill(e.Name, e.Index);
-                    ImGui.TableSetColumnIndex(2);
-                    if (!string.IsNullOrEmpty(e.Quest)) { ImGui.AlignTextToFramePadding(); ImGui.TextDisabled(e.Quest); }
-                }
+                ImGui.TableSetBgColor(ImGuiTableBgTarget.RowBg0,
+                    ImGui.GetColorU32(pinned ? new Vector4(0.20f, 0.16f, 0.06f, 1f) : new Vector4(0.14f, 0.15f, 0.18f, 1f)));
+                ImGui.TableSetColumnIndex(0);
+                var p = ImGui.GetCursorScreenPos();
+                float lh = ImGui.GetTextLineHeight();
+                ImGui.Dummy(new Vector2(1f, lh));
+                var dl = ImGui.GetWindowDrawList();
+                var cmin = dl.GetClipRectMin();
+                var cmax = dl.GetClipRectMax();
+                dl.PushClipRect(new Vector2(cmin.X, cmin.Y), new Vector2(rowRightEdge, cmax.Y), false);
+                dl.AddText(new Vector2(p.X + 5f, p.Y), ImGui.GetColorU32(new Vector4(0.66f, 0.70f, 0.78f, 1f)), label);
+                dl.PopClipRect();
             }
-            if (list.Count == 0) { ImGui.TableNextRow(); ImGui.TableSetColumnIndex(1); ImGui.TextDisabled("No cutscene stages match."); }
+
+            void EntryRow(CutsceneEntry e)
+            {
+                ImGui.TableNextRow();
+                ImGui.TableSetColumnIndex(0); DrawCutsceneStar(e.Bg, acc2);
+                ImGui.TableSetColumnIndex(1);
+                ImGui.AlignTextToFramePadding();
+                ImGui.TextDisabled(e.Id != 0 ? e.Id.ToString() : (string.IsNullOrEmpty(e.Code) ? "\u2014" : e.Code));
+                ImGui.TableSetColumnIndex(2); NamePill(e.Name, e.Index);
+                ImGui.TableSetColumnIndex(3);
+                if (!string.IsNullOrEmpty(e.Quest)) { ImGui.AlignTextToFramePadding(); ImGui.TextDisabled(e.Quest); }
+            }
+
+            // Pinned favourites first (across all regions), mirroring the zone chip's "Pinned" section.
+            var pinned = list.Where(e => !string.IsNullOrEmpty(e.Bg) && favCs.Contains(e.Bg)).ToList();
+            if (pinned.Count > 0)
+            {
+                SectionRow("Pinned", true);
+                foreach (var e in pinned.OrderBy(en => en.Name)) EntryRow(e);
+            }
+            var rest = list.Where(e => string.IsNullOrEmpty(e.Bg) || !favCs.Contains(e.Bg)).ToList();
+
+            static int ExpOrd(string x) => x switch { "ARR" => 0, "HW" => 1, "SB" => 2, "ShB" => 3, "EW" => 4, "DT" => 5, _ => 9 };
+            foreach (var g in rest.GroupBy(e => string.IsNullOrEmpty(e.Region) ? "\u2014" : e.Region).OrderBy(gr => ExpOrd(gr.Key)))
+            {
+                SectionRow(g.Key, false);
+                foreach (var e in g.OrderBy(en => en.Name)) EntryRow(e);
+            }
+            if (list.Count == 0) { ImGui.TableNextRow(); ImGui.TableSetColumnIndex(2); ImGui.TextDisabled("No cutscene stages match."); }
             ResumeWrap();
             ImGui.EndTable();
         }

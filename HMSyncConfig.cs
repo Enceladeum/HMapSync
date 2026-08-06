@@ -285,6 +285,17 @@ public class HMSyncConfig : IPluginConfiguration
     // S332: Zones-tab favourites - territory ids the user has pinned (★). Persisted across sessions.
     public List<uint> FavouriteZones { get; set; } = new();
 
+    // NB-11: Cutscene-stage favourites. Cutscenes are loaded by index and share a donor territory id, so they can't
+    // key off FavouriteZones (uint) - they're pinned by their bg PATH, the same stable identity RecentPlace.StageBg
+    // uses. Parallel list so the ★ replicates on cutscene chips (which previously had a blank star column). Persisted.
+    public List<string> FavouriteCutsceneBgs { get; set; } = new();
+    public void ToggleFavouriteCutscene(string bg)
+    {
+        if (string.IsNullOrEmpty(bg)) return;
+        if (!FavouriteCutsceneBgs.Remove(bg)) FavouriteCutsceneBgs.Add(bg);
+        Save();
+    }
+
     // v0.7.231: unified recent list. From the user's chair a cutscene stage is just a place they visited, so Recent
     // must list it like any zone. Zones have a unique territory id; swap cutscene stages share a donor id and are
     // identified by their bg path instead. RecentPlace carries both - StageBg==null means a plain territory, else a

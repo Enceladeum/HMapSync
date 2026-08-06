@@ -61,6 +61,27 @@ internal sealed unsafe class QuestSpoofService : IDisposable
     // CategoryFor: 15/54 → "Solo Instances"). Single-player story/quest instances (e.g. m5e7/1160 Terncliff finale).
     private static readonly HashSet<uint> SoloInstanceUses = new() { 15, 54 };
 
+    // NB-20: extra territories that take the BLANKET max-completion end-state despite NOT being a Solo Instance by
+    // IntendedUse. Same read-only, virtual-load-gated, "present the finished world" policy — just keyed by explicit id
+    // instead of the category classifier, for open-world zones whose canon end-state we want to show.
+    //   • 759 (Doma Enclave). Players restore it over weeks; the mid-build state is useless for roleplay and canon has it
+    //     fully repaired. Blanketing IsQuestComplete → true presents the end-state POPULACE (Gate 2).
+    //   • 1189 (Yak T'el / Dawntrail field y6f3). Same shape: quest-gated open-world populace we want fully progressed.
+    //
+    // GEOMETRY CAVEAT (measured 2026-08-05 against xivtool layer-sets.csv / layer-filters.csv — supersedes the earlier
+    // note that said "the rebuilt buildings are Gate 1, a forced layer-filter key like Terncliff 919"): that is WRONG
+    // for these two zones. Both 759 and 1189 have exactly ONE LVB filter key (759→138739, 1189→278116), and every BG
+    // GEOMETRY layer is FilterOp=None (ungated) — the key only gates planmap/planevent POPULACE, not building geometry.
+    // Terncliff 919 could use ForcedCastKeys precisely because it has THREE keyed compositions; 759/1189 have none.
+    // The rebuild/progression geometry is therefore axis-3 SERVER-TOGGLED ungated layers (per xivtool README: op=None +
+    // festival 0 = no file-side gate → the server flips them per quest step; force client-side via P3 per-layer
+    // activation). ForcedCastKeys is the wrong lever here (adding the sole default key is a no-op), so it is intentionally
+    // NOT set for 759/1189. Their GEOMETRY advance is handled separately by ZoneLoadService.DriveAdv759 (the layout-wide
+    // DrawObject->IsVisible ratchet that force-shows the reconstruction SharedGroup children; shipped b62-b64, auto-fired
+    // on load for 759). This blanket handles the POPULACE half only. NOTE: 1189's geometry auto-advance is deferred / not
+    // shipped in prod (see AutoAdvanceZones) — the read-only populace blanket here is harmless and stays.
+    private static readonly HashSet<uint> ExtraBlanketTerritories = new() { 759, 1189 };
+
     // 7.55 function-prologue sigs (Fable, verified count=1 each). ScanText resolves to the function start.
     private const string SigIsQuestComplete = "0F B7 C2 4C 8B C9 44 8B C0 49 C1 E8 03 49 81 F8 EF 02";   // bool(this, ushort) @0xdf5680
     private const string SigGetQuestSequence = "40 53 48 83 EC 20 0F B7 D9 E8 ?? ?? ?? ?? 45 33";          // byte(ushort)      @0xdf59d0
@@ -166,13 +187,15 @@ internal sealed unsafe class QuestSpoofService : IDisposable
         }
 
         uint use = ResolveIntendedUse(territoryId);
-        if (SoloInstanceUses.Contains(use))
+        bool extra = ExtraBlanketTerritories.Contains(territoryId);
+        if (SoloInstanceUses.Contains(use) || extra)
         {
             policy = null;
             blanket = true;
             SyncHookState();
-            log.Information("[HMSync] [QUESTSPOOF] armed BLANKET end-state for Solo Instance zone " + territoryId +
-                " (IntendedUse " + use + "): IsQuestComplete → true. Spoofed until Revert.");
+            string why = extra ? "extra-blanket territory (NB-20)" : "Solo Instance (IntendedUse " + use + ")";
+            log.Information("[HMSync] [QUESTSPOOF] armed BLANKET end-state for zone " + territoryId +
+                " [" + why + "]: IsQuestComplete → true. Spoofed until Revert.");
             return;
         }
 

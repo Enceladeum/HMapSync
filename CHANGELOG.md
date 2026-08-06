@@ -5,6 +5,18 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0.8] - 2026-08-06
+
+### Added
+
+- **Story zones load already finished**: virtual-loading a reconstruction zone now presents it the way it looks once its story questline is complete, instead of mid-rebuild. Doma Enclave arrives as the fully restored town, with its streets populated by the end-state residents. This happens automatically on load, with no extra step and no visible rebuild flicker.
+- **More zones show their intended built appearance**: additional locations, including Elysion and Terncliff, now load looking the way they should when explored through HMS, rather than an earlier or emptier version of the area.
+- **Pin favourite cutscene stages**: cutscene stages can now be starred just like zones. Favourited stages pin to the top of the list with a filled star, matching how pinned zones already behave.
+
+### Fixed
+
+- **Cosmic Exploration spawn point**: entering Sinus Ardorum now places you on the ground toward the center of the area, instead of dropping you into mid-air off to one side.
+
 ## [1.0.0.7] - 2026-08-04
 
 ### Added
