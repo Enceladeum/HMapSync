@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **More explorable cutscene stages, discovered automatically**: HMS now finds cutscene-only locations from the game's own data rather than a hand-kept list, so stages added by a patch surface on their own each update. New this release: the Dawntrail title-screen vista, the Everkeep server room, the Cosmic Exploration capsule, and the Scion's ship from the Endwalker intro.
 - **Switch between a cutscene stage's alternate looks**: a few cutscene stages exist in more than one form — for example a ruined and a restored version of the same set. `/hms stagestate` flips between them (call it again to cycle, or name the look you want). Every such stage still loads clean on its own; this is just for manually switching to the other composition.
 
 ### Fixed

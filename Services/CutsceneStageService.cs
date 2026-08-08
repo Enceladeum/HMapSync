@@ -92,10 +92,11 @@ public sealed class CutsceneStageService : IDisposable
         new("White screen", "ffxiv/zon_z1/evt/z1e2/level/z1e2", true, ""),
         new("Black screen", "ffxiv/zon_z1/evt/z1eb/level/z1eb", true, ""),
         new("Baelsar's Wall", "ffxiv/fst_f1/evt/f1e8/level/f1e8", false, "", Spawn: (577.5458f, 66.5f, 1057.9313f), Facing: -2.3f),
-        // --- 7.x cutscene stages surfaced by the automated bg sweep ---
-        new("Cosmic exploration", "ffxiv/cos_c1/evt/c1e1/level/c1e1", false, "", Spawn: (0f, 0f, 0f)),   // origin-locked (all axes at 0)
+        // --- NB-38: promote three auto-detected idle chips (name-only, no spawn) to curated. Curated wins on Bg collision
+        //     in BuildExposed, so these carry the friendly name + calibrated spawn instead of the code + donor fallback. ---
+        new("Cosmic exploration", "ffxiv/cos_c1/evt/c1e1/level/c1e1", false, "", Spawn: (0f, 0f, 0f)),   // origin-locked (operator: all axes at 0)
         new("La Noscea PvP", "ffxiv/sea_s1/pvp/s1p4/level/s1p4", false, ""),
-        new("Seaship", "ex2/03_ocn_o3/evt/o3e2/level/o3e2", false, "The Next Ship to Sail", Spawn: (0.207f, 11.853f, 2.000f)),   // also in the Seaships chip (SeashipCutsceneBgs)
+        new("Seaship", "ex2/03_ocn_o3/evt/o3e2/level/o3e2", false, "The Next Ship to Sail", Spawn: (0.207f, 11.853f, 2.000f)),   // also fold into the Seaships chip (SeashipCutsceneBgs)
         // --- prize picks from the 2026-07-15 gap-hunt (TT-backed dressings worth surfacing in the cutscene list) ---
         new("Terncliff Bay", "ex3/01_nvt_n4/evt/n4eb/level/n4eb", false, "Forever at Your Side", 926),
         new("Cinder Drift (Ruby Weapon)", "ex3/01_nvt_n4/fld/n4fe/level/n4fe", false, "Ruby Doomsday", 897),
@@ -125,13 +126,51 @@ public sealed class CutsceneStageService : IDisposable
     private readonly IPluginLog log;
     private readonly IDataManager data;
     private readonly ZoneLoadService zoneLoad;
+    private readonly CutsceneStageDetectService detect;   // NB-33: runtime cutscene-only venue auto-detection
 
     private List<Stage>? _exposed;
-    public IReadOnlyList<Stage> Stages => _exposed ??= AllStages.Where(x => x.TerritoryId == 0).ToList();   // Tier B (real TTs) live in the zones tab
+
+    // NB-33: the chip catalog is the curated Tier-A stages (indices/names/spawns preserved) PLUS the
+    // auto-detected cutscene-only venues (the 4 new Tier-B patch venues + everything the scan surfaces).
+    // Curated AllStages rows win on Bg collision so their real Name/Spawn/Facing/Quest survive; detected
+    // venues that aren't curated append as forced-Experimental entries with a PlaceName/code name and no
+    // spawn (default-spawn fallback). Rebuilt lazily; the detect scan nulls _exposed when it completes.
+    public IReadOnlyList<Stage> Stages => _exposed ??= BuildExposed();
+
+    // NB-33: fired (marshalled to the caller) when the background detect scan finishes and the chip catalog
+    // grows. The UI snapshots CutsceneEntries once at startup, so it must rebuild that list on this signal.
+    public event System.Action? StagesChanged;
+
+    private List<Stage> BuildExposed()
+    {
+        var list = AllStages.Where(x => x.TerritoryId == 0).ToList();   // curated Tier A - unchanged chip head
+        var present = new HashSet<string>(list.Select(s => s.Bg), StringComparer.Ordinal);
+        var curatedByBg = AllStages
+            .GroupBy(s => s.Bg, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+        foreach (var d in detect.Detected)
+        {
+            if (!present.Add(d.Bg)) continue;   // already present (curated Tier A, or dup)
+            list.Add(curatedByBg.TryGetValue(d.Bg, out var cur) ? cur : d);   // curated wins for name/spawn
+        }
+        return list;
+    }
 
     public CutsceneStageService(IDalamudPluginInterface pi, IPluginLog log, IDataManager data, ZoneLoadService zoneLoad)
     {
         this.log = log; this.data = data; this.zoneLoad = zoneLoad;
+
+        detect = new CutsceneStageDetectService(pi, log, data);
+        detect.ScanCompleted += () => { _exposed = null; StagesChanged?.Invoke(); };   // fold detected venues in + notify UI
+        detect.StartScan(GameVersion());
+    }
+
+    // Game version string (patch id) - read on the framework thread here; the detect cache keys off it so
+    // the ~4k-cutb scan re-runs only after a patch. Empty when CS isn't ready (detect skips caching then).
+    private static string GameVersion()
+    {
+        try { unsafe { return FFXIVClientStructs.FFXIV.Client.System.Framework.Framework.Instance()->GameVersionString ?? ""; } }
+        catch { return ""; }
     }
 
     // Grouping key from the bg area code (these are all TT-less, so no PlaceNameRegion to read).
@@ -155,7 +194,7 @@ public sealed class CutsceneStageService : IDisposable
             "uvs" => "Ultima Thule",
             "mid" => "Garlemald",
             "xkt" or "ykt" => "Tural",
-            "cos" => "Cosmic Exploration",   // NB-38: c1e1 lives under ffxiv/cos_c1
+            "cos" => "Cosmic Exploration",   // NB-38: c1e1 lives under ffxiv/cos_c1 → its own group, not ARR
             "lak" => "Mor Dhona",
             "air" => "Prima Vista",
             "zon" => s.Expansion,
@@ -196,6 +235,20 @@ public sealed class CutsceneStageService : IDisposable
                 return true;
             }
         }
+        // NB-33: auto-detected venues can carry an AUTO-derived spawn (from the embedded cutscene-spawns.json, itself
+        // the median-floor centroid of the venue's cutb character keyframes). Honour it the same way, so a detected
+        // venue with a baked spawn no longer inherits the donor territory's fallback point. Absent => return false as
+        // before and the caller keeps the donor fallback (never a regression).
+        foreach (var st in detect.Detected)
+        {
+            if (st.Bg == bg && st.Spawn.HasValue)
+            {
+                var v = st.Spawn.Value;
+                spawn = new Vector3(v.X, v.Y, v.Z);
+                facing = st.Facing;
+                return true;
+            }
+        }
         spawn = default;
         facing = null;
         return false;
@@ -207,6 +260,8 @@ public sealed class CutsceneStageService : IDisposable
     {
         if (string.IsNullOrEmpty(bg)) return null;
         foreach (var st in AllStages)
+            if (st.Bg == bg) return st.Name;
+        foreach (var st in detect.Detected)   // NB-33: auto-detected venues carry a PlaceName/code name
             if (st.Bg == bg) return st.Name;
         return null;
     }
@@ -262,5 +317,5 @@ public sealed class CutsceneStageService : IDisposable
         return bestIdx;
     }
 
-    public void Dispose() { }
+    public void Dispose() { detect.Dispose(); }
 }

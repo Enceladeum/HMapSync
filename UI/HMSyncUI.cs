@@ -2215,6 +2215,7 @@ ImGui.Spacing();
                 ImGui.TextDisabled("Cutscene / stage");
                 CmdRow("/hms firecut", "arm cutscene capture (run in an inn)");
                 CmdRow("/hms cutstop", "cutscene safety escape (works anywhere)");
+                CmdRow("/hms stagestate [name|next]", "flip a cutscene stage's alternate composition");
 
                 ImGui.Spacing();
                 ImGui.TextDisabled("Maintenance");

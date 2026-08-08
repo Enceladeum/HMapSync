@@ -498,6 +498,18 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             HiddenNpcCount = () => config.MapHiddenNpcDataIds.Count,
             CanEditNpcHides = () => relay.HasMapAuthority && zoneLoad.IsZoneLoaded,
         };
+        // NB-33: the Cutscenes chip snapshots CutsceneEntries once (in the initializer above). The venue
+        // auto-detection runs on a background thread and finishes seconds later, so rebuild that snapshot on
+        // its completion signal (marshalled to the framework thread) - otherwise detected venues never show.
+        cutscene.StagesChanged += () => RunOnMainThread(() =>
+        {
+            ui.CutsceneEntries = cutscene.Stages.Select((st, i) => new HMSyncUI.CutsceneEntry
+            {
+                Name = st.Name, Region = st.Expansion, Quest = st.Quest, Code = st.Code, Bg = st.Bg, Id = st.TerritoryId, Index = i
+            }).ToList();
+            log.Information("[HMSync] Cutscene chip refreshed: " + ui.CutsceneEntries.Count + " venue(s)");
+        });
+
         pluginInterface.UiBuilder.Draw += ui.Draw;
         pluginInterface.UiBuilder.Draw += ui.DrawNpcPickerOverlay;  // NB-20: NPC dot-lens picker (renders over the world)
         pluginInterface.UiBuilder.Draw += ui.DrawCarpetOverlay;   // S316: rings render even when window closed

@@ -1,0 +1,9 @@
+{
+  "_comment": "NB-33 spawn automation. DERIVED per-patch artifact (Fable), NOT hand-authored: for each TT-less cutscene venue, the centroid of its cutb PRINCIPAL-CAST keyframes at floor Y (from cutscene-timeline-keyframes.csv). Same provenance the curated AllStages spawns were reverse-engineered from - the player stands among the cutscene cast. HEURISTIC (b74, refined after in-game test): prefer the 'actor' kind (principal placed cast, on the usable floor); only fall back to 'chara' (all animated bodies, which include background/extra actors on lower/background platforms and sink the centroid to the WRONG level) when a venue has no 'actor' entries. Keyed by stagedir (TT-less venues have no TerritoryId). CutsceneStageDetectService bakes these into Stage.Spawn/Facing; absent venue -> loader keeps donor-territory fallback (never a regression). Facing optional (omit -> keep default orientation).",
+  "version": "2026.08.05.0000.0000",
+  "venues": {
+    "ex5/01_xkt_x6/evt/x6e3": { "x": -0.63, "y": 6.49, "z": 33.25 },
+    "ex5/01_xkt_x6/evt/x6e6": { "x": -0.41, "y": 5.46, "z": 5.71 },
+    "ex5/05_zon_z6/chr/z6c1": { "x": 620.71, "y": 34.66, "z": 913.32 }
+  }
+}

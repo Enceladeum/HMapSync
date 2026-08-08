@@ -16,6 +16,16 @@
              packets by name (e.g. 356 → ActorControlSelf). Opcodes rotate per patch; swap this JSON to update.
              The NAME is the durable identity we care about - numbers are per-version. -->
         <EmbeddedResource Include="opcodes.min.json" />
+        <!-- NB-33: derived venue(stagedir)→quest map for auto-detected cutscene-only venues. DERIVED artifact, not
+             hand-authored (Fable's cutscene-territory-index.csv joined with dominant-venue-per-cutb from scene-parts).
+             CutsceneStageDetectService reads it to label detected venues. Regenerate per patch (like opcodes.min.json);
+             a stale map just means new venues show no quest until refreshed. -->
+        <EmbeddedResource Include="cutscene-quests.json" />
+        <!-- NB-33: derived venue(stagedir)→spawn map for auto-detected cutscene-only venues. DERIVED artifact, not
+             hand-authored: median-floor centroid of each venue's cutb character keyframes (same provenance the curated
+             AllStages spawns came from). A venue absent here keeps its donor-territory fallback spawn (no regression).
+             Regenerate per patch. -->
+        <EmbeddedResource Include="cutscene-spawns.json" />
     </ItemGroup>
 
     <ItemGroup>
