@@ -5,6 +5,23 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0.9] - 2026-08-08
+
+### Added
+
+- **Switch between a cutscene stage's alternate looks**: a few cutscene stages exist in more than one form — for example a ruined and a restored version of the same set. `/hms stagestate` flips between them (call it again to cycle, or name the look you want). Every such stage still loads clean on its own; this is just for manually switching to the other composition.
+
+### Fixed
+
+- **Cutscene stages no longer shimmer as they load**: a handful of cutscene stages that flickered or z-fought on entry (such as the Doma throne-room finale) now come up clean, with the correct version of overlapping set pieces shown by default.
+- **Cutscenes load with their intended sky**: cutscene stages now show their own authored weather instead of sometimes coming up under a blank, atmospheric "none" sky (which could depend on where you launched from). Everyone in a session sees the same sky.
+- **Cutscene stages now identify themselves like any zone**: the zone header and `/hms status` now show the cutscene stage's own name and tag instead of the internal map it borrows to load, so loading a cutscene reads the same as loading a normal zone.
+
+### Changed
+
+- **New and tidied cutscene stages**: added a Cosmic Exploration stage and a dedicated Seaship stage (also listed under Seaships alongside the other sailing locations), and cleaned up a PvP stage's name.
+- **Magna Glacies boss-arena declutter**: the "do not cross" border curtain in the Magna Glacies boss arena is now hidden on free-roam, matching the other decluttered arenas.
+
 ## [1.0.0.8] - 2026-08-06
 
 ### Added
@@ -122,6 +139,8 @@ Initial public release.
 - **Curated spawns** for every zone, with your own spawn points recorded via `/hms memo`.
 - **Optional integrations**: Glamourer for cosmetic visibility toggles, and Moniker for in-session nameplate changes.
 
+[1.0.0.9]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.9
+[1.0.0.8]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.8
 [1.0.0.7]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.7
 [1.0.0.6]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.6
 [1.0.0.5]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.5
