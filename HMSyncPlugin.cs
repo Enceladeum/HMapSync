@@ -411,6 +411,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             MapSettings = mapSettings,   // S326: Map Settings tab reads legal weather / BGM names per territory
             CurrentLoadedZone = () => zoneLoad.CurrentLoadedZone,   // S326d: live-vs-prep mode discrimination
             CurrentStageName = () => zoneLoad.ActiveStageBg != null ? cutscene.GetStageName(zoneLoad.ActiveStageBg) : null,   // v0.7.340: cutscene name for the Zone: header
+            CurrentStageTag = () => zoneLoad.ActiveStageBg != null ? StageTagFromBg(zoneLoad.ActiveStageBg) : null,   // NB-37: cutscene's OWN tag (e3e4) for the Zone: header paren, not the donor territory id
             MovementAllowed = () => MovementEnableAllowed(),        // v0.7.262: one gate for all movement buttons
             MovementResearchAllowed = () => MovementResearchAllowed(), // v0.7.445: stricter gate for fly/noclip (teleport)
             PacketFilterActive = () => packetFilter.IsActive,       // S326e/f: packet-filter status (now a status dot)
@@ -1031,6 +1032,15 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 if (arg != null && uint.TryParse(arg.Trim(), out var lgbTid))
                 { zoneLoad.DumpLgb(lgbTid); chat.Print("[HMSync] LGB dump for " + lgbTid + " logged - check [LGBDUMP]."); }
                 else chat.Print("[HMSync] Usage: /hms lgbdump <territoryId>");
+                break;
+            case "stagestate":
+                // NB-35: toggle a coplanar-state cutscene venue between its states (the auto de-flicker picks a default; this
+                // flips A/B so you can pick the right one in-game). e3e4 Doma finale = intact/destroyed; u5e2 "The Edge of
+                // Creation" = event/battle floor. No arg (or "next") cycles; a name jumps to that state. Only works while a
+                // 2+ state venue is loaded; the pick rides the same per-frame hold and /hms stop restores everything.
+                zoneLoad.SelectStageState(arg);
+                chat.Print("[HMSync] stagestate " + (string.IsNullOrWhiteSpace(arg) ? "(cycle)" : arg.Trim())
+                    + " - check [STAGEHIDE] in /xllog.");
                 break;
             case "status": DoStatus(); break;
             case "senddiag":
@@ -1846,6 +1856,10 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // host picks sync as before.
         config.MapWeatherId = 0;    // pick does not carry across loads
         mapSettings.WeatherId = 0;  // service copy too, so post-load Reassert resolves the NEW zone's default
+        // NB-39: hand the reassert the active cutscene stage bg so it resolves the load-time native weather from the
+        // STAGE's own authored .lvb, not the borrowed donor territory (interior donor = weather 0 = the "cutscenes all
+        // pop as None/atmospheric" bug). null on a plain zone load → unchanged donor/TT resolution.
+        mapSettings.ActiveStageBgForWeather = stageBg;
 
         ArmMapReassert();   // S326: re-apply host map-state once the load settles (load clobbers weather/time)
         ArmMapReveal();     // v0.7.448: reveal this map's HUD fog once the load settles (local; restored on exit)
@@ -2648,10 +2662,16 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         chat.Print("[HMSync] Host: " + relay.IsHost);
         chat.Print("[HMSync] Packet filter: " + (packetFilter.IsActive ? "ON" : "OFF"));
         chat.Print("[HMSync] Noclip: " + (noclip.IsActive ? "ON" : "OFF"));
-        chat.Print("[HMSync] Zone: " +
-            (zoneLoad.IsZoneLoaded
-                ? zoneLoad.GetZoneName(zoneLoad.CurrentLoadedZone) + " (" + zoneLoad.CurrentLoadedZone + ")"
-                : "none"));
+        // NB-37: name/id-tag a loaded cutscene by ITS stage (Doma castle finale / e3e4), not the donor territory it swapped
+        // into — uniform with the Zone: header and the "Loading …" notice. Plain zone loads keep territory name + id.
+        string statusZone;
+        if (!zoneLoad.IsZoneLoaded) statusZone = "none";
+        else if (zoneLoad.ActiveStageBg != null)
+            statusZone = (cutscene.GetStageName(zoneLoad.ActiveStageBg) ?? zoneLoad.GetZoneName(zoneLoad.CurrentLoadedZone))
+                + " (" + StageTagFromBg(zoneLoad.ActiveStageBg) + ")";
+        else
+            statusZone = zoneLoad.GetZoneName(zoneLoad.CurrentLoadedZone) + " (" + zoneLoad.CurrentLoadedZone + ")";
+        chat.Print("[HMSync] Zone: " + statusZone);
         chat.Print("[HMSync] Peers: " + stateApply.Peers.Count);
     }
 

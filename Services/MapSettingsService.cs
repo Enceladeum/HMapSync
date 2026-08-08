@@ -37,6 +37,14 @@ public unsafe class MapSettingsService
     private readonly IPluginLog log;
     private readonly TimeFreezeService timeFreeze;
     private readonly Dictionary<uint, List<(byte id, string name, bool legal)>> lvbWeatherCache = new();
+    // NB-39: cutscene stage-bg → authored default weather, read straight from the stage's own .lvb (bypasses the donor
+    // territory entirely). Cached by bg path. See GetStageDefaultWeather + the Reassert stage branch.
+    private readonly Dictionary<string, byte> stageWeatherCache = new();
+    // NB-39: the active cutscene stage's bg, set by DoLoad before the post-load reassert; null on a plain zone load.
+    // When set, Reassert resolves the load-time NATIVE weather from the STAGE's authored .lvb, not the donor territory
+    // (a cutscene borrows whatever real zone you launched from as its donor — an interior donor = weather 0 = None, the
+    // "cutscenes all pop as None/atmospheric" bug). Donor is the graceful fallback when the stage .lvb has no weather.
+    public string? ActiveStageBgForWeather { get; set; }
 
     public MapSettingsService(IDataManager dataManager, IPluginLog log, TimeFreezeService timeFreeze, ISigScanner sig)
     {
@@ -723,6 +731,33 @@ public unsafe class MapSettingsService
     }
 
     /// <summary>
+    /// NB-39: a CUTSCENE STAGE's authored default weather, read from the stage bg's own <c>.lvb</c> weather table —
+    /// independent of the donor territory the swap-load borrows. Returns the first non-zero weather in the table (the
+    /// authored/primary weather, incl. cinematic ones like CutScene that never appear in WeatherRate), or 0 if the
+    /// stage has no readable .lvb / no weather (caller then falls back to the donor). Cached per bg path.
+    /// </summary>
+    public byte GetStageDefaultWeather(string? stageBg)
+    {
+        if (string.IsNullOrWhiteSpace(stageBg)) return 0;
+        if (stageWeatherCache.TryGetValue(stageBg, out var cached)) return cached;
+        byte result = 0;
+        try
+        {
+            var lvb = dataManager.GetFile<LvbFile>("bg/" + stageBg + ".lvb");
+            if (lvb?.WeatherIds != null)
+            {
+                foreach (var raw in lvb.WeatherIds)
+                {
+                    if (raw != 0 && raw <= byte.MaxValue) { result = (byte)raw; break; }   // first non-zero = authored primary
+                }
+            }
+        }
+        catch (Exception ex) { log.Warning("[HMSync] GetStageDefaultWeather(" + stageBg + ") failed: " + ex.Message); }
+        stageWeatherCache[stageBg] = result;
+        return result;
+    }
+
+    /// <summary>
     /// Re-assert the currently-held state to the live client. Called AFTER a map load settles (the load can clobber
     /// weather/time/BGM) and on a mid-session change. Idempotent.
     /// </summary>
@@ -755,11 +790,19 @@ public unsafe class MapSettingsService
         {
             resolvedWeather = WeatherId;   // the held, still-legal pick
         }
-        else if (loadedZoneId != 0)
+        else if (loadedZoneId != 0 || ActiveStageBgForWeather != null)
         {
-            byte nativeWeather = GetDefaultWeather(loadedZoneId);
+            // NB-39: a cutscene stage resolves its own AUTHORED weather from its .lvb first (the donor territory is a
+            // borrowed real zone — an interior donor gives weather 0 = None, so every cutscene popped atmospheric). Fall
+            // back to the donor's native weather only when the stage has no authored weather.
+            byte stageWeather = ActiveStageBgForWeather != null ? GetStageDefaultWeather(ActiveStageBgForWeather) : (byte)0;
+            byte nativeWeather = stageWeather != 0 ? stageWeather : (loadedZoneId != 0 ? GetDefaultWeather(loadedZoneId) : (byte)0);
+            if (ActiveStageBgForWeather != null)
+                log.Debug("[HMSync] [WX-STAGE] " + ActiveStageBgForWeather + ": authored=" + stageWeather   // cutscene-only load-time diag
+                    + " donor(" + loadedZoneId + ")=" + (loadedZoneId != 0 ? GetDefaultWeather(loadedZoneId) : 0)
+                    + " → engaging " + nativeWeather + " (" + WeatherName(nativeWeather) + ")");
             if (nativeWeather != 0) ApplyWeather(nativeWeather);
-            resolvedWeather = nativeWeather;   // the zone's deterministic native (from the live WeatherManager)
+            resolvedWeather = nativeWeather;   // stage-authored for cutscenes, else the zone's deterministic native
         }
 
         // BGM ENGAGE - runs on EVERY load, HasState or not. Playing the zone's own default music is the BASELINE, not

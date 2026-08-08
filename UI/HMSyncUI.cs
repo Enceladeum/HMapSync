@@ -144,6 +144,9 @@ public class HMSyncUI
     // v0.7.340: the active cutscene STAGE name (null when on a plain zone). Lets the Zone: header show the cutscene
     // name instead of the donor territory's name for a swap-loaded stage.
     public Func<string?>? CurrentStageName;
+    // NB-37: the active cutscene STAGE tag (e.g. "e3e4"; null on a plain zone). Lets the Zone: header parenthetical
+    // show the stage's own tag instead of the donor territory id.
+    public Func<string?>? CurrentStageTag;
     // v0.7.262: the single movement capability gate (session-active || debug). UI movement buttons check THIS instead
     // of re-deriving their own condition, so no future button can slip through with a weaker gate.
     public Func<bool>? MovementAllowed;   // v0.7.262 checkbox-level gate; superseded for movement by MovementResearchAllowed (kept wired, currently unused by movement UI)
@@ -931,8 +934,10 @@ public class HMSyncUI
         {
             string? stg = CurrentStageName?.Invoke();
             string gzn = !string.IsNullOrEmpty(stg) ? stg : MapSettings.GetZoneName(gz);
+            string? stgTag = CurrentStageTag?.Invoke();   // NB-37: stage's own tag for the paren, not the donor id
+            string gzId = !string.IsNullOrEmpty(stgTag) ? stgTag! : gz.ToString();
             ImGui.TextDisabled("Zone:"); ImGui.SameLine();
-            ImGui.TextUnformatted((string.IsNullOrEmpty(gzn) ? "Unnamed" : gzn) + " (" + gz + ")");
+            ImGui.TextUnformatted((string.IsNullOrEmpty(gzn) ? "Unnamed" : gzn) + " (" + gzId + ")");
             ImGui.Spacing();
         }
         byte liveW = MapSettings.GetActiveWeather();
@@ -1242,9 +1247,11 @@ public class HMSyncUI
         {
             string? stg2 = CurrentStageName?.Invoke();
             string zn = !string.IsNullOrEmpty(stg2) ? stg2 : MapSettings.GetZoneName(loadedZone);
+            string? stg2Tag = CurrentStageTag?.Invoke();   // NB-37: stage's own tag for the paren, not the donor id
+            string znId = !string.IsNullOrEmpty(stg2Tag) ? stg2Tag! : loadedZone.ToString();
             ImGui.TextDisabled("Zone:");
             ImGui.SameLine();
-            ImGui.TextUnformatted((string.IsNullOrEmpty(zn) ? "Unnamed" : zn) + " (" + loadedZone + ")");
+            ImGui.TextUnformatted((string.IsNullOrEmpty(zn) ? "Unnamed" : zn) + " (" + znId + ")");
         }
         ImGui.Spacing();
 
@@ -2270,6 +2277,7 @@ ImGui.Spacing();
     {
         "ffxiv/ocn_o1/evt/o1e1/level/o1e1",   // Endless Ocean (o1e1)
         "ffxiv/sea_s1/evt/s1e7/level/s1e7",   // Limsa Lominsa intro ship (s1e7)
+        "ex2/03_ocn_o3/evt/o3e2/level/o3e2",   // The Next Ship to Sail (o3e2)
     };
     // Cutscene stages (populated by the plugin from CutsceneStageService). OnLoadCutscene loads by index.
     public struct CutsceneEntry { public string Name; public string Region; public string Quest; public string Code; public string Bg; public uint Id; public int Index; }

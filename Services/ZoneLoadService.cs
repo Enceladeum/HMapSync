@@ -2763,6 +2763,67 @@ public unsafe class ZoneLoadService : IDisposable
     private readonly HashSet<uint> heldHideKeys = new();
     private bool heldHideArmed;
 
+    // NB-34: per-cutscene-VENUE coplanar state-pair suppression (streaming-safe, shares the heldHide poll + restore).
+    // A detected cutscene venue is bg-swapped in under the DONOR territory's layerFilterKey with no cutscene director,
+    // so the game draws EVERY layer-set state at once. Venues authored as ON/OFF (or battle/event, intact/rubble) state
+    // PAIRS therefore render both states COPLANAR → z-fighting = the "disco"/floor flicker. The fix is subtractive: hide
+    // the redundant state per venue. These sets are the "discovery" criteria the heldHide poll matches on IN ADDITION to
+    // heldHideKeys; any live instance matched by asset-substring or InstanceId-range is PROMOTED into heldHideKeys +
+    // hiddenInstanceKeys (so PollHeldHide's fast path + the existing hiddenInstanceKeys restore sweep both cover it, and
+    // /hms stop re-shows it). Ground truth is the offline LGB (xivtool `lgb <bgpath>`); InstanceId ranges are LGB-file
+    // ids (stable within a patch) — regenerate per patch when the zone's LGB layout is re-exported. Cleared per LoadZone + on stop.
+    private readonly HashSet<string> heldHideAssets = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<(uint Lo, uint Hi)> heldHideIdRanges = new();
+    // NB-34/NB-35: a per-venue coplanar STATE the poll suppresses. Assets = GetPrimaryPath substrings; IdRanges = inclusive
+    // InstanceKey (==LGB InstanceId) bands. Name is the state SHOWN (we HIDE the twin), used by the `hms stagestate`
+    // toggle. A venue with ONE state (x6e6) is a fixed de-flicker; a venue with TWO+ is a togglable A/B (e3e4, u5e2).
+    private sealed record StageHideState(string Name, string[] Assets, (uint Lo, uint Hi)[] IdRanges);
+    private static readonly (uint, uint)[] NoIds = System.Array.Empty<(uint, uint)>();
+    // Keyed by Stage.Bg (== ActiveStageBg for a swap venue). states[0] is the DEFAULT applied on load; each state HIDES the
+    // twin(s) so the named state is the one left standing. Ground truth is the offline LGB (xivtool `lgb <bgpath>`).
+    private static readonly Dictionary<string, StageHideState[]> StageHideStates = new(StringComparer.Ordinal)
+    {
+        // x6e6 Everkeep (b76, offline-derived): 12 layers in ON/OFF pairs → 169 coplanar-dup groups = the "disco" flicker.
+        // Single fixed state — keep ON (user pick: lit racks + active robots); hide OFF. rack_light_off uses the UNLIT shelf
+        // models shlv2/shlv3/shlv5 (asset-clean: rack_light_on is shlv1/shlv4) → asset-substring, patch-robust.
+        // auto_robot_off shares the rbt* SGB assets with auto_robot_on so substrings can't split it, but it is a CLEAN
+        // CONTIGUOUS InstanceId block 10565450..10565735 (286 ids, 0 gaps) → id-range. Restores via /hms stop.
+        ["ex5/01_xkt_x6/evt/x6e6/level/x6e6"] = new[]
+        {
+            new StageHideState("on", new[] { "shlv2", "shlv3", "shlv5" }, new[] { (10565450u, 10565735u) }),
+        },
+        // e3e4 Doma finale (b79, user in-game finding): swapping WHOLE states was overkill — the composite (intact keep +
+        // rubble) reads FINE doubled; the ONLY visible z-fight is the throne-room CARPET. It has exactly two coplanar floor
+        // twins: e3e4_a1_flr01 (clean, in layer `tenshukaku_tenjou`) and e3e4_a1_flr02 (rubble, in layer `gareki`). So we
+        // ISOLATE the carpet and hide just ONE twin, leaving everything else drawn. Default hides the CLEAN twin (user pick:
+        // "remove the clean one, keep the rest"). Toggle to A/B the two carpets in-game. Substrings are exact per-file.
+        ["ex2/02_est_e3/evt/e3e4/level/e3e4"] = new[]
+        {
+            new StageHideState("carpet-rubble", new[] { "e3e4_a1_flr01" }, NoIds),   // keep RUBBLE carpet, hide clean twin (default)
+            new StageHideState("carpet-clean",  new[] { "e3e4_a1_flr02" }, NoIds),   // keep CLEAN carpet, hide rubble twin
+        },
+        // u5e2 "The Edge of Creation" (b77, offline-derived): battle-phase floor (`battle_floor`: lsa02/lsa03 SGBs +
+        // u5e1_a2_flor1.mdl, plus the a0_gmc01 battle gimmick) vs event-phase floor (`event_floor`: u5e1_a1_flor1.sgb) drawn
+        // coplanar → the floor flicker. The a3_sta00 base platform is present in BOTH states (shared, always-on). a2 vs a1
+        // in the flor1 name disambiguates the two floor twins. DEFAULT=event (b80, user in-game pick — supersedes b78's
+        // battle default: battle shimmers on LOAD; the event twin loads clean). `hms stagestate` flips to battle.
+        ["ex4/04_uvs_u5/evt/u5e2/level/u5e2"] = new[]
+        {
+            new StageHideState("event",
+                new[] { "u5e1_a1_lsa02", "u5e1_a2_lsa03", "u5e1_a2_flor1", "u5e1_a0_gmc01" }, NoIds),
+            new StageHideState("battle",
+                new[] { "u5e1_a1_flor1" }, NoIds),
+        },
+        // r1fd "Steps of Faith" — REMOVED b80. The offline survey flagged 33 coplanar-dup groups (gareki rubble over the
+        // intact bridge), but in-game the venue NEVER flickers: the rubble and bridge occupy different space, so the doubled
+        // draw doesn't z-fight. Hiding the rubble was a scene EDIT (removes the post-Vishap destruction), not a de-flicker —
+        // dropped so the venue loads exactly as authored. Lesson: coplanar-dup COUNT is a candidate signal, not proof of a
+        // visible z-fight; only same-plane twins (a carpet, a floor) actually shimmer.
+    };
+    // NB-35: which venue's states are currently loaded + the selected index, so `hms stagestate [name|next]` can flip A/B.
+    private string? activeStageHideBg;
+    private int activeStageHideIndex = -1;
+
     // b56: before/after snapshot for the 759 CYCLE-mechanism diff (adv759diff). Keyed by InstanceKey; per instance we keep
     // the primary draw-slot pointer, IsVisible, and primary path. Captured by the first adv759diff call; diffed against the
     // live layout on the second call (the user runs the proven idnear500→idshowall cycle in between).
@@ -2969,11 +3030,11 @@ public unsafe class ZoneLoadService : IDisposable
         // idnear→idshowall cycle. radius/settleMs are unused by the driver; only streamInMs matters (how long to wait
         // after load for the reconstruction geometry to stream in before we force-show it). See MaybeAutoAdvance.
         { 759, (0f, 0, 3000) },   // Doma Enclave (rebuilt) — SOLVED b64
-        // b65/PROD: Yak T'el / Mamook (1189) — same reconstruction shape (mamu0 SGB step0..5), driven by the same
-        // zone-agnostic Pass 2. DEFERRED — NOT shipped: on this large field zone the layout-wide force-show is a no-op
-        // for the rebuild and risks revealing unrelated far/LOD geometry, so 759 is the only shipped reconstruction zone.
-        // Re-enable the row below if/when 1189's geometry advance is solved and validated in-game.
-        // { 1189, (0f, 0, 3000) },  // Mamook (rebuilt) — deferred (see above)
+        // b65: Yak T'el / Mamook — same reconstruction shape (mamu0 SGB step0..5). The driver's Pass 2 is zone-agnostic
+        // (force-shows every SharedGroup child + hidden BgPart layout-wide), so no per-facility keys are needed; the mamu0
+        // children get caught automatically. FIELD zone (much larger than 759) — if the layout-wide show reveals unrelated
+        // far/LOD geometry, scope it. Testing.
+        { 1189, (0f, 0, 3000) },  // Mamook (rebuilt) — CONFIRMED clean b65 (universal lever holds on a large field zone)
         // b66 attempted Elysion 1073 here and it did NOTHING: 1073 is a FILTER-KEY zone (Terncliff family), not a
         // resident-hidden one — the built town is not loaded under the default key, so the ratchet has nothing to reveal.
         // It's handled by ForcedCastKeys{1073,268557} instead (b67). Do NOT re-add 1073 here.
@@ -3220,13 +3281,14 @@ public unsafe class ZoneLoadService : IDisposable
     // (never stores pointers) and flips all their slots hidden. Cheap: one layout walk, small held set.
     private void PollHeldHide(IFramework fw)
     {
-        if (heldHideKeys.Count == 0) return;
+        if (heldHideKeys.Count == 0 && heldHideAssets.Count == 0 && heldHideIdRanges.Count == 0) return;
         try
         {
             var lw = LayoutWorld.Instance();
             if (lw == null) return;
             var layout = lw->ActiveLayout != null ? lw->ActiveLayout : lw->GlobalLayout;
             if (layout == null) return;
+            bool haveCriteria = heldHideAssets.Count > 0 || heldHideIdRanges.Count > 0;   // NB-34 discovery criteria
             foreach (var lkv in layout->Layers)
             {
                 var lm = lkv.Item2.Value;
@@ -3235,8 +3297,32 @@ public unsafe class ZoneLoadService : IDisposable
                 {
                     var inst = ikv.Item2.Value;
                     if (inst == null) continue;
-                    if (!heldHideKeys.Contains(inst->Id.InstanceKey)) continue;
-                    SetAllSlotsVisible(inst, false);
+                    uint key = inst->Id.InstanceKey;
+                    bool hold = heldHideKeys.Contains(key);
+                    if (!hold && haveCriteria)
+                    {
+                        // NB-34: an instance not yet in heldHideKeys can still match a venue state-pair criterion. On the
+                        // first frame it streams in and matches, PROMOTE it into heldHideKeys + the restore set (so later
+                        // frames take the fast key path and /hms stop re-shows it), then hide all its slots + SG children.
+                        foreach (var r in heldHideIdRanges)
+                            if (key >= r.Lo && key <= r.Hi) { hold = true; break; }
+                        if (!hold && heldHideAssets.Count > 0)
+                        {
+                            string path = "";
+                            try { var pp = inst->GetPrimaryPath(); if (pp.HasValue) path = pp.ToString() ?? ""; } catch { }
+                            if (path.Length > 0)
+                                foreach (var a in heldHideAssets)
+                                    if (path.Contains(a, StringComparison.OrdinalIgnoreCase)) { hold = true; break; }
+                        }
+                        if (hold)
+                        {
+                            heldHideKeys.Add(key);
+                            hiddenInstanceKeys.Add(key);            // restore sweep (RestoreHiddenObjects re-walks by key)
+                            if (inst->Id.Type == InstanceType.SharedGroup)
+                                HideSharedGroupChildren((SharedGroupLayoutInstance*)inst, 0);
+                        }
+                    }
+                    if (hold) SetAllSlotsVisible(inst, false);
                 }
             }
         }
@@ -3248,7 +3334,92 @@ public unsafe class ZoneLoadService : IDisposable
     public void ClearHeldHide()
     {
         heldHideKeys.Clear();
+        heldHideAssets.Clear();       // NB-34: drop the venue state-pair criteria too
+        heldHideIdRanges.Clear();
         if (heldHideArmed) { heldHideArmed = false; framework.Update -= PollHeldHide; }
+    }
+
+    // NB-34: arm the per-venue coplanar state-pair suppression for a swap cutscene stage. No-op for a plain zone or a
+    // venue with no spec. Loads the venue's hide criteria into the shared heldHide poll; PollHeldHide discovers + holds
+    // the matching instances as they stream in. Reversible via /hms stop (RestoreHiddenObjects → ClearHeldHide). Called
+    // from LoadZone right after the native load is kicked off (ActiveStageBg is set by LoadStage before the load).
+    public void ApplyStageHide(string? stageBg)
+    {
+        activeStageHideBg = null;
+        activeStageHideIndex = -1;
+        if (string.IsNullOrEmpty(stageBg) || !StageHideStates.TryGetValue(stageBg, out var states) || states.Length == 0) return;
+        activeStageHideBg = stageBg;
+        ArmStageState(states, 0);
+        if (states.Length > 1)
+            log.Information("[HMSync] [STAGEHIDE] " + stageBg + " has " + states.Length + " states ["
+                + string.Join("/", System.Array.ConvertAll(states, s => s.Name)) + "] — toggle with `hms stagestate [name|next]`.");
+    }
+
+    // NB-35: load ONE state's hide criteria into the shared poll (which then discovers + holds the matching instances).
+    private void ArmStageState(StageHideState[] states, int idx)
+    {
+        activeStageHideIndex = idx;
+        var st = states[idx];
+        foreach (var a in st.Assets) heldHideAssets.Add(a);
+        foreach (var r in st.IdRanges) heldHideIdRanges.Add(r);
+        if (!heldHideArmed) { heldHideArmed = true; framework.Update += PollHeldHide; }
+        log.Information("[HMSync] [STAGEHIDE] state '" + st.Name + "' armed for " + activeStageHideBg
+            + ": hiding assets=[" + string.Join(",", st.Assets) + "] idRanges=" + st.IdRanges.Length
+            + " — held every frame; /hms stop restores.");
+    }
+
+    // NB-35: flip the loaded venue between its coplanar states. Named (`hms stagestate battle`) or cyclic (`hms stagestate`
+    // / `... next`). Fully restores the currently-hidden set first (RestoreHiddenObjects clears heldHide + re-shows), then
+    // arms the newly-selected state so the poll re-hides its twin. One frame may show both twins mid-toggle (harmless flash).
+    public void SelectStageState(string? nameOrNext)
+    {
+        if (activeStageHideBg == null || !StageHideStates.TryGetValue(activeStageHideBg, out var states) || states.Length == 0)
+        {
+            log.Information("[HMSync] [STAGEHIDE] no stage-state venue loaded.");
+            return;
+        }
+        string sel = (nameOrNext ?? "").Trim();
+
+        // NB-36: single-hold venue (one fixed de-flicker state, no twin — x6e6, r1fd). There's nothing to flip TO, but
+        // testers still want an A/B, so `hms stagestate` toggles the hold OFF (raw: every twin drawn, flicker returns)
+        // and back ON. Index -2 == "raw/off" (distinct from -1 "never applied"); 0 == the state is applied.
+        if (states.Length == 1)
+        {
+            if (activeStageHideIndex == 0)   // currently applied → turn hold OFF (raw)
+            {
+                RestoreHiddenObjects();
+                activeStageHideIndex = -2;
+                log.Information("[HMSync] [STAGEHIDE] " + activeStageHideBg + " hold OFF (raw) — all twins drawn, flicker returns. Toggle again to re-apply '" + states[0].Name + "'.");
+            }
+            else                              // raw → re-apply the fixed state
+            {
+                ArmStageState(states, 0);
+                log.Information("[HMSync] [STAGEHIDE] " + activeStageHideBg + " hold ON — '" + states[0].Name + "' re-applied.");
+            }
+            return;
+        }
+
+        int next;
+        if (sel.Length == 0 || sel.Equals("next", StringComparison.OrdinalIgnoreCase))
+            next = (activeStageHideIndex + 1) % states.Length;
+        else
+        {
+            next = System.Array.FindIndex(states, s => s.Name.Equals(sel, StringComparison.OrdinalIgnoreCase));
+            if (next < 0)
+            {
+                log.Information("[HMSync] [STAGEHIDE] unknown state '" + sel + "'. Available: ["
+                    + string.Join("/", System.Array.ConvertAll(states, s => s.Name)) + "].");
+                return;
+            }
+        }
+        if (next == activeStageHideIndex)
+        {
+            log.Information("[HMSync] [STAGEHIDE] already showing '" + states[next].Name + "'.");
+            return;
+        }
+        RestoreHiddenObjects();          // clears heldHide sets + re-shows the previously-hidden twin
+        ArmStageState(states, next);     // re-arm; poll re-hides the new state's twin over the next frames
+        log.Information("[HMSync] [STAGEHIDE] toggled to '" + states[next].Name + "' for " + activeStageHideBg + ".");
     }
 
     // b49: idnear — the coordinate-guess KILLER. Two clean idhides (far dst02 rubble + near-origin e3ec_wood scaffold)
@@ -4692,6 +4863,7 @@ public unsafe class ZoneLoadService : IDisposable
     // which paths carry MATCH. Do NOT promote "wall" to VfxHideAllMaps - game-wide it would be a shotgun.
     private static readonly string[] VfxHide1137 = { "wall" };                     // 1137 - *wall*.avfx
     private static readonly string[] VfxHide1155 = { "maho" };                     // 1155 - *maho*.avfx
+    private static readonly string[] VfxHide1010 = { "b1199_qic1" };  // 1010 Magna Glacies - boss-arena border curtain (b1199_qic1_u.avfx, key 884B5F)
     // All-maps patterns. Plain SUBSTRING matches against the instance's primary .avfx path - there is no
     // glob engine here, so a request for "*eext_y*.avfx" is expressed simply as "eext_y" (the leading and
     // trailing wildcards are implicit in Contains; the .avfx extension is redundant because
@@ -4707,6 +4879,7 @@ public unsafe class ZoneLoadService : IDisposable
         893  => VfxHide893,
         1137 => VfxHide1137,
         1155 => VfxHide1155,
+        1010 => VfxHide1010,
         _    => System.Array.Empty<string>(),
     };
 
@@ -5533,6 +5706,14 @@ public unsafe class ZoneLoadService : IDisposable
         // once GlobalLayout furniture is present + stable after the load settles.
         if (EnableFurnitureDeDraw)
             ArmDeferredDeDraw();
+
+        // NB-34: arm the per-venue coplanar state-pair suppression for a swap cutscene stage (no-op otherwise). Reset the
+        // criteria first so a prior venue's spec can't leak across a stage→stage hop, then load THIS venue's spec (if any).
+        // The heldHide poll discovers + holds the redundant-state instances as the swapped bg streams in. ActiveStageBg is
+        // set by LoadStage before this call; a plain zone leaves it null → cleared, no hide.
+        heldHideAssets.Clear();
+        heldHideIdRanges.Clear();
+        ApplyStageHide(ActiveStageBg);
 
         // v0.7.263: 1345 wreck-de-draw PURGED. The Meddle-era hand-picked wreck-hiding is gone; 1345 now
         // loads with native geometry (wrecks present, all collision intact). Cleaner identity-based suppression

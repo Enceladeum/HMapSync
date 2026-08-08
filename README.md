@@ -153,6 +153,7 @@ Common subcommands:
 | `emote <id \ name>` | Play a client-side emote. |
 | `minion <id \ name>` | Summon a client-side minion. |
 | `memo` | Record a spawn point for the current map. |
+| `stagestate [name \ next]` | For the handful of cutscene stages that have more than one composition (e.g. a ruined vs. restored version of the same set), flip between them. Called with no argument it cycles to the next composition; you can also name one directly. The clean, flicker-free default is applied automatically when the stage loads — this is only for manually switching to an alternate look. |
 
 `/facecamera` / Pause/Break key - drives head-tilt / gaze sync.
 
