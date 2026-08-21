@@ -1,0 +1,15 @@
+# b180: Solution Nine (x6t1, TT 1186) invasion-AFTERMATH debris hide. One InstanceKey(==LGB InstanceId) per line;
+# compiled offline from xivtool `lgb 1186` (bg.csv) + library layer-filters.csv.
+#
+# NOT a cast-key problem (b179 was wrong; casttest 1186 276487 changed nothing). Reason: the live-battle QIC_*_02
+# layers (QIC_aetheryte_02, QIC_ura_building_02, QIC_VFX_flame_*, ...) are FilterOp=Match key 280670 (the 1213 battle
+# territory), so at peaceful 1186 (key 276487) they are ALREADY hidden — the cast key had nothing left to filter.
+# What still draws at 1186 is the AFTERMATH overlay: layer `x6t1_battle_zoneshared` (LayerId 280968), FilterOp=NoMatch
+# key 280670, so it shows in the post-battle overworld (1186) and hides only in the live battle instance (1213). It holds
+# exactly ONE SharedGroup instance — InstanceId 10399297, asset sgbg_x6t1_q1_qic00.sgb — that the SERVER toggles off by
+# LayerId once the cleanup quest clears. A serverless HMS load never gets that toggle, so the debris persists. Hiding this
+# one SGB cascades (ApplyIdSet → HideSharedGroupChildren) to the whole aftermath prop. Same op=None-style instance-hide
+# lever as 1185's y6t1_destory. If debris remains after this, the next suspects are the x6t1_q1_rub*/btl* models in the
+# always-on ura layers (x6t1_ura_NEW 285054, x6t1_ura_assets, resistance-pub) — but those may be intended underground
+# set-dressing, so DO NOT add them without in-game confirmation (b178 dst=district lesson).
+10399297

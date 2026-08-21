@@ -5,6 +5,20 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1.0] - 2026-08-21
+
+### Added
+
+- **Cram any weather onto any map**: the weather picker in Map Control gains an **Extra presets** library — an alphabetised grid of weathers you can apply to the current zone even when the map doesn't naturally carry them, drawing in a foreign sky and, where it's safe to, the ambient effects that go with it. Weathers the map *does* carry but never randomly rolls now surface too, grouped under **This map's states**.
+- **Skies that move with the time of day, shared across a session**: crammed city weathers marked with an asterisk (`*`) now travel the sun through a full day instead of holding a single fixed moment — and the moving sky is synced, so every member of a session watches the same city dusk roll in at the same pace, not only the host. A companion **City sky variants** section offers the same weather as it looks in different cities — a Limsa, Kugane, or Gridania sky, for instance — each cycling through that city's day, synced to the group when you host.
+- **Set weather from chat**: `/hms setweather <id>` applies any weather to the current zone by number, whether it's native to the map or crammed in from elsewhere, and shares it with the session when you're hosting.
+- **Roam through invisible barriers**: the invisible blockers that fence off boss arenas, dungeon sections, quest-phase areas, and NPC pens are now lifted automatically on every map you load, letting you walk straight through them with no command. Only the invisible walls are dropped — the scenery stays visible and floors are never affected. Turn it off for the session with `/hms dropcolliders off` (`on` puts them back and re-enables it).
+
+### Changed
+
+- **Locked emotes trigger the normal way in a session**: emotes you haven't unlocked now play from the emote menu, from their `/emote` text command, and from hotbar macros — not only from `/hms emote`. Locked and owned emotes now respond identically to these native triggers during a session, and both are visible to other members. Emotes that are genuinely unusable in the moment — a standing-only emote while seated, say — are still correctly refused.
+- **Peaceful Solution Nine and Tuliyollal**: loading Solution Nine or Tuliyollal now hides the lingering event and post-battle debris, so both cities read clean and calm on a free-roam visit, in line with the other decluttered zones.
+
 ## [1.0.0.9] - 2026-08-08
 
 ### Added
@@ -140,6 +154,7 @@ Initial public release.
 - **Curated spawns** for every zone, with your own spawn points recorded via `/hms memo`.
 - **Optional integrations**: Glamourer for cosmetic visibility toggles, and Moniker for in-session nameplate changes.
 
+[1.0.1.0]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.1.0
 [1.0.0.9]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.9
 [1.0.0.8]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.8
 [1.0.0.7]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.7

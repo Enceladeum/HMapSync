@@ -25,6 +25,7 @@ public unsafe class StateCaptureService : IDisposable
     public struct MapStateSnapshot
     {
         public byte WeatherId;
+        public uint WeatherDonor;   // b183: day/night sky-graft donor tt (0 = static weather, no graft)
         public bool TimeForced;
         public ushort EorzeaHour;
         public byte EorzeaMinute;
@@ -311,6 +312,7 @@ public unsafe class StateCaptureService : IDisposable
             // mid-session peers converge. Non-host: MapState is default (epoch 0) and receivers ignore it (only the
             // host's stream carries a live epoch). Set via MapState.* by the plugin's map* command handlers.
             MapWeatherId = MapState.WeatherId,
+            MapWeatherDonor = MapState.WeatherDonor,
             MapTimeForced = MapState.TimeForced,
             MapEorzeaHour = MapState.EorzeaHour,
             MapEorzeaMinute = MapState.EorzeaMinute,

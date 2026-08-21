@@ -3,7 +3,7 @@
         <TargetFramework>net10.0-windows</TargetFramework>
         <LangVersion>latest</LangVersion>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-        <Version>1.0.0.9</Version>
+        <Version>1.0.1.0</Version>
         <AssemblyName>HMSync</AssemblyName>
         <RootNamespace>HMSync</RootNamespace>
         <Nullable>enable</Nullable>
@@ -26,6 +26,28 @@
              AllStages spawns came from). A venue absent here keeps its donor-territory fallback spawn (no regression).
              Regenerate per patch. -->
         <EmbeddedResource Include="cutscene-spawns.json" />
+        <!-- DEBRIS: TerritoryId-keyed op=None battle-debris hide set for Tuliyollal (y6t1, TT 1185). Its
+             MSQ-invasion debris is a single always-on (FilterOp=None) SharedGroup instance (y6t1_destory =
+             InstanceId 10757216, asset sgbg_y6t1_w1_des01.sgb) that the server hides by LayerId once the quest
+             clears. A serverless HMS load can't receive that toggle, so the debris shows; hiding that one SGB
+             (ApplyIdSet cascades to its children) restores the peaceful city. One InstanceKey per line;
+             compiled offline from xivtool lgb 1185. -->
+        <EmbeddedResource Include="y6t1.debris-hide.txt" />
+        <!-- DEBRIS: Solution Nine (x6t1, TT 1186) invasion-aftermath debris hide. The post-battle overworld
+             draws one aftermath SharedGroup (x6t1_battle_zoneshared, InstanceId 10399297, asset
+             sgbg_x6t1_q1_qic00.sgb) that the server toggles off by LayerId once the cleanup quest clears; a
+             serverless HMS load never gets that. Hide the SGB (ApplyIdSet cascades to children) for a peaceful
+             Solution Nine. One InstanceKey per line; compiled offline from xivtool lgb 1186. -->
+        <EmbeddedResource Include="x6t1.debris-hide.txt" />
+        <!-- WEATHER: shipped baked EnvState presets (weather id -> base64 of a 0x2F8 EnvState snapshot captured
+             under that weather on a donor zone). Embedding makes them sync-deterministic: every peer decodes
+             byte-identical blobs, so a host's crammed sky reproduces exactly on all clients. Regenerate per
+             patch only if the EnvState layout shifts. -->
+        <EmbeddedResource Include="weather-presets.json" />
+        <!-- WEATHER: the shipped day-night keyframe library backing the per-city day/night "City sky variants"
+             feature. Byte-identical for every peer so a fresh install's picker is fully populated and a future
+             graft-sync only needs to send (weather, donor). -->
+        <EmbeddedResource Include="keyframe-sets.json" />
     </ItemGroup>
 
     <ItemGroup>

@@ -130,6 +130,7 @@ public class HMSyncConfig : IPluginConfiguration
     // quickly across sessions. MapSettingsTerritory is the territory selected in the Map Settings tab dropdown.
     public uint MapSettingsTerritory { get; set; }         // selected territory in the Map Settings tab (0 = none)
     public byte MapWeatherId { get; set; }                 // 0 = default/atmospheric (valid)
+    public uint MapWeatherDonor { get; set; }              // b183: day/night sky-graft donor tt (0 = static weather, no graft)
     public bool MapTimeForced { get; set; }
     public ushort MapEorzeaHour { get; set; } = 12;
     public byte MapEorzeaMinute { get; set; }
@@ -216,6 +217,12 @@ public class HMSyncConfig : IPluginConfiguration
     public bool SayOpcodesVerified { get; set; } = false;
     public string SayOpcodesGameVersion { get; set; } = "";
     public bool ShowDebugCommands { get; set; }
+
+    // b185: drop section colliders (boss-arena fences, section gates, phase walls, NPC pens) automatically on every HMS
+    // map load, so a loaded scene is freely traversable with no command. Local preference (never synced). Reversible and
+    // persisted: /hms dropcolliders off restores them and clears this; on re-engages. Meshes remain (ghost-through);
+    // HMS-load scoped, never touches natural play. Default ON.
+    public bool AutoDropColliders { get; set; } = true;
 
     // Action-button / active-toggle accent, user-set in the Config tab. Gold by default. Neutral and Danger are fixed
     // in the UI; hover and text-on-accent are derived so any accent stays legible.

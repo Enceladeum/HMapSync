@@ -1780,6 +1780,141 @@ public unsafe class ZoneLoadService : IDisposable
         }
     }
 
+    // b181: UNIVERSAL free-traversal via section-collider drop (Fable brief 2026-08-19). Generalises the S228
+    // barrier-drop (which radius-filtered SharedGroups near spawn) into a whole-layout sweep of *every*
+    // InstanceType.CollisionBox (type 57, "generic collider" = invisible gameplay blockers: boss-arena fences,
+    // dungeon section gates, quest-phase walls, NPC pens). Same proven vfunc-37 SetColliderActive(false) lever the
+    // S228 ring-drop uses (physics off-switch with the game's own bookkeeping - NOT a PrefabFlags2 write, which
+    // corrupts SGs; see S312). CollisionBoxes are NEVER floors (walkable geometry is BgPart/terrain Mesh collision,
+    // a separate type + never in this bucket), so this can't drop the ground out from under the player. It does NOT
+    // touch SharedGroups, so timeline lifts/platforms (whose collider IS the floor) are never affected - the one
+    // hazard the brief flags belongs to Tier 2 (visible-mesh removal), not this.
+    //
+    // Pure client scene state: nothing persists, no file writes, no server-visible state (same out-of-bounds
+    // exposure as noclip, less - the floors stay real). Reversible: restore re-activates exactly the boxes we
+    // dropped (tracked by InstanceKey, so natively-inactive boxes are left alone). Layout is rebuilt per territory,
+    // so the master flag re-arms a post-load poll (boxes stream in over several frames - AnoMech's retry pattern).
+    // b185: master intent for the universal section-collider drop, mirrored from config (default ON), set by the plugin
+    // at init and toggled by DropCollidersCmd. When on, every HMS map load auto-engages the drop via
+    // MaybeReapplySectionColliders (HMS's own loader only - never natural play); /hms dropcolliders off clears it.
+    public bool AutoDropColliders { get; set; } = true;
+    internal bool sectionCollidersDropped;                       // master state - persists across zone hops while on
+    private readonly HashSet<uint> droppedSectionColliderKeys = new();  // boxes WE flipped off (for exact restore)
+    private bool sectionDropPollArmed;
+    private int sectionDropPollFrames;
+
+    // Sweep the active + global layout's CollisionBox bucket and set each box's collider active state. When dropping
+    // (active=false) only boxes currently active are flipped and recorded; when restoring (active=true) only the
+    // recorded boxes are re-activated (then the record clears). Returns the number toggled this call.
+    private unsafe int SweepSectionColliders(bool active)
+    {
+        var lw = LayoutWorld.Instance();
+        if (lw == null) return 0;
+        int toggled = 0;
+        if (active)
+        {
+            // Restore: re-activate exactly what we dropped. Walk both layouts, match by InstanceKey.
+            if (droppedSectionColliderKeys.Count == 0) return 0;
+            foreach (var layout in new[] { lw->ActiveLayout, lw->GlobalLayout })
+            {
+                if (layout == null) continue;
+                if (!layout->InstancesByType.TryGetValuePointer(InstanceType.CollisionBox, out var m) || m == null || m->Value == null)
+                    continue;
+                foreach (var kv in *m->Value)
+                {
+                    var inst = kv.Item2.Value;
+                    if (inst == null) continue;
+                    if (!droppedSectionColliderKeys.Contains(inst->Id.InstanceKey)) continue;
+                    inst->SetColliderActive(true);
+                    toggled++;
+                }
+            }
+            droppedSectionColliderKeys.Clear();
+            return toggled;
+        }
+        // Drop: deactivate every currently-active CollisionBox, recording its key so restore is exact.
+        foreach (var layout in new[] { lw->ActiveLayout, lw->GlobalLayout })
+        {
+            if (layout == null) continue;
+            if (!layout->InstancesByType.TryGetValuePointer(InstanceType.CollisionBox, out var m) || m == null || m->Value == null)
+                continue;
+            foreach (var kv in *m->Value)
+            {
+                var inst = kv.Item2.Value;
+                if (inst == null) continue;
+                if (!inst->IsColliderActive()) continue;      // leave natively-inactive boxes untouched
+                inst->SetColliderActive(false);
+                droppedSectionColliderKeys.Add(inst->Id.InstanceKey);
+                toggled++;
+            }
+        }
+        return toggled;
+    }
+
+    // Manual lever: `hms dropcolliders [on|off]`. on/(default) = drop all section colliders now + keep re-arming on
+    // zone load; off/restore = re-activate what we dropped + stop re-arming.
+    public void DropCollidersCmd(string? arg)
+    {
+        string a = (arg ?? "").Trim().ToLowerInvariant();
+        bool turnOff = a is "off" or "restore" or "show" or "0" or "false";
+        if (turnOff)
+        {
+            int restored = SweepSectionColliders(true);
+            sectionCollidersDropped = false;
+            AutoDropColliders = false;   // b185: a manual "off" also disables auto-engage on later loads (plugin persists to config)
+            if (sectionDropPollArmed) { framework.Update -= PollSectionColliderDrop; sectionDropPollArmed = false; }
+            log.Information("[HMSync] [DROPCOLLIDERS] OFF - re-activated " + restored + " section collider(s); auto-reapply disarmed.");
+            return;
+        }
+        sectionCollidersDropped = true;
+        AutoDropColliders = true;   // b185: a manual "on" re-enables auto-engage on later loads (plugin persists to config)
+        int dropped = SweepSectionColliders(false);
+        log.Information("[HMSync] [DROPCOLLIDERS] ON - dropped " + dropped + " section CollisionBox collider(s) (boss-arena fences / "
+            + "section gates / phase walls / NPC pens). Meshes remain (ghost-through). `hms dropcolliders off` restores.");
+        // Colliders can still be streaming in; keep sweeping for a few seconds so late boxes get caught too.
+        ArmSectionDropPoll();
+    }
+
+    // Called from LoadZone after an HMS map load: auto-engage the drop when AutoDropColliders is on (default), or keep
+    // re-arming it if a manual mid-session engage is active. Either way, re-arm the sweep for the freshly-built layout.
+    private void MaybeReapplySectionColliders()
+    {
+        if (!AutoDropColliders && !sectionCollidersDropped) return;   // b185: auto-engage by default, or honour a manual engage
+        sectionCollidersDropped = true;
+        droppedSectionColliderKeys.Clear();   // new layout = new instances; record fresh
+        ArmSectionDropPoll();
+    }
+
+    private void ArmSectionDropPoll()
+    {
+        sectionDropPollFrames = 300;  // ~5s backstop, mirrors the S228 barrier-release poll
+        if (!sectionDropPollArmed) { sectionDropPollArmed = true; framework.Update += PollSectionColliderDrop; }
+    }
+
+    // Per-frame: re-run the drop until it stops finding new boxes (streaming settled) or the backstop expires. Unlike
+    // the barrier-release one-shot, we keep the poll alive briefly to catch boxes that register a few frames apart,
+    // then disarm - the master flag itself persists, so the next zone re-arms via MaybeReapplySectionColliders.
+    private int sectionDropIdleFrames;
+    private void PollSectionColliderDrop(IFramework fw)
+    {
+        sectionDropPollFrames--;
+        try
+        {
+            int dropped = SweepSectionColliders(false);
+            if (dropped > 0) { sectionDropIdleFrames = 0; DiagLog("[HMSync] [DROPCOLLIDERS] +" + dropped + " late box(es)"); }
+            else sectionDropIdleFrames++;
+        }
+        catch (Exception ex) { log.Error("[HMSync] PollSectionColliderDrop threw: " + ex.Message); sectionDropPollFrames = 0; }
+
+        // Settled if no new boxes for ~30 frames (~0.5s), or backstop hit.
+        if (sectionDropIdleFrames >= 30 || sectionDropPollFrames <= 0)
+        {
+            framework.Update -= PollSectionColliderDrop;
+            sectionDropPollArmed = false;
+            sectionDropIdleFrames = 0;
+        }
+    }
+
     // that skipped the in-resolve [LGBCBOX] test - 1345 is curated so ResolveFromLgb never ran). Dumps
     // all PopRange + CollisionBox + the full type set so we can compare a DUNGEON (OOB PopRange, e.g.
     // 1345) vs a WORKING zone (inns/Senatus/Command Room - spawn correctly, so their PopRange is sane).
@@ -3059,6 +3194,86 @@ public unsafe class ZoneLoadService : IDisposable
             log.Information("[HMSync] [ADVANCE759] auto-advance: stream-in wait elapsed, driving zone " + territoryId + " to finished.");
             DriveAdv759("ADV759DRIVE-AUTO");
         }, delay: TimeSpan.FromMilliseconds(cfg.streamInMs));
+    }
+
+    // b178 was WRONG (corrected b179): it hid x6t1's `d_x6t1_dst01/02/04` as "destruction rubble", but `dst` = DISTRICT
+    // (Solution Nine's numbered districts) — those 740 BgParts are the city's own buildings, so the hide stripped
+    // integral superstructure. Confabulated "dst=destruction" from the abbreviation.
+    // b179 was ALSO WRONG about the FIX for 1186: it claimed the scorch was Match-keyed decals removable via
+    // ForcedCastKeys(276487). In-game `hms casttest 1186 276487` changed nothing — because the live-battle QIC_*_02 layers
+    // ARE Match key 280670 (the 1213 battle TT) and were ALREADY hidden at peaceful 1186 (key 276487); the cast key had
+    // nothing left to filter. b180 found the real culprit: the aftermath SharedGroup below. 1186 IS an instance-hide, like 1185.
+    private static readonly Dictionary<uint, (string idFile, int streamInMs)> TerritoryBattleHide = new()
+    {
+        // Tuliyollal (y6t1, TT 1185): the whole invasion-aftermath debris is ONE op=None SharedGroup instance,
+        // `y6t1_destory` (InstanceId 10757216, sgbg_y6t1_w1_des01.sgb). y6t1 has a single layer-set key, so no cast key
+        // can filter it — hide the SGB (ApplyIdSet cascades to its children) → the peaceful port city.
+        { 1185u, ("y6t1.debris-hide.txt", 3000) },
+        // Solution Nine (x6t1, TT 1186): the aftermath overlay is ONE SharedGroup instance, InstanceId 10399297
+        // (sgbg_x6t1_q1_qic00.sgb) in layer `x6t1_battle_zoneshared` (LayerId 280968, FilterOp=NoMatch key 280670 → draws in
+        // the peaceful 1186 overworld, hides only in the live 1213 battle). Server toggles it off by LayerId post-cleanup-quest;
+        // HMS never gets that. Hide the SGB (cascades to children) → peaceful Solution Nine. NOT a cast key (see note above).
+        { 1186u, ("x6t1.debris-hide.txt", 3000) },
+    };
+    // Cached per-territory id sets (loaded from the embed once). Keyed by the embed suffix.
+    private readonly Dictionary<string, HashSet<uint>> battleHideCache = new(StringComparer.Ordinal);
+
+    // b179: arm the territory op=None debris hide after the zone streams in. Mirrors MaybeAutoAdvance's post-load settle
+    // hook. No-op for a territory with no entry. Uses the proven ApplyIdSet core (all-slot flip + per-frame hold via
+    // PollHeldHide, so re-streamed debris stays hidden; SharedGroup children are cascaded) and then KillHiddenColliders so
+    // the invisible debris is also walkable. Reversible: `hms battlehide off`, `hms idshowall`, or `/hms stop`.
+    private void MaybeBattleHide(uint territoryId)
+    {
+        if (!TerritoryBattleHide.TryGetValue(territoryId, out var cfg)) return;
+        log.Information("[HMSync] [BATTLEHIDE] armed for zone " + territoryId + ": waiting " + cfg.streamInMs
+            + "ms for debris stream-in, then hiding the op=None debris id-set (peaceful city underneath).");
+        _ = framework.RunOnTick(() =>
+        {
+            if (CurrentLoadedZone != territoryId)
+            {
+                log.Information("[HMSync] [BATTLEHIDE] aborted (zone changed from " + territoryId + " to " + CurrentLoadedZone + " before stream-in settled).");
+                return;
+            }
+            ApplyBattleHide(territoryId, cfg.idFile);
+        }, delay: TimeSpan.FromMilliseconds(cfg.streamInMs));
+    }
+
+    // b179: load (cached) + apply a territory's op=None debris hide via the shared ApplyIdSet core, then kill the hidden
+    // debris' colliders so the peaceful city is walkable. Shared by MaybeBattleHide (auto) and `hms battlehide` (manual).
+    private void ApplyBattleHide(uint territoryId, string idFile)
+    {
+        if (!battleHideCache.TryGetValue(idFile, out var ids))
+        {
+            ids = LoadEmbeddedIds(idFile);
+            battleHideCache[idFile] = ids;
+        }
+        if (ids.Count == 0) { log.Warning("[HMSync] [BATTLEHIDE] id set '" + idFile + "' empty/missing — nothing hidden."); return; }
+        log.Information("[HMSync] [BATTLEHIDE] hiding " + ids.Count + " debris instance(s) for zone " + territoryId + " (" + idFile + ").");
+        ApplyIdSet(ids, true, "BATTLEHIDE");
+        int col = KillHiddenColliders();   // make the now-invisible debris walkable
+        log.Information("[HMSync] [BATTLEHIDE] done: " + col + " debris colliders disabled. Restore with `hms battlehide off` / `hms idshowall` / `/hms stop`.");
+    }
+
+    // b179: manual validation lever for the territory op=None debris hide. `hms battlehide` / `... on` re-applies the
+    // current zone's set (if any); `... off` restores. Lets a tester A/B the peaceful-vs-debris look without a reload,
+    // mirroring the casttest→ForcedCastKeys "measure before baking" discipline.
+    public void BattleHideCmd(string? arg)
+    {
+        string a = (arg ?? "").Trim().ToLowerInvariant();
+        if (a == "off" || a == "show" || a == "restore")
+        {
+            log.Information("[HMSync] [BATTLEHIDE] restoring (idshowall).");
+            ShowAllHidden();
+            return;
+        }
+        uint tt = CurrentLoadedZone;
+        if (!TerritoryBattleHide.TryGetValue(tt, out var cfg))
+        {
+            log.Information("[HMSync] [BATTLEHIDE] no battle-hide set for the loaded zone (" + tt + "). Known: "
+                + string.Join(",", TerritoryBattleHide.Keys) + ".");
+            return;
+        }
+        ApplyBattleHide(tt, cfg.idFile);
     }
 
     // b54: load an embedded newline/comma-delimited InstanceId set by resource-name suffix. b55: drop whole comment lines
@@ -5808,6 +6023,15 @@ public unsafe class ZoneLoadService : IDisposable
         // advance is the hide→show cycle and needs the geometry present to hide it (SetPosition above just fired; the
         // game streams the area in over the next few seconds). See MaybeAutoAdvance.
         MaybeAutoAdvance(territoryId);
+
+        // b179: hide always-on (op=None) MSQ-invasion debris (Tuliyollal 1185: the y6t1_destory SGB) so a serverless load
+        // pops the peaceful city instead of the mid-invasion aftermath. Same deferred stream-in gate as MaybeAutoAdvance —
+        // the debris must be present before ApplyIdSet can hide it. (b180: Solution Nine 1186 is now handled here too — it's
+        // an aftermath-SGB instance-hide like 1185, not a cast key; casttest 276487 was a no-op because the battle layers
+        // were already off at peaceful 1186.)
+        MaybeBattleHide(territoryId);
+        // b181: if the universal section-collider drop is armed, re-apply it to the freshly-rebuilt layout.
+        MaybeReapplySectionColliders();
     }
 
     /// <summary>

@@ -249,6 +249,10 @@ public class HostPayload
     // map's set rides the wire (peers are co-located with the host); per-map persistence is host-side config. Nullable +
     // new key index so older peers ignore it and a missing key decodes to null (= no granular hides).
     [Key(9)] public uint[]? HiddenNpcDataIds { get; set; }
+    // b183: day/night sky-graft donor territory. Non-zero = the current weather is a crammed graft keyed by this donor
+    // tt (peers march the same (weather, donor) on the Eorzea clock); 0 = static weather / no graft. New key index so
+    // older peers ignore it and a missing key decodes to 0 (= graceful static-weather fallback).
+    [Key(10)] public uint MapWeatherDonor { get; set; }
 }
 
 // ═══════════════════════ CONTROL + JOIN PAYLOADS (shared encode/decode surface) ═══════════════════════

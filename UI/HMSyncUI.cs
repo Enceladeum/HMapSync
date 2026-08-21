@@ -1319,9 +1319,9 @@ public class HMSyncUI
         {
             void Pick(byte wid)
             {
-                config.MapWeatherId = wid; config.Save();
-                MapSettings.ApplyWeather(wid);                       // LIVE
-                RunCommand?.Invoke("mapweather", wid.ToString());   // persist/broadcast on the host
+                config.MapWeatherId = wid; config.MapWeatherDonor = 0; config.Save();   // b183: a plain static pick has no day-night graft donor
+                MapSettings.SetWeatherOrGraft(wid, 0);              // LIVE — donor 0 falls to SetWeatherUnified AND stops any running graft
+                RunCommand?.Invoke("mapweather", wid.ToString());   // persist/broadcast on the host (donor omitted = 0)
             }
 
             if (ImGui.Selectable("None - Atmospheric", curW == 0)) Pick(0);
@@ -1335,27 +1335,53 @@ public class HMSyncUI
                     if (wid == 0 || wid == mapDefaultWeather) continue;
                     if (ImGui.Selectable(wname + "##w" + wid, wid == curW)) Pick(wid);
                 }
+
+            // v0.7.475 (2026-08-17): promote the LOADED ZONE'S NATIVE ENV-BANK states into the picker. WeatherRate
+            // lists only the weathers the game RANDOMLY rolls; a zone's env bank (EnvScene.WeatherIds[32], read live)
+            // carries MORE — trial/story "phase" weathers that render NATIVELY (in-bank → ApplyWeather is safe, no
+            // resource-loader fault) yet never appear in the rate table. Medias Res carries ~10 such states but
+            // WeatherRate shows only Fair Skies. These are NOT guessable exotics (that's the "extra presets" grid for
+            // FOREIGN weathers needing a cram) — they're native to THIS map, so they belong in the ordinary dropdown,
+            // shown for everyone. Deduped against everything already listed above; live-read so it tracks the loaded
+            // zone regardless of the sheet-derived mapWeatherChoices.
+            var wShown = new System.Collections.Generic.HashSet<byte> { 0 };
+            if (mapDefaultWeather != 0) wShown.Add(mapDefaultWeather);
+            if (mapWeatherChoices != null) foreach (var (wid, _) in mapWeatherChoices) wShown.Add(wid);
+            // Native-ONLY pick for promoted states: these render natively and must never fall through to the cram path.
+            // (Routing them through Pick/SetWeatherUnified caused the dark-map bug — see MapSettings.SetWeatherNativeOnly.)
+            void PickNative(byte wid)
+            {
+                config.MapWeatherId = wid; config.MapWeatherDonor = 0; config.Save();   // b183: promoted native state = static, no graft donor
+                MapSettings.StopKfGraft();               // a native-bank pick must not leave a city-variant graft running over it
+                MapSettings.SetWeatherNativeOnly(wid);
+                RunCommand?.Invoke("mapweather", wid.ToString());
+            }
+            bool bankHdr = false;
+            foreach (var bid in MapSettings.GetLoadedBankWeatherIds())
+            {
+                if (!wShown.Add(bid)) continue;   // already offered above
+                if (!bankHdr) { ImGui.Separator(); ImGui.TextDisabled("This map's states"); bankHdr = true; }
+                // Name (id): env-bank phases reuse generic names ("Fair Skies" ×N) — the id disambiguates distinct states.
+                if (ImGui.Selectable(MapSettings.WeatherName(bid) + " (" + bid + ")##wb" + bid, bid == curW)) PickNative(bid);
+            }
             ImGui.EndCombo();
         }
-        // Right-aligned "Show more presets" link toggling the non-native (experimental) weather chips.
-        {
-            string linkLabel = showAllWeather ? "Hide extra presets" : "Show more presets";
-            float lw = ImGui.CalcTextSize(linkLabel).X + ImGui.GetStyle().FramePadding.X * 2f;
-            float off = ImGui.GetContentRegionAvail().X - lw - PanelPad;
-            if (off > 0f) ImGui.SetCursorPosX(ImGui.GetCursorPosX() + off);
-            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0f, 0f, 0f, 0f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0f, 0f, 0f, 0f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0f, 0f, 0f, 0f));
-            ImGui.PushStyleColor(ImGuiCol.Text, Accent());
-            if (ImGui.SmallButton(linkLabel + "##showmore"))
-            { showAllWeather = !showAllWeather; if (showAllWeather) mapAllWeather = MapSettings.GetZoneWeathers(loadedZone, DebugMode?.Invoke() ?? false); }
-            ImGui.PopStyleColor(4);
-        }
+        // b177: the extra-preset grid is now a SET-ONCE COLLAPSIBLE (was a right-aligned "Show more presets" link). It's a
+        // wall of ~70 momentary cram chips you configure once, so it collapses out of the way of the day-to-day controls
+        // below. showAllWeather tracks the header's open state (kept as the field so the zone-hop invalidation at ~line 1245
+        // and the lazy rebuild below still key off it). b168: no longer DEBUG-gated — the cram/day-set feature is proven.
+        ImGui.Spacing();
+        showAllWeather = ImGui.CollapsingHeader("Extra presets##extrapresets");
+        // Rebuild the full list if it's on but was invalidated by a zone change (so the grid persists across hops).
+        if (showAllWeather && mapAllWeather == null) mapAllWeather = MapSettings.GetZoneWeathers(loadedZone, true);
         if (showAllWeather && mapAllWeather != null)
         {
             var extras = new System.Collections.Generic.List<(byte wid, string name)>();
             foreach (var (ewid, ename, elegal) in mapAllWeather)
-                if (!elegal && ewid != 0 && ewid != mapDefaultWeather) extras.Add((ewid, ename));
+                // b106: skip the bank-less six (91/36-39/83) — no env bank anywhere carries them, so they can never be
+                // baked or crammed; they'd sit as permanently-grey never-satisfiable chips. Uncapturable, not unbaked.
+                if (!elegal && ewid != 0 && ewid != mapDefaultWeather && !MapSettingsService.BankLessWeatherIds.Contains(ewid))
+                    extras.Add((ewid, ename));
             // v0.7.474: alphabetical, then by id. The natural order is the sheet's (grouped by id), which is a
             // fine data order and a poor reading order across ~70 chips. Note the game reuses names across ids
             // (three "Termination", two "Gales"), so identical labels now sit adjacent instead of scattered -
@@ -1368,25 +1394,124 @@ public class HMSyncUI
             float cavail = ImGui.GetContentRegionAvail().X;
             float cx = 0f; const float cgap = 6f;
             bool cfirst = true;
+            char curLetter = '\0';   // b168: A–Z section headers over the alphabetised grid (~70 chips is a wall otherwise)
             foreach (var e in extras)
             {
-                bool selc = e.wid == curW;
-                float cw = ImGui.CalcTextSize(e.name).X + ImGui.GetStyle().FramePadding.X * 2f;
+                // b168: a trailing "*" (after the closing bracket) marks weathers we have a day-night KEYFRAME set for —
+                // tapping one engages the graft (b170) and travels the sun through a full day, not just a fixed snapshot.
+                // b170: TRUTH-GATE via HasTimeMarchingSet (not merely HasKeyframeSet): a set only earns the "*" if its sky
+                // floats actually MOVE across the captured day. A flat donor capture (e.g. Kugane's static CutScene 59)
+                // has a stored set but no motion, so it no longer wears the "*" it couldn't honour — "as advertised".
+                bool hasKf = MapSettings.HasTimeMarchingSet(e.wid);
+                // Ask 3 (2026-08-16): show the id on the chip. The game reuses names across ids (three "Gales", two
+                // "Gloom"), which are genuinely DISTINCT weathers needing separate bakes — the bare label made them
+                // indistinguishable. "Name (id)" disambiguates them at a glance; ##wc{id} still keeps ImGui ids unique.
+                string clabel = e.name + " (" + e.wid + ")" + (hasKf ? "*" : "");
+
+                // b168: emit a letter header whenever the initial letter changes (the grid is alphabetised above). It
+                // sits on its own line; the next chip falls below it (cfirst reset), so each letter forms its own block.
+                char letter = e.name.Length > 0 ? char.ToUpperInvariant(e.name[0]) : '#';
+                if (letter != curLetter)
+                {
+                    curLetter = letter;
+                    if (!cfirst) ImGui.Spacing();               // gap between groups (not before the first)
+                    ImGui.TextDisabled(letter.ToString());
+                    cx = 0f; cfirst = true;
+                }
+
+                float cw = ImGui.CalcTextSize(clabel).X + ImGui.GetStyle().FramePadding.X * 2f;
                 if (!cfirst)
                 {
                     if (cx + cgap + cw > cavail - PanelPad) cx = 0f;   // wrap, leaving the right margin
                     else { ImGui.SameLine(0f, cgap); cx += cgap; }
                 }
-                var acc = Accent();
-                ImGui.PushStyleColor(ImGuiCol.Button, selc ? Darken(acc, 0.5f) : new Vector4(0.18f, 0.19f, 0.22f, 1f));
+                // Green tint for chips we have a baked preset for (they'll render via the crash-free restamp path);
+                // neutral otherwise (tapping still tries, and refuses cleanly if the zone can't back it and no preset).
+                // NB (b110): no "selected"/accent state here — every extra weather is a baked preset, so a stuck accent
+                // on the last-tapped chip only read as a frozen selection. The chip is a momentary action, not a toggle.
+                bool hasPreset = MapSettings.HasPreset(e.wid);
+                ImGui.PushStyleColor(ImGuiCol.Button, hasPreset ? new Vector4(0.16f, 0.28f, 0.18f, 1f) : new Vector4(0.18f, 0.19f, 0.22f, 1f));
                 ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.24f, 0.25f, 0.29f, 1f));
                 ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.24f, 0.25f, 0.29f, 1f));
-                ImGui.PushStyleColor(ImGuiCol.Text, selc ? Lighten(acc, 1.05f) : new Vector4(0.72f, 0.75f, 0.80f, 1f));
-                if (ImGui.Button(e.name + "##wc" + e.wid, new Vector2(cw, 0f)))
-                { config.MapWeatherId = e.wid; config.Save(); MapSettings.ApplyWeather(e.wid); RunCommand?.Invoke("mapweather", e.wid.ToString()); }
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.72f, 0.75f, 0.80f, 1f));
+                if (ImGui.Button(clabel + "##wc" + e.wid, new Vector2(cw, 0f)))
+                {
+                    config.MapWeatherId = e.wid; config.MapWeatherDonor = 0; config.Save();
+                    if (hasKf)
+                    {
+                        // b183: asterisked (genuinely-cycling) → engage the day-night graft locally AND broadcast it. The
+                        // keyframe library now ships EMBEDDED (b182), so donor 0 = "first available donor" resolves to the
+                        // SAME set on every peer, and the shared Eorzea clock drives an identical lerp → the crammed sky
+                        // travels the sun in lockstep. mapweather with no donor token broadcasts donor 0 (this general case).
+                        MapSettings.SetWeatherOrGraft(e.wid);
+                        RunCommand?.Invoke("mapweather", e.wid.ToString());
+                    }
+                    else
+                    { MapSettings.SetWeatherUnified(e.wid); RunCommand?.Invoke("mapweather", e.wid.ToString()); }
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip((MapSettingsService.AvfxSafeWeatherIds.Contains(e.wid)
+                        ? "Weather " + e.wid + " — avfx-safe: taps spawn its native doodads" + (hasPreset ? " under the crammed sky." : " (bake a preset for a correct sky under them).")
+                        : hasPreset
+                            ? "Weather " + e.wid + " — baked preset available; taps render it via the crash-free restamp path."
+                            : "Weather " + e.wid + " — native if this zone carries it, else bake a preset (wxbake on a donor) to cram it here.")
+                        + (hasKf ? "\n* has a day-night (time-march) set — travels the sun through a full day." : ""));
                 ImGui.PopStyleColor(4);
                 cx += cw;
                 cfirst = false;
+            }
+        }
+
+        // ── City sky variants (b175). Path I: the same spine weather (Clear Skies, Fog, Rain…) renders a subtly different
+        // sky per city, so wxkfcities captures a donor-TAGGED full-day keyframe set for each (weather × city) pair. Here we
+        // surface those as sub-chips grouped by weather: "Clear Skies → [Limsa] [Kugane] [Gridania] …". Tapping a city chip
+        // engages that specific donor's day-night graft (travels the sun through that city's full day). Only appears once
+        // wxkfcities has populated at least one cycling donor set — the section is invisible on a fresh install (no walls).
+        var cityWeathers = MapSettings.WeathersWithDonorVariants;
+        // b177: city sky variants are their own SET-ONCE COLLAPSIBLE (was an always-open TextDisabled block). Like the extra
+        // presets above, a city sky is something you pick once and leave; the collapsible keeps it from crowding the music /
+        // time controls below. The header only appears once wxkfcities has populated at least one cycling donor set.
+        if (cityWeathers != null && cityWeathers.Count > 0 && ImGui.CollapsingHeader("City sky variants##cityvariants"))
+        {
+            float dvAvail = ImGui.GetContentRegionAvail().X;
+            const float dvGap = 6f;
+            foreach (var w in cityWeathers)
+            {
+                var donors = MapSettings.TimeMarchingDonorsForWeather(w);   // only donors whose set actually cycles earn a chip
+                if (donors == null || donors.Count == 0) continue;
+                ImGui.TextDisabled(MapSettings.WeatherName(w));
+                float dvx = 0f; bool dvfirst = true;
+                foreach (var d in donors)
+                {
+                    // Chip label = the stored donor set name (e.g. "Limsa · Clear Skies"); fall back to the raw tt if unnamed.
+                    string dvName = MapSettings.DonorSetName(w, d) ?? ("tt" + d);
+                    string dvLabel = dvName;
+                    float dvw = ImGui.CalcTextSize(dvLabel).X + ImGui.GetStyle().FramePadding.X * 2f;
+                    if (!dvfirst)
+                    {
+                        if (dvx + dvGap + dvw > dvAvail - PanelPad) dvx = 0f;   // wrap, leaving the right margin
+                        else { ImGui.SameLine(0f, dvGap); dvx += dvGap; }
+                    }
+                    ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.16f, 0.24f, 0.28f, 1f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.22f, 0.30f, 0.34f, 1f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.22f, 0.30f, 0.34f, 1f));
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.74f, 0.80f, 0.84f, 1f));
+                    if (ImGui.Button(dvLabel + "##dv" + w + "_" + d, new Vector2(dvw, 0f)))
+                    {
+                        config.MapWeatherId = w; config.MapWeatherDonor = d; config.Save();
+                        // b183: engage this city's day-night graft locally AND broadcast (weather, donor). The keyframe
+                        // library ships embedded, so every peer re-engages the SAME donor set against the shared Eorzea
+                        // clock — the city sky travels the sun identically on all clients. mapweather carries the donor token.
+                        MapSettings.SetWeatherOrGraft(w, d);
+                        RunCommand?.Invoke("mapweather", w + " " + d);
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip(dvName + " — day-night graft: travels the sun through this city's full day.");
+                    ImGui.PopStyleColor(4);
+                    dvx += dvw;
+                    dvfirst = false;
+                }
+                ImGui.Spacing();
             }
         }
 
@@ -2205,6 +2330,13 @@ ImGui.Spacing();
                 CmdRow("/hms doordump", "door / EventObject inventory");
                 CmdRow("/hms roaddump", "road / path instance dump");
                 CmdRow("/hms vfxdump [term]", "VFX .avfx paths + suppression match");
+
+                ImGui.Spacing();
+                ImGui.TextDisabled("Weather");
+                // b134: setweather is an UNGATED prod verb (works with debug off), listed here purely for the
+                // record/reference. Applies any weather id on the current zone - native in-bank, or a crammed
+                // foreign sky/doodads via preset; when hosting it also broadcasts to peers.
+                CmdRow("/hms setweather <id>", "set any weather id (native or crammed); broadcasts to peers when hosting");
 
                 ImGui.Spacing();
                 ImGui.TextDisabled("Map reveal");

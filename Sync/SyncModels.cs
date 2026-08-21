@@ -253,6 +253,7 @@ public class TransformData
 
     // ── S326: map-state backbone (host-authoritative environment; broadcast + replayed to peers) ──
     [JsonPropertyName("msw")] public byte MapWeatherId { get; set; }     // forced weather (0 = default/atmospheric, valid)
+    [JsonPropertyName("msd")] public uint MapWeatherDonor { get; set; }  // b183: sky-graft donor tt (0 = static weather, no day/night graft)
     [JsonPropertyName("mst")] public bool MapTimeForced { get; set; }    // is the host holding Eorzea time?
     [JsonPropertyName("msh")] public ushort MapEorzeaHour { get; set; }  // 0..23 forced hour
     [JsonPropertyName("msm")] public byte MapEorzeaMinute { get; set; }  // 0..59 forced minute
@@ -386,7 +387,7 @@ public class TransformData
             // moniker
             MonikerName == o.MonikerName && MonikerHideFc == o.MonikerHideFc && MonikerHideName == o.MonikerHideName && MonikerHideTitle == o.MonikerHideTitle &&
             // map-state (host)
-            MapWeatherId == o.MapWeatherId && MapTimeForced == o.MapTimeForced &&
+            MapWeatherId == o.MapWeatherId && MapWeatherDonor == o.MapWeatherDonor && MapTimeForced == o.MapTimeForced &&
             MapEorzeaHour == o.MapEorzeaHour && MapEorzeaMinute == o.MapEorzeaMinute && MapBgmId == o.MapBgmId &&
             MapRemoveNpcs == o.MapRemoveNpcs && MapHideQuestSigns == o.MapHideQuestSigns && MapStateEpoch == o.MapStateEpoch &&
             // body-offset gate + standup + cosmetic toggles

@@ -46,6 +46,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     private readonly DeckFloorService deckFloor;   // v0.7.351: constructive collision - add box floor patches
     private readonly GPoseMountDrawService gposeMountDraw;   // v0.7.358: keep HMS mounts drawn in gpose
     private readonly SkillSyncService skillSync;   // COSM_1_016: cosmetic skill capture + peer replay
+    private readonly EmoteUnlockService emoteUnlock;   // NB-40: in-session ownership bypass so native triggers fire locked emotes
     private readonly InstalledPluginService installedPlugins;   // v0.7.371: Modules panel presence + open
     private readonly LocalStateDetector detector;
     private readonly MonikerService moniker;   // S328x: Moniker nameplate integration
@@ -57,6 +58,9 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     private readonly ActorVisibilityService actorVisibility;
     private readonly MapSettingsService mapSettings;   // S326: host-authoritative environment (time/weather/BGM/NPC)
     private readonly TimeFreezeService timeFreeze;      // S327f: Brio-style Eorzea-time freeze hook
+    private readonly WeatherCramService weatherCram;    // WEATHER-CRAM b96: Brio-style UpdateEnvironment restamp hook
+    private readonly WeatherPresetStore weatherPresets;  // WEATHER-CRAM Tier-1 b98: baked EnvState preset library
+    private readonly KeyframeSetStore keyframeSets;      // PATH I b163: durable day-night sky-graft keyframe library
     private readonly GlamourerIpc glamourer;   // S246: cosmetic visibility toggles via Glamourer (if installed)
     private readonly AfkNotificationSuppressor afkSuppressor;   // S250: hide duty AFK warning in-session only
     private readonly MountHudDismountService mountHudDismount;   // v0.7.339: click-to-dismount on the mount HUD icon
@@ -179,6 +183,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         });
         zoneLoad = new ZoneLoadService(objectTable, log, sigScanner, hooks, framework, dataManager);
         zoneLoad.DebugMode = config.ShowDebugCommands;      // v0.7.259: origin/map-hop notifications only in debug (must be AFTER construction)
+        zoneLoad.AutoDropColliders = config.AutoDropColliders;   // b185: auto-drop section colliders on every HMS map load (default ON)
         questSpoof = new QuestSpoofService(sigScanner, hooks, framework, dataManager, log);   // NB-19 read-spoof (hooks created disabled)
         zoneLoad.ArmQuestSpoof = questSpoof.ArmForZone;   // wire the virtual-load-only quest-populace spoof lifecycle
         zoneLoad.DisarmQuestSpoof = questSpoof.Disarm;
@@ -188,7 +193,10 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         emoteDiag = new EmoteDiagService(objectTable, framework, dataManager, log);
         actorVisibility = new ActorVisibilityService(objectTable, framework, log);
         timeFreeze = new TimeFreezeService(sigScanner, hooks, log);   // S327f: Brio-style time-freeze hook
-        mapSettings = new MapSettingsService(dataManager, log, timeFreeze, sigScanner);   // S326
+        weatherCram = new WeatherCramService(sigScanner, hooks, log);   // WEATHER-CRAM b96: Brio-style UpdateEnvironment restamp
+        weatherPresets = new WeatherPresetStore(pluginInterface, log);   // WEATHER-CRAM Tier-1 b98: baked EnvState preset library
+        keyframeSets = new KeyframeSetStore(pluginInterface, log);       // PATH I b163: durable day-night sky-graft keyframe library
+        mapSettings = new MapSettingsService(dataManager, log, timeFreeze, weatherCram, weatherPresets, keyframeSets, sigScanner);   // S326
         glamourer = new GlamourerIpc(pluginInterface);   // S246: optional Glamourer routing for visibility toggles
         // S248: when Glamourer reports ANY actor's state changed, mark badges dirty. The refresh
         // (main thread) reads the LOCAL player's state - we don't need to match the address here;
@@ -224,6 +232,12 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         installedPlugins = new InstalledPluginService(pluginInterface);
         skillSync = new SkillSyncService(log, hooks, () => relay.IsSessionActive);
         skillSync.Init();
+        // NB-40: open the game's NATIVE emote path (/wave, emote menu, hotbar) to fire LOCKED emotes in session,
+        // the last asymmetry vs `/hms emote`. Two guards let the command reach its executor, then an executor
+        // redirect diverts a genuinely-locked in-session play to HMS's own force-play (TryForcePlayLockedEmote) -
+        // the identical client-force path `/hms emote <locked>` uses. Session-gated, SelfCall-immune, firewall-covered.
+        emoteUnlock = new EmoteUnlockService(log, hooks, () => relay.IsSessionActive, TryForcePlayLockedEmote);
+        emoteUnlock.Init();
         stateCapture.SkillCastSupplier = () => (skillSync.PendingActionId, skillSync.PendingActionType,
                                                 skillSync.PendingActionEpoch, skillSync.PendingActionTarget,
                                                 skillSync.PendingActionTargetCid);
@@ -288,6 +302,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             // live environment if a map is actually loaded here - never in the open world. Weather/time/BGM applied;
             // NPC-removal is still a held flag (despawn functionality pending).
             mapSettings.WeatherId = td.MapWeatherId;
+            mapSettings.WeatherDonor = td.MapWeatherDonor;   // b183: pair the graft donor so Reassert/late-join can re-engage the day-night sky
             mapSettings.TimeForced = td.MapTimeForced;
             mapSettings.EorzeaHour = td.MapEorzeaHour;
             mapSettings.EorzeaMinute = td.MapEorzeaMinute;
@@ -304,7 +319,29 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 // legitimately land. Since the host now ships the sky it is actually rendering (PushMapState
                 // reads live EnvManager), there is nothing here left to resolve - re-deriving would reintroduce
                 // exactly the host/peer divergence both guards were written to prevent.
-                mapSettings.ApplyWeather(td.MapWeatherId);   // idempotent write, safe to repeat; 0 is meaningful
+                // b127 - ROUTE THROUGH THE UNIFIED LEVER, not native-only. The old ApplyWeather() here only ever did a
+                // NATIVE write, so when the host picked a FOREIGN weather (a crammed sky, or a doodad weather like 149),
+                // the peer native-applied an off-bank id → void/black sky and NO doodads: "the extra weather doesn't sync."
+                // SetWeatherUnified takes the SAME verbatim id and routes it exactly as the host did — in-bank/0 → native
+                // (clearing any stale cram), foreign preset → sky cram, foreign doodad → full re-establish (subject to this
+                // peer's own DoodadsAllowedFor gate: 207/208 always refused, others when `wxdoodall on` or proven-safe). It
+                // does NOT re-derive the id (the divergence guard above still holds), it just applies the host's pick with
+                // the full effects machinery instead of the native-only stub. Return string ignored (no chat spam).
+                // b183: DONOR-AWARE routing. SetWeatherOrGraft(id, donor) subsumes the old SetWeatherUnified path exactly
+                // when donor==0 (falls straight through to SetWeatherUnified — the verbatim static route). When the host
+                // ships a day/night city sky (donor = a marching keyframe set's tt), the SAME embedded graft engages here:
+                // every peer lerps the identical keyframe pair against the shared Eorzea clock, so the crammed sky travels
+                // the sun in lockstep. Non-marching donor falls back to static automatically (SetWeatherOrGraft guard).
+                // b184: only (re)engage the weather/graft on an ACTUAL (weather,donor) change. A host time-slider drag bumps
+                // the epoch every frame → this receiver fires every frame; re-calling SetWeatherOrGraft each time would
+                // StopKfGraft+ImportKeyframes+SetKfReplay per frame (graft restart thrash). Guarding on change mirrors the BGM
+                // latch below. Time still applies unconditionally beneath, so the graft interpolates to the new tod each frame.
+                if (td.MapWeatherId != lastAppliedPeerWeather || td.MapWeatherDonor != lastAppliedPeerDonor)
+                {
+                    mapSettings.SetWeatherOrGraft(td.MapWeatherId, td.MapWeatherDonor);   // verbatim id + graft donor; 0/0 == prior static behavior
+                    lastAppliedPeerWeather = td.MapWeatherId;
+                    lastAppliedPeerDonor = td.MapWeatherDonor;
+                }
                 // Single time path: freeze at the host's time when held, release to the real clock when not.
                 if (td.MapTimeForced) mapSettings.ApplyTime(td.MapEorzeaHour, td.MapEorzeaMinute);
                 else mapSettings.DisableTimeOverride();
@@ -589,6 +626,63 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // Apply an in-progress teleport for a few frames so the engine's re-grounding doesn't revert it.
         if (teleportHoldFrames > 0 && teleportHoldTarget.HasValue) { ApplyTeleportHold(); teleportHoldFrames--; }
 
+        // b140 Path I: hold the donor-bank handle swap in EnvSpace+0x90 against any per-frame zone reassert (no-op unless
+        // a wxcyclecram is active). Runs before the zone-change clear below so a real hop still tears it down cleanly.
+        weatherCram.TickCycleCram();
+        // b149 Path I: hold the swapped sky cubemap in EnvLocation+0x98/+0xA8 against any zone re-pin (no-op unless a
+        // wxskyswap is active). Same lifetime discipline as the cram: torn down on the native zone change below.
+        weatherCram.TickSkySwap();
+        weatherCram.TickAmbientSwap();   // b152: hold the swapped ambient set in EnvLocation+0x90/+0xA0 (no-op unless active)
+        weatherCram.TickStarForce();     // b155: hold the forced StarRenderer intensity params (no-op unless active)
+        mapSettings.TickNativeSkyVerify(); // b173: deferred black-sky check after a native weather pick (no-op unless armed)
+
+        // WEATHER-CRAM safety disarm (b105): a foreign restamp is a per-frame override that must not bleed across a REAL
+        // zone change (aetheryte/gate/death) — HMS's own DoLoad already clears it on virtual hops, but a native zone
+        // change has no such seam, so a stuck dark donor sky would ride into the new map. Poll clientState.TerritoryType
+        // and drop any active replay the moment the real zone changes. Cram is never auto-armed on load (manual/chip
+        // only), so clearing here can only prevent a stale override, never cancel an intended one.
+        {
+            uint ttNow = clientState.TerritoryType;
+            if (ttNow != lastCramTerritory)
+            {
+                lastCramTerritory = ttNow;
+                if (weatherCram.ReplayActive) { weatherCram.SetReplay(false); log.Information("[HMSync] [WXCRAM] auto-cleared restamp on zone change → " + ttNow); }
+                // b140: a real zone change frees the old EnvScene/EnvSpaces — our swapped handle pointer would dangle.
+                // Tear the cycle cram down on any native hop (the swapped slot belongs to the departing zone's graph).
+                if (weatherCram.CycleActive) { weatherCram.StopCycleCram(); log.Information("[HMSync] [WXCYCLE] auto-cleared handle swap on zone change → " + ttNow); }
+                // b149: the swapped sky cubemap belongs to the departing zone's EnvLocation graph — restore before the hop.
+                if (weatherCram.SkyActive) { weatherCram.RestoreSkyCubemap(); log.Information("[HMSync] [WXSKY] auto-cleared cubemap swap on zone change → " + ttNow); }
+                // b152: same for the swapped ambient set.
+                if (weatherCram.AmbientActive) { weatherCram.RestoreAmbientSet(); log.Information("[HMSync] [WXSKY] auto-cleared ambient swap on zone change → " + ttNow); }
+                // b155: the forced StarRenderer params belong to the departing scene — restore on the hop.
+                if (weatherCram.StarForceActive) { weatherCram.StopStarForce(); log.Information("[HMSync] [WXSTAR] auto-cleared star-force on zone change → " + ttNow); }
+                // b162: the keyframe graft restamps the departing zone's EnvState — drop it on the hop like the siblings
+                // above. KEEPS the captured set (the donor→target travel flow needs it to survive); only the graft stops.
+                if (mapSettings.StopKfGraftForZoneChange()) log.Information("[HMSync] [WXKF] auto-cleared keyframe graft on zone change → " + ttNow);
+                // b166: the whole-city tour must stay in the donor zone (it walks that bank's weathers). A native hop
+                // aborts it — the swept-so-far sets are already persisted, so cancelling just stops mid-list cleanly.
+                if (mapSettings.KeyframeTourActive) log.Information("[HMSync] [WXKFTOUR] " + mapSettings.CancelKeyframeTour() + " (zone change → " + ttNow + ")");
+            }
+        }
+
+        // WEATHER session-end sanitise (b113): the zone-change poll above only drops a CRAM override, never a NATIVE
+        // ActiveWeather write (setweather/wxnative/wxtrans) — which is what left a forced sky bleeding into the apartment
+        // past session end. On the logged-in→out transition, sanitise fully (disarm cram + reset ActiveWeather to a
+        // natural weather). IsLoggedIn is a stable bool across Dalamud versions, so we poll it rather than binding the
+        // version-variant Logout event.
+        {
+            bool loggedIn = clientState.IsLoggedIn;
+            if (wasLoggedIn && !loggedIn)
+            {
+                mapSettings.SanitiseWeather();
+                // b162: SanitiseWeather reverts ActiveWeather + cram but NOT the keyframe graft — which was persisting
+                // across logout/login (the reported "wxkfclear persists between sessions" bug). Fully reset it here.
+                mapSettings.ResetKeyframeGraftForSession();
+                log.Information("[HMSync] weather sanitised on logout.");
+            }
+            wasLoggedIn = loggedIn;
+        }
+
         actorVisibility.Update();
         npcVisibility.Update();   // S328aa: persistent NPC re-scan (NPCs stream in by proximity like furniture)
 
@@ -783,6 +877,10 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     // the environment has finished loading). Called after a successful load/host-load.
     private int mapReassertCountdown;    private int guestMapReapplyCountdown;   // S327j: after a guest zone-load, force map-state (held time) re-apply
     private uint lastAppliedPeerBgm;   // S327g: guest-side last-applied BGM id (idempotent apply - don't restart music every epoch bump)
+    private int lastAppliedPeerWeather = -1;   // b184: guest-side last-applied (weather,donor) — idempotent graft engage so a host time-drag
+    private uint lastAppliedPeerDonor = uint.MaxValue;   //       (epoch bump every frame) doesn't re-import the keyframe set / restart the graft each frame
+    private uint lastCramTerritory = uint.MaxValue;   // b105: last-seen real TerritoryType, for the weather-cram auto-disarm on zone change
+    private bool wasLoggedIn;   // b113: prior-frame login state, for the session-end weather sanitise on logout
     private bool filterDropHandled;   // S326h: latch so the packet-filter-drop emergency return fires once
     private void ArmMapReassert() => mapReassertCountdown = 150;
 
@@ -1053,6 +1151,47 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 zoneLoad.SelectStageState(arg);
                 chat.Print("[HMSync] stagestate " + (string.IsNullOrWhiteSpace(arg) ? "(cycle)" : arg.Trim())
                     + " - check [STAGEHIDE] in /xllog.");
+                break;
+            case "battlehide":
+                // b178: real-zone battle-rubble hide. Solution Nine (1186) / Tuliyollal (1185) auto-arm on load; this is the
+                // manual A/B lever. No arg / "on" re-applies the loaded zone's destruction id-set (reveals the peaceful city);
+                // "off" restores.
+                zoneLoad.BattleHideCmd(arg);
+                chat.Print("[HMSync] battlehide " + (string.IsNullOrWhiteSpace(arg) ? "(on)" : arg.Trim())
+                    + " - check [BATTLEHIDE] in /xllog.");
+                break;
+            case "dropcolliders":
+                // b181: universal free-traversal via section-collider drop (Fable brief). No arg / "on" drops every
+                // InstanceType.CollisionBox (boss-arena fences, section gates, phase walls, NPC pens) in the layout and
+                // keeps re-arming on zone load; "off" restores exactly what was dropped. Meshes remain (ghost-through).
+                zoneLoad.DropCollidersCmd(arg);
+                config.AutoDropColliders = zoneLoad.AutoDropColliders;   // b185: persist the on/off choice across restarts
+                config.Save();
+                chat.Print("[HMSync] dropcolliders " + (string.IsNullOrWhiteSpace(arg) ? "(on)" : arg.Trim())
+                    + " - check [DROPCOLLIDERS] in /xllog.");
+                break;
+            case "setweather":
+                // UNIFIED weather lever (/hms setweather <id>): the SINGLE user-facing verb. The user doesn't care
+                // whether the id is native to this zone or a foreign cram — SetWeatherUnified routes it: in-bank ids
+                // (and 0) apply natively (clearing any active restamp first); foreign ids with a baked preset render
+                // via the crash-free restamp path; foreign ids with no preset are refused with a bake redirect.
+                // b134: BROADCAST when hosting. The local apply is unconditional (host or solo), but if this client
+                // holds map authority we ALSO fold the pick into map-state and PushMapState it verbatim, so peers see
+                // the crammed sky/doodads via their line-341 SetWeatherUnified receipt path — which is NOT gated by the
+                // peer's own debug mode (only by their DoodadsAllowedFor: 207/208 land sky-only, crash-free). This makes
+                // setweather a first-class synced lever like the picker, instead of a host-only local preview.
+                if (byte.TryParse(arg, out var swid))
+                {
+                    var swResult = mapSettings.SetWeatherUnified(swid);
+                    if (relay.HasMapAuthority)
+                    {
+                        config.MapWeatherId = swid; config.MapWeatherDonor = 0;   // b183: manual setweather is a static pick — no day-night graft donor
+                        PushMapState(swid, 0);   // verbatim id, donor 0 → peers apply via SetWeatherOrGraft(id,0)=static (full-effects, un-gated)
+                        chat.Print(swResult + " Displayed now: " + mapSettings.GetActiveWeather() + ". Broadcast to peers.");
+                    }
+                    else chat.Print(swResult + " Displayed now: " + mapSettings.GetActiveWeather() + ".");
+                }
+                else chat.Print("[HMSync] usage: /hms setweather <id>  (integer weather id 0-255).");
                 break;
             case "status": DoStatus(); break;
             case "senddiag":
@@ -1867,7 +2006,23 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // while the host sees sunny skies" desync. Map load resets everyone to the zone default; subsequent
         // host picks sync as before.
         config.MapWeatherId = 0;    // pick does not carry across loads
+        config.MapWeatherDonor = 0; // b183: the day/night graft donor is per-scene too — don't ride into the new zone
         mapSettings.WeatherId = 0;  // service copy too, so post-load Reassert resolves the NEW zone's default
+        mapSettings.WeatherDonor = 0;
+        // WEATHER-CRAM (2026-08-16): a crammed foreign sky (WeatherCramService restamp) must NOT ride across a map
+        // change. The restamp hook keeps stamping the captured donor block every frame regardless of zone, so without
+        // this the new map loads under the old zone's crammed sky (user report: "not cleared by map change"). Stop the
+        // replay on load; the new zone's native recompute then owns the sky. (No-op if nothing was replaying.)
+        mapSettings.ClearPreset();
+        // b171: the b170 keyframe day-night GRAFT is a SEPARATE per-frame override from the static cram above — ClearPreset
+        // only stops ReplayActive (the static restamp), not kfActive (the day-night graft). Like the static cram, the graft
+        // restamps EnvState every frame regardless of zone, so without this a chip-tapped travelling-sun sky rode into the
+        // next virtual map (operator report: "weather doesn't reset between weathers on a map hop"). Stop the graft here
+        // exactly as the native zone-change poll does (StopKfGraftForZoneChange) — it KEEPS the captured set so the
+        // donor→target travel flow (wxkfload → hop → wxkfreplay) still works; only the live graft stops. Once the override
+        // is gone the pick-reset above + post-load reassert resolve the NEW zone's own default sky, which IS the "cycle to
+        // the map's default weather on a map hop" behaviour the operator asked for.
+        mapSettings.StopKfGraftForZoneChange();
         // NB-39: hand the reassert the active cutscene stage bg so it resolves the load-time native weather from the
         // STAGE's own authored .lvb, not the borrowed donor territory (interior donor = weather 0 = the "cutscenes all
         // pop as None/atmospheric" bug). null on a plain zone load → unchanged donor/TT resolution.
@@ -1882,6 +2037,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         config.MapBgmId = 0;   // 0 = follow the zone's natural/default music (no forced override)
         mapSettings.BgmId = 0; // S327v: reset the service copy too so post-load Reassert resolves the NEW zone default
         lastAppliedPeerBgm = 0;
+        lastAppliedPeerWeather = -1; lastAppliedPeerDonor = uint.MaxValue;   // b184: clear the graft-engage latch so the NEW zone re-applies its (weather,donor) fresh
 
         // v0.7.332: if this load is a cutscene stage (ActiveStageBg set by CutsceneStageService.LoadStage), carry the
         // stage bg path + name so peers run the same donor-load-with-bg-swap instead of loading only the donor territory.
@@ -1947,6 +2103,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // the host's live state reset on zone load. Reset regardless of whether it was the weather-bug cause - a
         // set-but-never-reset value is a latent cross-session leak. Neutral defaults mirror the config initializers.
         config.MapWeatherId = 0;         // 0 = default/atmospheric
+        config.MapWeatherDonor = 0;      // b183: clear the day/night graft donor (cross-session leak guard)
         config.MapTimeForced = false;
         config.MapEorzeaHour = 12;       // config default is noon, not 0
         config.MapEorzeaMinute = 0;
@@ -1960,9 +2117,29 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         packetFilter.PassSayChatOut = false; // S328k: stop passing outbound chat once the session ends
         relay.SoloMode = false;              // S328f: clear solo flag on any teardown (stop/leave/crash all route here)
         mapSettings.DisableTimeOverride();   // S326v: never leave the player's clock frozen after a session ends
+        mapSettings.ToggleWxReplay(false);   // WEATHER-CRAM b97: never leave a crammed foreign sky replaying after a session ends
+        // b156 AMBIENT-BLEED FIX: the handle-swap crams (wxcyclecram/wxskyswap/wxambswap/wxstarforce, incl. wxcity) are held
+        // per-frame by their Tick* holders and are NOT covered by ToggleWxReplay above (that's the OLD b97 restamp cram, a
+        // different mechanism). If not torn down HERE — before zoneLoad.Revert() below reloads the origin zone — ambActive
+        // stays true across the return, so TickAmbientSwap crams the donor ambient into the returning apartment's fresh
+        // EnvLocation, stranding it there (the "apt immersed in new ambient light" bleed). The per-frame territory poll only
+        // catches this a few frames too late. Tear all four down now, in reverse-arm order (mirror of the zone-change poll).
+        if (weatherCram.StarForceActive) weatherCram.StopStarForce();
+        if (weatherCram.AmbientActive)  weatherCram.RestoreAmbientSet();
+        if (weatherCram.SkyActive)      weatherCram.RestoreSkyCubemap();
+        if (weatherCram.CycleActive)    weatherCram.StopCycleCram();
+        // b171: the b170 keyframe day-night GRAFT is covered by NONE of the teardowns above — ToggleWxReplay(false) stops
+        // the static restamp cram, and the four Stop*/Restore* calls handle the handle-swap crams; the graft (kfActive) is
+        // a third, independent per-frame override. Left active, it keeps restamping EnvState and bleeds the grafted sky into
+        // the RETURNING apartment the moment Revert() (below) reloads the origin zone — the exact "sanitise on exit
+        // regardless of what it is" gap the operator flagged. Full-reset it here (mirrors the logout sanitise): stop the
+        // graft, cancel any in-flight sweep, and drop the in-memory set. The saved keyframe LIBRARY persists on disk, so a
+        // re-host re-grafts instantly via a chip tap / wxkfload — nothing durable is lost.
+        mapSettings.ResetKeyframeGraftForSession();
         mapSettings.RestoreBgm();            // S327s: release our forced BGM so the real zone's music resumes (not a stuck synthetic track)
         config.MapBgmId = 0;                 // S327v: clear the stored pick so a re-host starts from the zone default, not a stale custom track
         lastAppliedPeerBgm = 0;              // S327s: clear the latch so a re-join re-engages BGM cleanly
+        lastAppliedPeerWeather = -1; lastAppliedPeerDonor = uint.MaxValue;   // b184: same for the graft-engage latch
 
         stateCapture.Stop();
         stateApply.Stop();
@@ -3382,7 +3559,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     // applies locally on the host so the host sees it immediately, and saves. Peers apply on receipt (StateApplyService).
     /// <param name="weatherOverride">The weather the host JUST picked, passed verbatim. See the note below on why
     /// an explicit pick must not be read back from the engine.</param>
-    private void PushMapState(byte? weatherOverride = null)
+    private void PushMapState(byte? weatherOverride = null, uint? donorOverride = null)
     {
         // Mirror config → capture holder and bump the epoch. Called by every map* handler after it updates config.
         // SINGLE-AUTHORITY WEATHER - v0.7.475: BROADCAST REALITY, NOT INTENT.
@@ -3419,10 +3596,25 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // debug id) - we already know the intent, there is nothing to read back. Every other caller (map load,
         // time, BGM, host succession) pushes state that has been settled for many frames, where the live read is
         // both accurate and the thing that keeps host and peer from resolving independently.
+        // b183: day/night sky-graft donor. Explicit pick passed verbatim (a city sky-variant chip); else the stored donor.
+        // 0 = static weather (no graft), the default for every plain weather pick. Peers re-engage the SAME embedded graft.
+        // b184: resolve the donor BEFORE the weather — a live graft changes how "reality" must be read (see below).
+        uint effectiveDonor = donorOverride ?? config.MapWeatherDonor;
         byte effectiveWeather;
         if (weatherOverride.HasValue)
         {
             effectiveWeather = weatherOverride.Value;
+        }
+        else if (effectiveDonor != 0)
+        {
+            // b184 FIX — a day/night graft is active. The "broadcast reality" rule (read GetActiveWeather) is WRONG here:
+            // SetWeatherOrGraft's marching branch only LoadKeyframeSet+SetKfReplay — it NEVER writes the displayed weather
+            // byte (EnvManager+0x26), so GetActiveWeather() returns the NATIVE byte, not the crammed intent. On a
+            // non-override re-push (every host time-slider drag / freeze / unfreeze routes through SetHostTime→PushMapState()
+            // with no override), shipping that native byte made the peer re-apply SetWeatherOrGraft(nativeByte, donor);
+            // IsTimeMarching(nativeByte, donor) fails → StopKfGraft → the peer's sky freezes while the host keeps marching.
+            // For a graft the truth is the (weather, donor) INTENT, so broadcast the stored crammed id.
+            effectiveWeather = config.MapWeatherId;
         }
         else if (zoneLoad.IsZoneLoaded)
         {
@@ -3437,6 +3629,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 effectiveWeather = mapSettings.GetDefaultWeather(zoneLoad.CurrentLoadedZone);
         }
         stateCapture.MapState.WeatherId = effectiveWeather;
+        stateCapture.MapState.WeatherDonor = effectiveDonor;
         stateCapture.MapState.TimeForced = config.MapTimeForced;
         stateCapture.MapState.EorzeaHour = config.MapEorzeaHour;
         stateCapture.MapState.EorzeaMinute = config.MapEorzeaMinute;
@@ -3455,6 +3648,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         stateCapture.MapState.Epoch++;
         // Keep the service's own copy in sync (used by Reassert after a load).
         mapSettings.WeatherId = effectiveWeather;
+        mapSettings.WeatherDonor = effectiveDonor;
         mapSettings.TimeForced = config.MapTimeForced;
         mapSettings.EorzeaHour = config.MapEorzeaHour;
         mapSettings.EorzeaMinute = config.MapEorzeaMinute;
@@ -3478,13 +3672,21 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     private void DoMapWeather(string? arg)
     {
         if (!relay.HasMapAuthority) { chat.Print("[HMSync] Only the host can set map weather."); return; }
-        if (!byte.TryParse(arg?.Trim(), out var wid)) { chat.Print("[HMSync] Usage: /hms mapweather <id> (0 = None/atmospheric)."); return; }
+        // b183: optional second token = day/night sky-graft donor tt ("mapweather <id> <donor>"). Absent/0 = static weather
+        // (the plain manual case). The UI's city sky-variant chip passes the donor so the graft engages + broadcasts.
+        var toks = (arg ?? "").Trim().Split(new[] { ' ' }, System.StringSplitOptions.RemoveEmptyEntries);
+        if (toks.Length == 0 || !byte.TryParse(toks[0], out var wid))
+        { chat.Print("[HMSync] Usage: /hms mapweather <id> [donor] (0 = None/atmospheric)."); return; }
+        uint donor = 0;
+        if (toks.Length > 1) uint.TryParse(toks[1], out donor);
         config.MapWeatherId = wid;
+        config.MapWeatherDonor = donor;
         // v0.7.475: apply BEFORE PushMapState. PushMapState now broadcasts the LIVE sky, so pushing first would
         // ship the PREVIOUS weather and every change would land on peers exactly one pick late. (The UI's Pick()
         // already applied-then-broadcast; this path was the odd one out.)
-        if (MapApplyLive) mapSettings.ApplyWeather(wid);   // apply live only in-session on a loaded map
-        PushMapState(wid);   // verbatim: the pick is intent, not something to read back off a lagging engine field
+        // b183: route the live host apply through the donor-aware graft lever so the host sees the same day/night sky it ships.
+        if (MapApplyLive) mapSettings.SetWeatherOrGraft(wid, donor);   // apply live only in-session on a loaded map
+        PushMapState(wid, donor);   // verbatim: the pick is intent, not something to read back off a lagging engine field
         if (config.ShowDebugCommands) chat.Print("[HMSync] Map weather set to " + mapSettings.WeatherName(wid) + (MapApplyLive ? "." : " (saved, applies on map load)."));
     }
 
@@ -3812,7 +4014,49 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     //      PlayTimeline (not PlayActionTimeline) so the id lands in TimelineIds[0] where the detector reads it.
     // All client-side only; the resulting state is read by LocalStateDetector and synced through the normal
     // capture → ApplyEmoteFromSheet pipeline.
+    // NB-40 wrapper: HMS's own emote play must judge on GENUINE ownership, exactly as prod does - but
+    // EmoteUnlockService hooks UIState.IsEmoteUnlocked / EmoteManager.CanExecuteEmote to lie "unlocked/usable" in
+    // session so the game's NATIVE emote path (/confirm etc.) fires locked emotes. Those hooks honour a SelfCall
+    // flag: while it's set they return the truth. Setting it across this whole method makes the spoof invisible
+    // to HMS's own branch selection (so `hms emote <locked>` keeps taking its proven force-play path) while
+    // leaving the spoof active for the game's own reads. One flag, no per-read plumbing.
     private unsafe void PlayResolvedEmote(ushort emoteId, ushort introTl, ushort loopTl, string label)
+    {
+        emoteUnlock.SelfCall = true;
+        try { PlayResolvedEmoteCore(emoteId, introTl, loopTl, label); }
+        finally { emoteUnlock.SelfCall = false; }
+    }
+
+    // NB-40: force-play a GENUINELY-LOCKED emote by id through HMS's own client-force path. Called from
+    // EmoteUnlockService's executor redirect when a native trigger (/confirm, emote menu, hotbar) fires a locked
+    // emote in-session - the game's own executor would refuse it silently, so we resolve its timelines (exactly as
+    // DoEmote does: intro = ActionTimeline[1], loop = ActionTimeline[0]) and drive PlayResolvedEmote, which takes
+    // the proven direct-play branch for locked emotes. Returns true when it dispatched a play (the redirect then
+    // suppresses the engine's refusing executor). Runs on the framework thread (the executor detour does).
+    // PlayResolvedEmote sets SelfCall, so this never re-enters the redirect.
+    private unsafe bool TryForcePlayLockedEmote(ushort emoteId)
+    {
+        try
+        {
+            var sheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.Emote>();
+            var row = sheet?.GetRowOrDefault(emoteId);
+            if (row == null) return false;
+            ushort introTl = (ushort)row.Value.ActionTimeline[1].RowId;
+            ushort loopTl = (ushort)row.Value.ActionTimeline[0].RowId;
+            string label = row.Value.Name.ToString();
+            if (string.IsNullOrEmpty(label)) label = "#" + emoteId;
+            config.PushRecentEmote(emoteId);
+            PlayResolvedEmote(emoteId, introTl, loopTl, label);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            log.Error("[HMSync] [EMOTE-REDIR] force-play failed for id=" + emoteId + ": " + ex.Message);
+            return false;
+        }
+    }
+
+    private unsafe void PlayResolvedEmoteCore(ushort emoteId, ushort introTl, ushort loopTl, string label)
     {
         var player = objectTable.LocalPlayer;
         if (player == null) { chat.Print("[HMSync] No local player."); return; }
@@ -3862,6 +4106,10 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         //
         // (Restrictions we may WANT to lift later - mount actions in particular - are a separate case
         // and should be lifted explicitly here, not by leaving the whole gate open.)
+        //
+        // NB-40: this whole method runs inside emoteUnlock.SelfCall (see the PlayResolvedEmote wrapper), so the
+        // two in-session emote-unlock hooks are INERT for these reads - HMS's own path judges on genuine
+        // ownership exactly as prod does. The hooks exist only to open the game's NATIVE emote path (/confirm).
         var uiState = FFXIVClientStructs.FFXIV.Client.Game.UI.UIState.Instance();
         var emoteMgr = FFXIVClientStructs.FFXIV.Client.Game.Control.EmoteManager.Instance();
         bool unlocked = uiState != null && uiState->IsEmoteUnlocked(emoteId);
@@ -4170,6 +4418,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 if (inherited != null)
                 {
                     stateCapture.MapState.WeatherId = inherited.MapWeatherId;
+                    stateCapture.MapState.WeatherDonor = inherited.MapWeatherDonor;   // b183: inherit the day-night graft donor too
                     stateCapture.MapState.TimeForced = inherited.MapTimeForced;
                     stateCapture.MapState.EorzeaHour = inherited.MapEorzeaHour;
                     stateCapture.MapState.EorzeaMinute = inherited.MapEorzeaMinute;
@@ -4266,6 +4515,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 // (None/atmospheric) and clock. The mid-session host-load path already did this; the JOIN path didn't.
                 guestMapReapplyCountdown = 120;
                 lastAppliedPeerBgm = 0;   // new zone → let its BGM re-apply fresh, not stale
+                lastAppliedPeerWeather = -1; lastAppliedPeerDonor = uint.MaxValue;   // b184: and its graft (weather,donor)
 
                 ui.SetStatus("Zone: " + zoneName);
             }
@@ -4323,6 +4573,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             // time. Deferred a little so the apply lands after the load settles.
             guestMapReapplyCountdown = 120;
             lastAppliedPeerBgm = 0;   // S327l: new zone → clear BGM tracking so its music re-applies fresh (not stale)
+            lastAppliedPeerWeather = -1; lastAppliedPeerDonor = uint.MaxValue;   // b184: same for the graft-engage latch
             ArmMapReveal();           // v0.7.448: guest reveals its own HUD fog for the loaded map (local; restored on exit)
 
             ui.SetStatus("Zone: " + zoneName);
@@ -4465,6 +4716,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         try { mountHudDismount.Dispose(); } catch { }   // v0.7.339: drop the mount-icon click handler + listeners
         try { deckFloor.Clear(); } catch { }   // v0.7.351: remove any box floor patches
         try { skillSync.Dispose(); } catch { }   // COSM_1_016: drop the UseAction hook
+        try { emoteUnlock.Dispose(); } catch { }   // NB-40: drop the IsEmoteUnlocked hook
         pluginInterface.UiBuilder.Draw -= ui.Draw;
         pluginInterface.UiBuilder.Draw -= ui.DrawCarpetOverlay;
         pluginInterface.UiBuilder.Draw -= ui.DrawCarpetBar;
@@ -4518,6 +4770,8 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         relayHealth.Dispose();   // stop the background /health poll
         noclip.Dispose();
         timeFreeze.Dispose();   // S327f: unfreeze + dispose the time hook
+        try { mapSettings.SanitiseWeather(); } catch { }   // b113: clear any forced sky (cram + native override) on unload
+        try { weatherCram.Dispose(); } catch { }   // WEATHER-CRAM b96: drop the UpdateEnvironment restamp hook
         carpet.Dispose();
         moniker.Dispose();   // S328x
         npcVisibility.Dispose();   // S328aa

@@ -1,7 +1,7 @@
 {
     "Name": "HMapSync (HMS)",
     "Author": "Enceladeum",
-    "AssemblyVersion": "1.0.0.9",
+    "AssemblyVersion": "1.0.1.0",
     "Punchline": "Explore any zone together.",
     "Description": "",
     "IconUrl": "https://raw.githubusercontent.com/Enceladeum/HMapSync/main/images/icon.png",

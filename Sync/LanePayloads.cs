@@ -70,7 +70,7 @@ public static class LaneProjection
     public static HMSync.Wire.HostPayload ToHostWire(TransformData t, string subjectId) => new()
     {
         SubjectId = subjectId,
-        MapWeatherId = t.MapWeatherId, MapTimeForced = t.MapTimeForced, MapEorzeaHour = t.MapEorzeaHour,
+        MapWeatherId = t.MapWeatherId, MapWeatherDonor = t.MapWeatherDonor, MapTimeForced = t.MapTimeForced, MapEorzeaHour = t.MapEorzeaHour,
         MapEorzeaMinute = t.MapEorzeaMinute, MapBgmId = t.MapBgmId, MapRemoveNpcs = t.MapRemoveNpcs,
         MapHideQuestSigns = t.MapHideQuestSigns, MapStateEpoch = t.MapStateEpoch,
         HiddenNpcDataIds = t.MapHiddenNpcDataIds,
@@ -112,7 +112,7 @@ public static class LaneProjection
 
     public static void MergeHostWire(TransformData c, HMSync.Wire.HostPayload d)
     {
-        c.MapWeatherId = d.MapWeatherId; c.MapTimeForced = d.MapTimeForced; c.MapEorzeaHour = d.MapEorzeaHour;
+        c.MapWeatherId = d.MapWeatherId; c.MapWeatherDonor = d.MapWeatherDonor; c.MapTimeForced = d.MapTimeForced; c.MapEorzeaHour = d.MapEorzeaHour;
         c.MapEorzeaMinute = d.MapEorzeaMinute; c.MapBgmId = d.MapBgmId; c.MapRemoveNpcs = d.MapRemoveNpcs;
         c.MapHideQuestSigns = d.MapHideQuestSigns; c.MapStateEpoch = d.MapStateEpoch;
         c.MapHiddenNpcDataIds = d.HiddenNpcDataIds;
@@ -154,7 +154,7 @@ public static class LaneProjection
         a.VisorToggled == b.VisorToggled && a.HatHidden == b.HatHidden;
 
     public static bool HostEquals(TransformData a, TransformData b) =>
-        a.MapWeatherId == b.MapWeatherId && a.MapTimeForced == b.MapTimeForced && a.MapEorzeaHour == b.MapEorzeaHour &&
+        a.MapWeatherId == b.MapWeatherId && a.MapWeatherDonor == b.MapWeatherDonor && a.MapTimeForced == b.MapTimeForced && a.MapEorzeaHour == b.MapEorzeaHour &&
         a.MapEorzeaMinute == b.MapEorzeaMinute && a.MapBgmId == b.MapBgmId && a.MapRemoveNpcs == b.MapRemoveNpcs &&
         a.MapHideQuestSigns == b.MapHideQuestSigns && a.MapStateEpoch == b.MapStateEpoch &&
         UintSetEqual(a.MapHiddenNpcDataIds, b.MapHiddenNpcDataIds);
