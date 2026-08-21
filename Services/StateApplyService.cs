@@ -399,7 +399,7 @@ public class StateApplyService : IDisposable
             // wholly gated on the two emote/pose modes - but a peer torn down mid-FALL (noclip out-of-bounds)
             // has Mode == Normal with a fall clip pinned in Timeline.BaseOverride (see ComputeJumpTimeline),
             // so that peer was skipped entirely and stayed FROZEN MID-FALL on every OTHER participant's screen
-            // after a simultaneous /hmst stop. (`/hmst stop` = whole-session teardown = THIS path; NB-28 closed
+            // after a simultaneous /hms stop. (`/hms stop` = whole-session teardown = THIS path; NB-28 closed
             // the identical gap on the single-peer UnregisterPeer/leave path.) SanitizePeerStates does NOT
             // DisableDraw peers - the home-zone reload rebuilds them - but the rebuilt DrawObject reads the
             // Character's still-falling timeline, so the clip must be evicted here. Clear the override, zero the

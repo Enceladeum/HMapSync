@@ -108,14 +108,14 @@ public unsafe class ZoneLoadService : IDisposable
         // 1073 Elysion (u5e3): FILTER-KEY zone, NOT resident-hidden — the built town is gated behind a layer-filter key,
         // so DriveAdv759's IsVisible ratchet found nothing to reveal (b66 "nothing happens"). Offline the territory
         // exposes 8 layer-set keys (v0..v6); v6 fully-built town = 268557 (u5e3_v6_gmc00/env_location_v6/env_set_v6 match
-        // ONLY this key). in-game validated via `hmst casttest 1073 268557` (2026-08-06) -> full complete map on cold load.
+        // ONLY this key). in-game validated via `hms casttest 1073 268557` (2026-08-06) -> full complete map on cold load.
         { 1073, 268557 },  // Elysion — max/finished key: fully-built "funko-pop" town (v6)
         // 925 Terncliff (ec022): a separate instanced TerritoryType on the SHARED n4eb map (same LGB as 919/926). Its
         // NATIVE key 254213 is the ONE composition that filters every structure layer OFF (n4eb_building/object/pillar/
         // roof/tree/... are all FilterOp=NoMatch keys=254213) → an empty ocean frame; the geometry loads (collision is
         // present) but filtered-off layers get no draw objects, so DriveAdv759's per-instance IsVisible ratchet can't
         // reveal it. Fix is the SAME Gate-1 lever, borrowing a key that does NOT hide the buildings: 254214 is 926's
-        // built-twin composition. in-game validated via `hmst casttest 925 254214` (2026-08-06) → full Terncliff renders
+        // built-twin composition. in-game validated via `hms casttest 925 254214` (2026-08-06) → full Terncliff renders
         // inside the 925 instance (no NPCs — event-instance populace not spawned; acceptable).
         { 925, 254214 },   // Terncliff (925 instance) — borrow 926's built key so the structures aren't filtered off
     };
@@ -2959,16 +2959,6 @@ public unsafe class ZoneLoadService : IDisposable
     private string? activeStageHideBg;
     private int activeStageHideIndex = -1;
 
-    // b56: before/after snapshot for the 759 CYCLE-mechanism diff (adv759diff). Keyed by InstanceKey; per instance we keep
-    // the primary draw-slot pointer, IsVisible, and primary path. Captured by the first adv759diff call; diffed against the
-    // live layout on the second call (the user runs the proven idnear500→idshowall cycle in between).
-    private Dictionary<uint, (nint draw, byte flags, bool anyVis, string path, byte type)>? adv759Snap;
-
-    // b60: per-facility CHILD snapshot for adv759sgstate's two-call diff. facilityKey → (childKey → (model path, visUnion)).
-    // The 8 facilities' CONTAINER fields don't move across the cycle (proven b60), so the visible ruined→finished swap must
-    // be in which CHILD meshes are drawn — this captures exactly that, scoped to the 8 buildings so the signal isn't drowned.
-    private Dictionary<uint, Dictionary<uint, (string path, bool vis)>>? adv759ChildSnap;
-
     private static string DrawSlotStr(DrawObject* d, int loadState)
     {
         if (d == null) return "-";
@@ -3047,20 +3037,9 @@ public unsafe class ZoneLoadService : IDisposable
         catch (Exception ex) { log.Error("[HMSync] [IDPROBE] threw: " + ex.Message); }
     }
 
-    // idhide/idshow (MUTATING): hide/show every instance whose Id.InstanceKey is in the set — flipping ALL non-null render
-    // slots (not just the first), and ARMING a per-frame hold so streaming can't re-assert. This is the real 759 advance:
-    // hide the destruction-stage InstanceId set, leaving the cumulative rebuilt buildings. hiddenInstanceKeys tracks the
-    // collider side; heldHideKeys tracks the per-frame render hold. idshow / /hms stop restore + disarm.
-    public void IdSet(string csvIds, bool hide)
-    {
-        var want = ParseIdCsv(csvIds);
-        if (want.Count == 0) { log.Information("[HMSync] [IDSET] no numeric ids parsed from '" + csvIds + "'"); return; }
-        ApplyIdSet(want, hide, "IDSET");
-    }
-
-    // Shared core for every InstanceKey-driven hide/show (IdSet, Advance759). Walks the active layout, flips ALL render
-    // slots for each matched instance, arms/disarms the per-frame hold, and hides SharedGroup children on hide. Keeps a
-    // single source of truth so /hms advance759 and /hms idhide behave identically.
+    // Shared core for InstanceKey-driven hide/show: walks the active layout, flips ALL render slots for each matched
+    // instance, arms/disarms the per-frame hold, and hides SharedGroup children on hide. Single source of truth for the
+    // op=None debris / battle-hide path (ApplyBattleHide).
     public void ApplyIdSet(HashSet<uint> want, bool hide, string tag)
     {
         if (want.Count == 0) { log.Information("[HMSync] [" + tag + "] empty id set"); return; }
@@ -3129,30 +3108,6 @@ public unsafe class ZoneLoadService : IDisposable
                 + (matched == 0 ? " (no live instance carried any of those InstanceKeys - is the zone loaded? did idprobe HIT them?)" : ""));
         }
         catch (Exception ex) { log.Error("[HMSync] [" + tag + "] threw: " + ex.Message); }
-    }
-
-    // /hmst advance759 — the automated Doma Enclave geometry-advance. AUTOMATES THE PROVEN RECIPE, not the (disproven)
-    // subtractive-hold model: hiding a curated destruction id-set and HOLDING it hidden rendered NO visible change
-    // in-game (b51). What DOES produce the finished enclave — measured, reproducible — is the hide-EVERYTHING → then
-    // show-EVERYTHING CYCLE: `/hmst idnear 500` (hide the whole map around the player) immediately followed by
-    // `/hmst idshowall` (the both-layout restore sweep). The re-stream *between* hide and show is what resolves the
-    // "soup" (all reconstruction stages drawn at once) down to the current/final geometry — restoring re-shows the
-    // tracked instances and the destruction strata come back at their finished state, not the rubble. So this command
-    // just fires that two-beat sequence for you: IdNear(radius, hide) now, then ShowAllHidden() after a short settle
-    // delay (the human gap between the two manual commands is load-bearing — the streaming needs a moment). Restore is
-    // implicit (the showall IS the restore); if geometry looks wrong, just re-run. TESTING-tree tool (§4.9a case B).
-    public void Advance759(float radius = 1000f, int settleMs = 1500)
-    {
-        if (CurrentLoadedZone != 759)
-            log.Information("[HMSync] [ADVANCE759] note: current loaded zone is " + CurrentLoadedZone + " (recipe authored for 759); running the hide→show cycle anyway.");
-        log.Information("[HMSync] [ADVANCE759] beat 1/2: hiding everything within " + radius.ToString("F0") + "u of the player (idnear " + radius.ToString("F0") + ")...");
-        IdNear(radius, true);
-        log.Information("[HMSync] [ADVANCE759] beat 1 done; scheduling beat 2/2 (idshowall restore) in " + settleMs + "ms to let the map re-stream.");
-        _ = framework.RunOnTick(() =>
-        {
-            log.Information("[HMSync] [ADVANCE759] beat 2/2: idshowall (both-layout restore sweep) → the rebuilt enclave should now be current.");
-            ShowAllHidden();
-        }, delay: TimeSpan.FromMilliseconds(settleMs));
     }
 
     // b53: per-zone auto-advance config for reconstruction zones. radius = idnear reach (≥ map so player position is
@@ -3304,194 +3259,6 @@ public unsafe class ZoneLoadService : IDisposable
         catch (Exception ex) { log.Error("[HMSync] [ADV759PROBE] load '" + suffix + "' threw: " + ex.Message); return new HashSet<uint>(); }
     }
 
-    // hmst adv759probe — THE DECISION TEST (b54). Answers whether 759 can be advanced by a clean load-time subtractive
-    // hide (no hide-everything cycle, no blank flash) or whether the cycle is fundamentally required. Two beats, ONE
-    // command:
-    //   READ (non-mutating): tally the FINISHED rebuilt-building instance-ids (ground truth, embedded) that are already
-    //     present / drawn / visible in the RAW virtual load. If the rebuilt buildings are already instantiated and
-    //     visible, then hiding the destruction strata SHOULD reveal them — path 1 is reachable. If they're absent, the
-    //     finished geometry only exists after the cycle's re-stream and subtractive can never work.
-    //   ACT (mutating): hide ONLY the authoritative destruction stage-ids (dst* + scaffolding) — all-slot + per-frame
-    //     held, via the shared ApplyIdSet core. NO hide-everything, so there is no blank period to watch through. LOOK:
-    //     does the enclave look finished/clean? Restore with `hmst idshowall`.
-    // This is the corrected subtractive attempt using ground-truth ids (the b51 null was a suspect id list); it decides
-    // the proper-advance design. Read-heavy; the only mutation is the destruction hide, fully reverted by idshowall.
-    public void Adv759Probe()
-    {
-        var finished = LoadEmbeddedIds("adv759.finished.txt");
-        var destruction = LoadEmbeddedIds("adv759.destruction.txt");
-        if (finished.Count == 0 && destruction.Count == 0) { log.Information("[HMSync] [ADV759PROBE] both id sets empty - embed missing?"); return; }
-        try
-        {
-            var lw = LayoutWorld.Instance();
-            if (lw == null) { log.Information("[HMSync] [ADV759PROBE] LayoutWorld NULL"); return; }
-            var layout = lw->ActiveLayout != null ? lw->ActiveLayout : lw->GlobalLayout;
-            if (layout == null) { log.Information("[HMSync] [ADV759PROBE] no ActiveLayout/GlobalLayout"); return; }
-
-            int finPresent = 0, finDrawn = 0, finVisible = 0, dstPresent = 0, logged = 0;
-            foreach (var lkv in layout->Layers)
-            {
-                var lm = lkv.Item2.Value;
-                if (lm == null) continue;
-                foreach (var ikv in lm->Instances)
-                {
-                    var inst = ikv.Item2.Value;
-                    if (inst == null) continue;
-                    uint key = inst->Id.InstanceKey;
-                    if (finished.Contains(key))
-                    {
-                        finPresent++;
-                        GetAllSlots(inst, out var fld, out _, out var g23, out var g24);
-                        var d = fld != null ? fld : (g23 != null ? g23 : g24);
-                        if (d != null)
-                        {
-                            finDrawn++;
-                            if (d->IsVisible) finVisible++;
-                            if (logged < 10) { logged++; log.Information("[HMSync] [ADV759PROBE] finished id=" + key + " type=" + inst->Id.Type + " " + DrawSlotStr(d, -1)); }
-                        }
-                    }
-                    else if (destruction.Contains(key)) dstPresent++;
-                }
-            }
-            log.Information("[HMSync] [ADV759PROBE] terr=" + CurrentLoadedZone
-                + " FINISHED: embedded=" + finished.Count + " present=" + finPresent + " drawn=" + finDrawn + " visible=" + finVisible
-                + "  |  DESTRUCTION: embedded=" + destruction.Count + " present=" + dstPresent);
-            log.Information("[HMSync] [ADV759PROBE] READ verdict: if FINISHED present≈embedded and visible>0 → the rebuilt buildings are ALREADY in the raw load → clean subtractive (path 1) should work.");
-
-            // ACT: hide ONLY destruction (held). No hide-everything → no blank period. Look at the enclave now.
-            ApplyIdSet(destruction, true, "ADV759PROBE");
-            log.Information("[HMSync] [ADV759PROBE] destruction hidden (held). LOOK NOW: is the enclave clean/finished with NO blank flash? Then `hmst idshowall` to restore. This decides path 1 (clean) vs cycle-required.");
-        }
-        catch (Exception ex) { log.Error("[HMSync] [ADV759PROBE] threw: " + ex.Message); }
-    }
-
-    // Snapshot the WHOLE live layout into a key→state map (effective-graphics draw ptr, IsVisible, primary path, type). b56.1:
-    // DESCENDS into SharedGroup children (sg->Instances) — the first b56 diff was blind because 759's finished buildings are SG
-    // CHILDREN (the cycle touched sgChildren=2497 while top-level was byte-identical). Uses GetEffectiveGraphics (the renderable
-    // idnear/idshowall actually act on) so the snapshot's visibility matches what the cycle mutates. Used by adv759diff.
-    private Dictionary<uint, (nint draw, byte flags, bool anyVis, string path, byte type)> SnapshotLayout(LayoutManager* layout)
-    {
-        var snap = new Dictionary<uint, (nint, byte, bool, string, byte)>();
-        int topLevel = 0, sgSeen = 0, childVisited = 0, childNew = 0;
-        foreach (var lkv in layout->Layers)
-        {
-            var lm = lkv.Item2.Value;
-            if (lm == null) continue;
-            foreach (var ikv in lm->Instances)
-            {
-                topLevel++;
-                SnapInstance(ikv.Item2.Value, snap, 0, ref sgSeen, ref childVisited, ref childNew);
-            }
-        }
-        log.Information("[HMSync] [ADV759DIFF] snapshot traversal: topLevel=" + topLevel + " SGs=" + sgSeen
-            + " childrenVisited=" + childVisited + " childrenNewKeys=" + childNew + " uniqueTotal=" + snap.Count);
-        return snap;
-    }
-
-    // Record one instance's render state into snap, then recurse into SharedGroup children (nested ≤4 deep, mirrors
-    // HideSharedGroupChildren's traversal). Keyed by InstanceKey (unique LGB InstanceId, distinct for children).
-    private void SnapInstance(ILayoutInstance* inst, Dictionary<uint, (nint, byte, bool, string, byte)> snap, int depth,
-        ref int sgSeen, ref int childVisited, ref int childNew)
-    {
-        if (inst == null || depth >= 4) return;
-        uint key = inst->Id.InstanceKey;
-        if (depth > 0) { childVisited++; if (!snap.ContainsKey(key)) childNew++; }
-        var d = GetEffectiveGraphics(inst);
-        // Capture raw Flags@0x88 of the effective draw (catches non-IsVisible bit flips) + the VISIBILITY UNION across all
-        // three render slots (BgPart field, vf23, vf24) — §4.3a warns the slot that actually renders can diverge from
-        // GetEffectiveGraphics, so a change on a divergent slot would be invisible to a single-slot read.
-        byte flags = d != null ? d->Flags : (byte)0;
-        GetAllSlots(inst, out var fld, out _, out var g23, out var g24);
-        bool anyVis = (d != null && d->IsVisible) || (fld != null && fld->IsVisible) || (g23 != null && g23->IsVisible) || (g24 != null && g24->IsVisible);
-        string path = "";
-        try { var pp = inst->GetPrimaryPath(); if (pp.HasValue) path = pp.ToString() ?? ""; } catch { }
-        snap[key] = ((nint)d, flags, anyVis, path, (byte)inst->Id.Type);
-
-        if (inst->Id.Type == InstanceType.SharedGroup)
-        {
-            sgSeen++;
-            try
-            {
-                var vec = ((SharedGroupLayoutInstance*)inst)->Instances.Instances;
-                for (long i = 0; i < vec.LongCount; i++)
-                {
-                    var child = vec[i].Value;
-                    if (child == null) continue;
-                    SnapInstance(child->Instance, snap, depth + 1, ref sgSeen, ref childVisited, ref childNew);
-                }
-            }
-            catch { }
-        }
-    }
-
-    // hmst adv759diff — MEASURE what the proven idnear500→idshowall CYCLE actually does (b56). The b55 probe proved the raw
-    // load is NOT the finished enclave (tower+decorations only) and our offline finished/destruction id-sets don't map to the
-    // cycle's effect — so stop guessing sets and DIFF the live layout across the cycle. Two-call protocol:
-    //   1) `hmst adv759diff` on a fresh RAW 759 → captures baseline (every instance: primary draw ptr, IsVisible, path).
-    //   2) run the PROVEN cycle: `hmst idnear 500` then `hmst idshowall` (yields the true finished enclave).
-    //   3) `hmst adv759diff` again → diffs live-vs-baseline and classifies every change: SPAWNED (key new), DESPAWNED (gone),
-    //      DRAW-ON (null→ptr), DRAW-OFF (ptr→null), PATH-CHANGED (model swap = stage change), REDRAW (ptr changed, same path),
-    //      VIS-ON/VIS-OFF (IsVisible flip only).
-    // Category profile decides the mechanism: mostly VIS-flips ⇒ pure visibility, the "finished set" is just what turned
-    // visible and a clean subtractive/additive lever exists; DRAW-ON / PATH-CHANGED / REDRAW ⇒ the cycle re-streams or swaps
-    // models (explains why a flag-only subtractive can't reproduce it, and points at the streaming/LOD lever instead).
-    // Read-only: the only mutation is the user's own cycle commands run between the two calls.
-    public void Adv759Diff()
-    {
-        try
-        {
-            var lw = LayoutWorld.Instance();
-            if (lw == null) { log.Information("[HMSync] [ADV759DIFF] LayoutWorld NULL"); return; }
-            var layout = lw->ActiveLayout != null ? lw->ActiveLayout : lw->GlobalLayout;
-            if (layout == null) { log.Information("[HMSync] [ADV759DIFF] no ActiveLayout/GlobalLayout"); return; }
-
-            if (adv759Snap == null)
-            {
-                adv759Snap = SnapshotLayout(layout);
-                log.Information("[HMSync] [ADV759DIFF] BASELINE captured: " + adv759Snap.Count + " instances (terr=" + CurrentLoadedZone
-                    + "). NOW run the proven cycle: `hmst idnear 500` then `hmst idshowall`, then `hmst adv759diff` again to see the delta.");
-                return;
-            }
-
-            var before = adv759Snap;
-            var after = SnapshotLayout(layout);
-            adv759Snap = null; // consume; next call re-baselines
-
-            int spawned = 0, despawned = 0, drawOn = 0, drawOff = 0, pathChg = 0, redraw = 0, visOn = 0, visOff = 0, flagChg = 0, unchanged = 0;
-            int logCap = 20; var logged = new Dictionary<string, int>();
-            void Sample(string cat, uint key, string detail)
-            {
-                logged.TryGetValue(cat, out var c);
-                if (c >= logCap) return;
-                logged[cat] = c + 1;
-                log.Information("[HMSync] [ADV759DIFF]   " + cat + " id=" + key + " " + detail);
-            }
-
-            foreach (var kv in after)
-            {
-                if (!before.TryGetValue(kv.Key, out var b)) { spawned++; Sample("SPAWNED", kv.Key, "type=" + kv.Value.type + " draw=" + (kv.Value.draw != 0) + " vis=" + kv.Value.anyVis + " path=" + kv.Value.path); continue; }
-                var a = kv.Value;
-                bool bHad = b.draw != 0, aHad = a.draw != 0;
-                if (!bHad && aHad) { drawOn++; Sample("DRAW-ON", kv.Key, "type=" + a.type + " vis=" + a.anyVis + " path=" + a.path); }
-                else if (bHad && !aHad) { drawOff++; Sample("DRAW-OFF", kv.Key, "type=" + a.type + " wasPath=" + b.path); }
-                else if (bHad && aHad && !string.Equals(a.path, b.path, StringComparison.OrdinalIgnoreCase)) { pathChg++; Sample("PATH-CHANGED", kv.Key, "type=" + a.type + " " + b.path + " -> " + a.path); }
-                else if (bHad && aHad && a.draw != b.draw) { redraw++; Sample("REDRAW", kv.Key, "type=" + a.type + " ptr moved, path=" + a.path); }
-                else if (b.anyVis && !a.anyVis) { visOff++; Sample("VIS-OFF", kv.Key, "type=" + a.type + " path=" + a.path); }
-                else if (!b.anyVis && a.anyVis) { visOn++; Sample("VIS-ON", kv.Key, "type=" + a.type + " path=" + a.path); }
-                else if (a.flags != b.flags) { flagChg++; Sample("FLAGS-CHG", kv.Key, "type=" + a.type + " f" + b.flags.ToString("X2") + "->f" + a.flags.ToString("X2") + " path=" + a.path); }
-                else unchanged++;
-            }
-            foreach (var kv in before)
-                if (!after.ContainsKey(kv.Key)) { despawned++; Sample("DESPAWNED", kv.Key, "type=" + kv.Value.type + " wasPath=" + kv.Value.path); }
-
-            log.Information("[HMSync] [ADV759DIFF] terr=" + CurrentLoadedZone + " before=" + before.Count + " after=" + after.Count
-                + " | SPAWNED=" + spawned + " DESPAWNED=" + despawned + " DRAW-ON=" + drawOn + " DRAW-OFF=" + drawOff
-                + " PATH-CHANGED=" + pathChg + " REDRAW=" + redraw + " VIS-ON=" + visOn + " VIS-OFF=" + visOff + " FLAGS-CHG=" + flagChg + " unchanged=" + unchanged);
-            log.Information("[HMSync] [ADV759DIFF] READ: dominant VIS-ON/FLAGS-CHG ⇒ finished stage is instance render-state (a clean lever exists). Near-ZERO across all cats (given a CONFIRMED ruined→finished cycle) ⇒ the transform is NOT in these instances → §12.4 streamed-terrain pipeline; pursue the streaming lever.");
-        }
-        catch (Exception ex) { log.Error("[HMSync] [ADV759DIFF] threw: " + ex.Message); }
-    }
-
     // Per-frame re-assertion of the held hide set (§4.3 lifetime rule). Re-resolves live instances by key each frame
     // (never stores pointers) and flips all their slots hidden. Cheap: one layout walk, small held set.
     private void PollHeldHide(IFramework fw)
@@ -3635,108 +3402,6 @@ public unsafe class ZoneLoadService : IDisposable
         RestoreHiddenObjects();          // clears heldHide sets + re-shows the previously-hidden twin
         ArmStageState(states, next);     // re-arm; poll re-hides the new state's twin over the next frames
         log.Information("[HMSync] [STAGEHIDE] toggled to '" + states[next].Name + "' for " + activeStageHideBg + ".");
-    }
-
-    // b49: idnear — the coordinate-guess KILLER. Two clean idhides (far dst02 rubble + near-origin e3ec_wood scaffold)
-    // both landed at the flag level (0x4F→0x46, IsVisible=hid, held, single pointer) yet changed NOTHING on screen. But
-    // both id sets were picked from the OFFLINE dump and only ASSUMED to be in the player's view — the last unverified
-    // confound. This hides every BgPart whose RENDERED DrawObject is within <radius> horizontal units of the LIVE player
-    // position (measured, not guessed). Decisive: if a bubble around the player visibly empties → IsVisible DOES de-render
-    // 759 bg and we just need the right ids (build the /hms advance759 embed). If hundreds hide with the flags reading
-    // `hid`, held every frame, and STILL zero visible change → IsVisible is categorically INERT for these streamed bg
-    // parts and we pivot to §12.4 (streaming-radius / ForceUpdateAllStreaming / a different render gate). Restore via
-    // /hms idshowall (session-independent) or /hms stop. hide=false = preview (count + nearest only, no mutate).
-    public void IdNear(float radius, bool hide)
-    {
-        var lp = objectTable.LocalPlayer;
-        if (lp == null) { log.Information("[HMSync] [IDNEAR] no LocalPlayer - are you in the zone?"); return; }
-        var pp = lp.Position;
-        float r2 = radius * radius;
-        try
-        {
-            var lw = LayoutWorld.Instance();
-            if (lw == null) { log.Information("[HMSync] [IDNEAR] LayoutWorld NULL"); return; }
-            var layout = lw->ActiveLayout != null ? lw->ActiveLayout : lw->GlobalLayout;
-            if (layout == null) { log.Information("[HMSync] [IDNEAR] no ActiveLayout/GlobalLayout"); return; }
-
-            int inRange = 0, acted = 0, logged = 0, sgHit = 0, sgChildren = 0;
-            float nearest = float.MaxValue; string nearestPath = ""; uint nearestKey = 0;
-            foreach (var lkv in layout->Layers)
-            {
-                var lm = lkv.Item2.Value;
-                if (lm == null) continue;
-                foreach (var ikv in lm->Instances)
-                {
-                    var inst = ikv.Item2.Value;
-                    if (inst == null) continue;
-                    var it = inst->Id.Type;
-                    bool isBg = it == InstanceType.BgPart;
-                    bool isSg = it == InstanceType.SharedGroup;
-                    if (!isBg && !isSg) continue;
-
-                    // b50: range by the RENDERED DrawObject for BgParts, by the SharedGroup Transform for SGs (the
-                    // wooden scaffolds survived the BgPart-only sweep because they're SharedGroups — cover them too).
-                    Vector3 p;
-                    if (isBg)
-                    {
-                        GetAllSlots(inst, out var fld, out _, out var g23, out var g24);
-                        var d = fld != null ? fld : (g23 != null ? g23 : g24);
-                        if (d == null) continue;
-                        p = new Vector3(d->Position.X, d->Position.Y, d->Position.Z);
-                    }
-                    else
-                    {
-                        var sgt = ((SharedGroupLayoutInstance*)inst)->Transform.Translation;
-                        p = new Vector3(sgt.X, sgt.Y, sgt.Z);
-                    }
-                    float dx = p.X - pp.X, dz = p.Z - pp.Z;
-                    float dd2 = dx * dx + dz * dz;
-                    if (dd2 > r2) continue;
-                    inRange++;
-                    float dist = MathF.Sqrt(dd2);
-                    if (dist < nearest)
-                    {
-                        nearest = dist; nearestKey = inst->Id.InstanceKey;
-                        try { var np = inst->GetPrimaryPath(); nearestPath = np.HasValue ? (np.ToString() ?? "") : ""; } catch { }
-                    }
-                    if (hide)
-                    {
-                        uint key = inst->Id.InstanceKey;
-                        hiddenLayoutInstances.Add((nint)inst);
-                        hiddenInstanceKeys.Add(key);
-                        if (isBg)
-                        {
-                            acted += SetAllSlotsVisible(inst, false);
-                            heldHideKeys.Add(key);   // per-frame hold (SG children are one-shot; see below)
-                        }
-                        else
-                        {
-                            // SharedGroup: recursively hide its child BgParts via the proven IsVisible walk (adds each
-                            // child key to hiddenInstanceKeys for restore). One-shot — enough to SEE the effect while
-                            // stationary; movement-driven re-stream is out of scope for this look-test.
-                            sgHit++;
-                            sgChildren += HideSharedGroupChildren((SharedGroupLayoutInstance*)inst, 0);
-                        }
-                    }
-                    if (logged < 12)
-                    {
-                        logged++;
-                        string path = "";
-                        try { var pp2 = inst->GetPrimaryPath(); path = pp2.HasValue ? (pp2.ToString() ?? "") : ""; } catch { }
-                        log.Information("[HMSync] [IDNEAR] " + (hide ? "hid" : "near") + " " + it + " id=" + inst->Id.InstanceKey
-                            + " dist=" + dist.ToString("F1") + "u at=(" + p.X.ToString("F1") + "," + p.Z.ToString("F1") + ") path=" + path);
-                    }
-                }
-            }
-            if (hide && heldHideKeys.Count > 0 && !heldHideArmed) { heldHideArmed = true; framework.Update += PollHeldHide; }
-            log.Information("[HMSync] [IDNEAR] player=(" + pp.X.ToString("F1") + "," + pp.Z.ToString("F1") + ") radius=" + radius
-                + " inRange=" + inRange + " (SG=" + sgHit + " sgChildren=" + sgChildren + ")"
-                + (hide ? " slotsActed=" + acted + " heldSet=" + heldHideKeys.Count + " perFrameHold=" + (heldHideArmed ? "ON" : "off")
-                        + " → if the world around you did NOT change, IsVisible is inert for 759 bg (§12.4 pivot)."
-                        : " (PREVIEW - nothing hidden)")
-                + " nearest=" + (nearestKey != 0 ? nearestKey + "@" + nearest.ToString("F1") + "u " + nearestPath : "none"));
-        }
-        catch (Exception ex) { log.Error("[HMSync] [IDNEAR] threw: " + ex.Message); }
     }
 
     // Session-independent restore for the idnear/idhide research levers: disarm the per-frame hold and re-show every
@@ -3915,145 +3580,6 @@ public unsafe class ZoneLoadService : IDisposable
         { 7509016u, 2 }, // kozakura kozakura_step0..2
     };
 
-    // hmst adv759sgstate — READ-ONLY dump of the internal timeline/step state of the eight reconstruction SharedGroups.
-    // Run it on a RAW 759, then run the proven idnear500→idshowall cycle, then run it AGAIN and compare: if
-    // PlayingTimelineIndex (or which timeline IsTimelinePlaying) moves step0→stepN across the cycle, the mechanism is
-    // closed and the next step is to drive that state at first load (PlayTimeline) instead of the jarring cycle. Uses
-    // CS accessors (PlayingTimelineIndex @0x16D, TimelineIndices[16] @0x154, TimeLineContainer @0xD0) — NOT the stale
-    // 0x14C literal SGDUMP hardcodes. Pure read; the only native calls are IsTimelinePlaying (a bool query), guarded.
-    public void Adv759SgState()
-    {
-        try
-        {
-            var lw = LayoutWorld.Instance();
-            if (lw == null) { log.Information("[HMSync] [ADV759SG] LayoutWorld NULL"); return; }
-            var layout = lw->ActiveLayout != null ? lw->ActiveLayout : lw->GlobalLayout;
-            if (layout == null) { log.Information("[HMSync] [ADV759SG] no ActiveLayout/GlobalLayout"); return; }
-
-            // Build key→SharedGroup* index by walking the SharedGroup type map once (matches SGDUMP traversal).
-            var found = new Dictionary<uint, nint>();
-            if (layout->InstancesByType.TryGetValuePointer(InstanceType.SharedGroup, out var mapPtrPtr) && mapPtrPtr != null)
-            {
-                var innerMap = mapPtrPtr->Value;
-                if (innerMap != null)
-                    foreach (var kv in *innerMap)
-                    {
-                        var inst = kv.Item2.Value;
-                        if (inst == null) continue;
-                        uint k = inst->Id.InstanceKey;
-                        for (int i = 0; i < Adv759Facilities.Length; i++)
-                            if (Adv759Facilities[i].key == k && !found.ContainsKey(k)) found[k] = (nint)inst;
-                    }
-            }
-
-            log.Information("[HMSync] [ADV759SG] terr=" + CurrentLoadedZone + " — SGB internal step state of the 8 facilities "
-                + "(run RAW, then cycle, then again; watch PlayingTimelineIndex / *PLAYING* move). found="
-                + found.Count + "/" + Adv759Facilities.Length);
-
-            foreach (var (key, label) in Adv759Facilities)
-            {
-                if (!found.TryGetValue(key, out var addr))
-                {
-                    log.Information("[HMSync] [ADV759SG] key=" + key + " (" + label + ") — NOT PRESENT in this layout");
-                    continue;
-                }
-                var sg = (SharedGroupLayoutInstance*)addr;
-
-                byte playing = 0; string idxBytes = "";
-                try { playing = sg->PlayingTimelineIndex; } catch { }
-                try
-                {
-                    var ti = sg->TimelineIndices;   // CS Span<byte>, len 16 @0x154
-                    var sb = new System.Text.StringBuilder();
-                    for (int i = 0; i < ti.Length && i < 16; i++) { if (i > 0) sb.Append(' '); sb.Append(ti[i].ToString("X2")); }
-                    idxBytes = sb.ToString();
-                }
-                catch { }
-                uint pf1 = 0, pf2 = 0;
-                try { pf1 = sg->PrefabFlags1; pf2 = sg->PrefabFlags2; } catch { }
-
-                // Timeline (step) list + which index reports PLAYING.
-                var steps = new List<string>();
-                try
-                {
-                    var vec = sg->TimeLineContainer.Instances;
-                    for (long i = 0; i < vec.LongCount && i < 32; i++)
-                    {
-                        var tl = vec[i].Value;
-                        string nm = "(null)";
-                        if (tl != null)
-                        {
-                            uint crc = tl->PathCrc;
-                            nm = ResolveLayoutCrc(layout, crc);
-                            if (string.IsNullOrEmpty(nm))
-                            {
-                                try { var tp = ((ILayoutInstance*)tl)->GetPrimaryPath(); if (tp.HasValue) nm = tp.ToString() ?? ""; } catch { }
-                            }
-                            if (string.IsNullOrEmpty(nm)) nm = "crc#" + crc.ToString("X8");
-                        }
-                        bool isPlaying = false;
-                        try { isPlaying = sg->IsTimelinePlaying((uint)i); } catch { }
-                        int slash = nm.LastIndexOf('/'); if (slash >= 0 && slash < nm.Length - 1) nm = nm.Substring(slash + 1);
-                        steps.Add("[" + i + "]" + nm + (isPlaying ? " *PLAYING*" : ""));
-                    }
-                }
-                catch { }
-
-                log.Information("[HMSync] [ADV759SG] key=" + key + " (" + label + ") PlayingTimelineIndex=" + playing
-                    + " prefabFlags=" + pf1.ToString("X") + "/" + pf2.ToString("X") + " _timelineIndices=[" + idxBytes + "] @" + addr.ToString("X"));
-                if (steps.Count > 0)
-                    log.Information("[HMSync] [ADV759SG]     steps=" + string.Join("  ", steps));
-            }
-            // ── Per-facility CHILD diff (two-call) ──────────────────────────────────────────────────────────────
-            // b60 proved the container fields are inert across the cycle, yet the enclave visibly goes ruined→finished.
-            // So the step swap lives in the CHILD instances. Snapshot each facility's child meshes (key→path,visUnion);
-            // first call = baseline, second call = diff. Reveals WHICH child meshes turn on / swap model = the real state.
-            var childNow = new Dictionary<uint, Dictionary<uint, (string path, bool vis)>>();
-            foreach (var (key, _) in Adv759Facilities)
-            {
-                var d = new Dictionary<uint, (string, bool)>();
-                if (found.TryGetValue(key, out var addr)) CollectFacilityChildren((SharedGroupLayoutInstance*)addr, d, 0);
-                childNow[key] = d;
-            }
-
-            if (adv759ChildSnap == null)
-            {
-                adv759ChildSnap = childNow;
-                int tot = 0; foreach (var kv in childNow) tot += kv.Value.Count;
-                log.Information("[HMSync] [ADV759SG] CHILD BASELINE captured: " + tot + " child instances across the 8 facilities. "
-                    + "NOW run `hmst idnear 500` → `hmst idshowall`, CONFIRM the enclave looks FINISHED, then `hmst adv759sgstate` again to DIFF.");
-                return;
-            }
-
-            log.Information("[HMSync] [ADV759SG] CHILD DIFF (baseline → now) — which child meshes changed across the cycle:");
-            int gVisOn = 0, gPathChg = 0, gSpawn = 0, gDespawn = 0;
-            foreach (var (key, label) in Adv759Facilities)
-            {
-                var a = adv759ChildSnap.TryGetValue(key, out var av) ? av : new Dictionary<uint, (string path, bool vis)>();
-                var b = childNow.TryGetValue(key, out var bv) ? bv : new Dictionary<uint, (string path, bool vis)>();
-                int visOn = 0, visOff = 0, pathChg = 0, spawned = 0, despawned = 0;
-                var samples = new List<string>();
-                foreach (var kv in b)
-                {
-                    if (!a.TryGetValue(kv.Key, out var old)) { spawned++; if (samples.Count < 5) samples.Add("SPAWN[" + kv.Key + "]" + Stem(kv.Value.path)); continue; }
-                    if (!old.vis && kv.Value.vis) { visOn++; if (samples.Count < 5) samples.Add("VIS+" + Stem(kv.Value.path)); }
-                    else if (old.vis && !kv.Value.vis) visOff++;
-                    if (old.path != kv.Value.path) { pathChg++; if (samples.Count < 5) samples.Add("PATH " + Stem(old.path) + "→" + Stem(kv.Value.path)); }
-                }
-                foreach (var kv in a) if (!b.ContainsKey(kv.Key)) despawned++;
-                gVisOn += visOn; gPathChg += pathChg; gSpawn += spawned; gDespawn += despawned;
-                log.Information("[HMSync] [ADV759SG]   " + label + ": children a=" + a.Count + " b=" + b.Count
-                    + " | VIS-ON=" + visOn + " VIS-OFF=" + visOff + " PATH-CHG=" + pathChg + " SPAWNED=" + spawned + " DESPAWNED=" + despawned
-                    + (samples.Count > 0 ? "  e.g. " + string.Join(", ", samples) : ""));
-            }
-            adv759ChildSnap = null;
-            log.Information("[HMSync] [ADV759SG] CHILD DIFF totals: VIS-ON=" + gVisOn + " PATH-CHG=" + gPathChg + " SPAWNED=" + gSpawn
-                + " DESPAWNED=" + gDespawn + ". Non-zero here = the step lever is child visibility/model-swap; drive THOSE at load.");
-            log.Information("[HMSync] [ADV759SG] done. If PlayingTimelineIndex / *PLAYING* differs RAW vs post-cycle, drive PlayTimeline(maxStep) at load = clean native lever (same path for Mamook 1189).");
-        }
-        catch (Exception ex) { log.Error("[HMSync] [ADV759SG] threw: " + ex.Message); }
-    }
-
     // b63: THE CLEAN LOAD-TIME GEOMETRY ADVANCE for 759 — replaces the jarring idnear→idshowall cycle. b62's PlayTimeline
     // approach is DEAD: it returned OK on all 8 but PlayingTimelineIndex stayed 0 and nothing rendered — the SGB timeline is
     // the EventObjAnimation channel (doors/flags), NOT the mesh draw-gate. Reading the cycle's own code proved the real
@@ -4163,41 +3689,6 @@ public unsafe class ZoneLoadService : IDisposable
         }
         catch (Exception ex) { log.Error("[HMSync] [" + tag + "] threw: " + ex.Message); }
         return driven;
-    }
-
-    // Last path segment (file stem) for compact diff logging.
-    private static string Stem(string path)
-    {
-        if (string.IsNullOrEmpty(path)) return "(nopath)";
-        int s = path.LastIndexOf('/');
-        return s >= 0 && s < path.Length - 1 ? path.Substring(s + 1) : path;
-    }
-
-    // Walk a facility SharedGroup's child instances (recursive, ≤4 deep like the hide path), recording each child's
-    // InstanceKey → (model path, IsVisible union across all 3 render slots). Read-only.
-    private void CollectFacilityChildren(SharedGroupLayoutInstance* sg, Dictionary<uint, (string path, bool vis)> into, int depth)
-    {
-        if (sg == null || depth >= 4) return;
-        try
-        {
-            var vec = sg->Instances.Instances;
-            for (long i = 0; i < vec.LongCount; i++)
-            {
-                var child = vec[i].Value;
-                if (child == null) continue;
-                var ci = child->Instance;
-                if (ci == null) continue;
-                uint k = ci->Id.InstanceKey;
-                string path = "";
-                try { var pp = ci->GetPrimaryPath(); if (pp.HasValue) path = pp.ToString() ?? ""; } catch { }
-                GetAllSlots(ci, out var fld, out _, out var g23, out var g24);
-                bool vis = (fld != null && fld->IsVisible) || (g23 != null && g23->IsVisible) || (g24 != null && g24->IsVisible);
-                into[k] = (path, vis);
-                if (ci->Id.Type == InstanceType.SharedGroup)
-                    CollectFacilityChildren((SharedGroupLayoutInstance*)ci, into, depth + 1);
-            }
-        }
-        catch { }
     }
 
     // v0.7.428 - the single hide primitive: flips IsVisible=false and tracks whether this was a

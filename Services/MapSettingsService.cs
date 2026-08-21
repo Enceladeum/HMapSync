@@ -503,7 +503,7 @@ public unsafe class MapSettingsService
     // NOT run the weather-VFX-spawn path, so foreign weathers get a sky (via cram) but no doodads (150's meteors never
     // appear). WeatherManager.WeatherInterface.SetNextWeather(id, fade, disablesOverride) is the proper transition the
     // game itself uses: resolve weather → load its env resources (incl. avfx) → spawn. This is the suspected lever the
-    // earlier "meteors on Limsa" build used. Isolated as `hmst wxtrans <id> [fade]` so we can PROVE it spawns the VFX
+    // earlier "meteors on Limsa" build used. Isolated as the `wxtrans <id> [fade]` dev lever so we can PROVE it spawns the VFX
     // before wiring it into the chip path — it is NOT crash-free (the avfx resolve can still fault), so it stays a
     // manual test on the avfx-safe class only. Drives the slot at WeatherIndex (fallback slot 0).
     public string TrySetNextWeather(byte id, float fade)
@@ -2058,7 +2058,7 @@ public unsafe class MapSettingsService
     // handles) so you get native doodads + a correct crammed sky at once. CAVEAT: avfx resolvability can be per-zone (an
     // old note claimed 150 once faulted on Limsa Upper Decks) — 150 is proven on 128, not guaranteed everywhere; if it
     // ever CTDs on a zone, that zone's resource graph can't resolve the meteor avfx. Grow this ONLY after in-game proof
-    // (or at runtime via `hmst wxdood <id>`, session-scoped — resets to this seed on relaunch).
+    // (or at runtime via the `wxdood <id>` dev lever, session-scoped — resets to this seed on relaunch).
     //   150 Apocalypse (meteors)
     public static readonly HashSet<byte> AvfxSafeWeatherIds = new() { 150 };
 

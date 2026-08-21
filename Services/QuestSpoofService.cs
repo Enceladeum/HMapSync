@@ -132,8 +132,6 @@ internal sealed unsafe class QuestSpoofService : IDisposable
     private const int MaxDistinct = 4000;           // hard cap so a runaway can never flood /xllog
     private static readonly string[] FnNames = { "IsQuestComplete", "GetQuestSequence", "IsQuestAccepted" };
 
-    public bool LogReadsActive => logReads;
-
     public QuestSpoofService(ISigScanner sig, IGameInteropProvider hooks, IFramework framework, IDataManager data, IPluginLog log)
     {
         this.sig = sig;
