@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **See which weather preset is currently live**: the **Extra presets** and **City sky variants** grids in Map Control now highlight the sky you have applied right now, so the active pick stands out from the others that are merely available to choose.
 
+### Fixed
+
+- **Pose changes now sync on the first try**: cycling your standing or sitting pose (`/cpose`) sometimes did not reach other players until you repeated it; the first change now broadcasts reliably.
+
 ## [1.0.1.0] - 2026-08-21
 
 ### Added

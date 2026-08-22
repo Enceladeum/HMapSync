@@ -55,6 +55,9 @@ public unsafe class LocalStateDetector
     private ushort currentEmoteId;
     private ushort currentTimelineId;
     private ushort lastPoseIntro; // S107: intro of the currently-held cpose (reassume detection)
+    private int poseIntroSettle;  // NB-41: ticks left to adopt a LATE-arriving pose intro (the game starts the intro
+                                  // animation a tick or two AFTER the EmoteController cpose byte flips - see the settle
+                                  // recovery in the standing sustain branch)
     private readonly ushort[] lastUpperSlots = new ushort[4]; // S122: seated overlay slot watch
     private uint emoteEpoch;
 
@@ -138,6 +141,7 @@ public unsafe class LocalStateDetector
         currentEmoteId = 0;
         currentTimelineId = 0;
         lastPoseIntro = 0;
+        poseIntroSettle = 0;
         emoteEpoch = 0;
         standupTimelineId = 0;
         standupEpoch = 0;
@@ -662,6 +666,8 @@ public unsafe class LocalStateDetector
 
     private void DetectEmoteState(CharacterModes currentMode, byte currentParam, ushort currentTimeline, byte poseType, byte cPoseState, bool weaponDrawn, long now)
     {
+        if (poseIntroSettle > 0) poseIntroSettle--;   // NB-41: age the late-intro settle window
+
         bool modeChanged = currentMode != lastMode || currentParam != lastModeParam;
         bool timelineChanged = currentTimeline != lastTimelineId
             && !LocomotionData.AllLocomotionTimelines.Contains(currentTimeline)
@@ -709,6 +715,13 @@ public unsafe class LocalStateDetector
                 // cpose, the game reassumes by replaying THIS intro - the sustain branch
                 // recognizes it by identity and re-streams the pose to the receiver.
                 lastPoseIntro = cPoseState > 0 ? currentTimeline : (ushort)0;
+                // NB-41: the cpose byte (EmoteController 0x21) flips a tick or two BEFORE the game starts the pose
+                // intro on the timeline. When it does, the `currentTimeline` we just captured is still the OLD
+                // idle/locomotion timeline, so we ship a stale TimelineId and the receiver never plays the pose
+                // intro ("cpose wouldn't register on the first use; the second use worked" - the second flip happened
+                // to land on the same tick as its intro). Arm a short window so the standing-sustain branch adopts
+                // the REAL intro the moment it appears and the WARM lane re-emits it. Held-pose only.
+                if (cPoseState > 0) poseIntroSettle = 6;
                 Dbg("[HMSync][POSEDIAG] cpose change pose=" + normPoseType + " cpose=" + cPoseState +
                     " tl=" + currentTimeline + " mode=" + currentMode + " emoteId=" + currentEmoteId +
                     " (no epoch bump)");
@@ -865,7 +878,25 @@ public unsafe class LocalStateDetector
             //  (b) the remembered pose intro re-appearing - the game replays the intro
             //      when reassuming a held cpose after a one-shot emote finishes.
             // Anything else (a real emote) falls through to the one-shot path.
-            if (cPoseState > 0
+            // NB-41: LATE-INTRO ADOPTION. The pose byte flipped a tick or two ago (poseIntroSettle armed) but the
+            // intro we captured then was the stale idle timeline. The real intro is appearing NOW - adopt it as the
+            // pose intro so the WARM lane re-emits a correct TimelineId and the receiver plays the pose. Excludes the
+            // loop flip (intro+1 - the existing sustain owns that), locomotion (walking away), and emote timelines (a
+            // one-shot interrupting the pose). This is what makes a first-use cpose register reliably.
+            if (poseIntroSettle > 0 && cPoseState > 0
+                && currentTimeline > 0
+                && currentTimeline != currentTimelineId
+                && currentTimeline != (ushort)(currentTimelineId + 1)
+                && !LocomotionData.AllLocomotionTimelines.Contains(currentTimeline)
+                && !emoteTimelineIds.Contains(currentTimeline))
+            {
+                currentTimelineId = currentTimeline;
+                lastPoseIntro = currentTimeline;
+                poseIntroSettle = 0;
+                Dbg("[HMSync] Cpose intro settle: adopted late intro tl=" + currentTimeline);
+                lastTimelineId = currentTimeline;
+            }
+            else if (cPoseState > 0
                 && ((currentTimelineId > 0 && currentTimeline == (ushort)(currentTimelineId + 1))
                     || (lastPoseIntro > 0 && currentTimeline == lastPoseIntro)))
             {
