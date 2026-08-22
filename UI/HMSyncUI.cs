@@ -1107,6 +1107,25 @@ public class HMSyncUI
         return clicked && enabled;
     }
 
+    // Weather-chip tint (extra presets + city sky variants). Both grids speak ONE hue — the user's accent — with state
+    // expressed as a GRADIENT of it, per UX convention (don't pit two saturated colours against each other):
+    //   • ACTIVE (the live pick)                       → full accent — the brightest step;
+    //   • AVAILABLE but not active (baked preset /      → a darkened accent — same family, recedes behind the active one;
+    //     captured donor set)
+    //   • UNAVAILABLE (no baked preset)                → neutral grey — deliberately OUTSIDE the accent family, so
+    //     "can't back this" reads as absence of accent, not a dim accent that could be mistaken for available.
+    // Text auto-contrasts (TextOn) so any accent the user picks stays legible on the fill. Caller pops 4 colours.
+    private void PushChipColors(bool active, bool available)
+    {
+        var acc = Accent();
+        Vector4 btn = active ? acc : available ? Darken(acc, 0.42f) : new Vector4(0.18f, 0.19f, 0.22f, 1f);
+        Vector4 hov = active ? Lighten(acc, 1.12f) : available ? Darken(acc, 0.60f) : new Vector4(0.24f, 0.25f, 0.29f, 1f);
+        ImGui.PushStyleColor(ImGuiCol.Button, btn);
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, hov);
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, hov);
+        ImGui.PushStyleColor(ImGuiCol.Text, (active || available) ? TextOn(btn) : new Vector4(0.72f, 0.75f, 0.80f, 1f));
+    }
+
     // Reflowing equal-width button row: packs as many per row as fit at `minWidth`, each filling its row; wraps the
     // rest to new lines. `drawButton(i, width)` renders item i at the computed width.
     private void FlexButtons(int count, float minWidth, float gap, Action<int, float> drawButton)
@@ -1425,15 +1444,18 @@ public class HMSyncUI
                     if (cx + cgap + cw > cavail - PanelPad) cx = 0f;   // wrap, leaving the right margin
                     else { ImGui.SameLine(0f, cgap); cx += cgap; }
                 }
-                // Green tint for chips we have a baked preset for (they'll render via the crash-free restamp path);
-                // neutral otherwise (tapping still tries, and refuses cleanly if the zone can't back it and no preset).
-                // NB (b110): no "selected"/accent state here — every extra weather is a baked preset, so a stuck accent
-                // on the last-tapped chip only read as a frozen selection. The chip is a momentary action, not a toggle.
+                // Chip tint = a gradient of the user's ACCENT (PushChipColors): full accent = ACTIVE (the live pick), a
+                // darkened accent = a baked preset available but not active, neutral grey = no preset. (b184 replaced the
+                // old fixed green/blue with the accent family so the grid tracks the user's theme; the active step is a
+                // brighter gradient of the SAME hue, not a clashing colour — UX convention.)
+                // b184 (supersedes the b110 "no accent" note): the accent is keyed off the LIVE pick
+                // (config.MapWeatherId/Donor), which resets to 0 on every zone hop (HMSyncPlugin ~L3415) — so it marks
+                // the genuinely-active preset, not the "stuck last-tapped" frozen state b110 rightly warned against. The
+                // Donor==0 guard keeps a city-variant pick (donor!=0, accented in its own grid below) from ALSO lighting
+                // the plain chip for the same weather.
                 bool hasPreset = MapSettings.HasPreset(e.wid);
-                ImGui.PushStyleColor(ImGuiCol.Button, hasPreset ? new Vector4(0.16f, 0.28f, 0.18f, 1f) : new Vector4(0.18f, 0.19f, 0.22f, 1f));
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.24f, 0.25f, 0.29f, 1f));
-                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.24f, 0.25f, 0.29f, 1f));
-                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.72f, 0.75f, 0.80f, 1f));
+                bool isActive = config.MapWeatherId == e.wid && config.MapWeatherDonor == 0;
+                PushChipColors(isActive, hasPreset);
                 if (ImGui.Button(clabel + "##wc" + e.wid, new Vector2(cw, 0f)))
                 {
                     config.MapWeatherId = e.wid; config.MapWeatherDonor = 0; config.Save();
@@ -1492,10 +1514,12 @@ public class HMSyncUI
                         if (dvx + dvGap + dvw > dvAvail - PanelPad) dvx = 0f;   // wrap, leaving the right margin
                         else { ImGui.SameLine(0f, dvGap); dvx += dvGap; }
                     }
-                    ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.16f, 0.24f, 0.28f, 1f));
-                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.22f, 0.30f, 0.34f, 1f));
-                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.22f, 0.30f, 0.34f, 1f));
-                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.74f, 0.80f, 0.84f, 1f));
+                    // b184: accent the ACTIVE city graft (this exact weather×donor is the live pick). config resets on a
+                    // zone hop, so the accent tracks the genuinely-running graft, not a stale last-tap. Every city chip
+                    // has a captured donor set, so all are "available" → same accent-gradient language as the extra-preset
+                    // grid (full accent = active, darkened accent = available), one consistent "this is on" look.
+                    bool dvActive = config.MapWeatherId == w && config.MapWeatherDonor == d;
+                    PushChipColors(dvActive, available: true);
                     if (ImGui.Button(dvLabel + "##dv" + w + "_" + d, new Vector2(dvw, 0f)))
                     {
                         config.MapWeatherId = w; config.MapWeatherDonor = d; config.Save();
