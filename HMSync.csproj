@@ -11,6 +11,12 @@
         <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     </PropertyGroup>
 
+    <!-- Optional local build overlay: if an HMSync.testing.props file is present next to this project
+         it is imported, otherwise this Import is an inert no-op. A standard checkout does not include
+         that file, so it has no effect on the normal build. -->
+    <Import Project="$(MSBuildProjectDirectory)\HMSync.testing.props"
+            Condition="Exists('$(MSBuildProjectDirectory)\HMSync.testing.props')" />
+
     <ItemGroup>
         <!-- S327: named opcode→id map (FFXIVOpcodes, Global region). Embedded so the packet inspector can label
              packets by name (e.g. 356 → ActorControlSelf). Opcodes rotate per patch; swap this JSON to update.
