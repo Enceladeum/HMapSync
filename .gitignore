@@ -16,3 +16,23 @@ obj/
 # ── OS cruft ──
 Thumbs.db
 .DS_Store
+
+# ── Testing-tree scratch: branch-identical superset; never belongs on main ──
+# per-build snapshots from the ArchiveBuild target (testing overlay)
+_build-archive/
+# locally-baked, un-shipped data (weather-presets.local.json, keyframe-sets.local.json, ...)
+*.local.json
+# testing-instance b## work log; strip item, never promoted
+WORKING-CHANGELOG.md
+# testing-to-main handoff manifest; strip item
+PROMOTION-MANIFEST.md
+
+# ── Secrets / credentials: never tracked on either branch ──
+*.secret.json
+credentials*.json
+*.key
+.env
+
+# NB: HMSync.testing.props is intentionally NOT ignored. It is the testing-only build
+# overlay, tracked on `testing` (version-controls InternalBuild) and absent from `main`.
+# Do NOT add a pattern that would catch it.
