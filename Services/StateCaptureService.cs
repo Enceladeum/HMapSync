@@ -26,6 +26,7 @@ public unsafe class StateCaptureService : IDisposable
     {
         public byte WeatherId;
         public uint WeatherDonor;   // b183: day/night sky-graft donor tt (0 = static weather, no graft)
+        public bool WeatherForced;  // NB-44: true = force this weather on peers; false = the zone's native baseline (peers keep native)
         public bool TimeForced;
         public ushort EorzeaHour;
         public byte EorzeaMinute;
@@ -313,6 +314,7 @@ public unsafe class StateCaptureService : IDisposable
             // host's stream carries a live epoch). Set via MapState.* by the plugin's map* command handlers.
             MapWeatherId = MapState.WeatherId,
             MapWeatherDonor = MapState.WeatherDonor,
+            MapWeatherForced = MapState.WeatherForced,
             MapTimeForced = MapState.TimeForced,
             MapEorzeaHour = MapState.EorzeaHour,
             MapEorzeaMinute = MapState.EorzeaMinute,

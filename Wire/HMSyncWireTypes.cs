@@ -253,6 +253,10 @@ public class HostPayload
     // tt (peers march the same (weather, donor) on the Eorzea clock); 0 = static weather / no graft. New key index so
     // older peers ignore it and a missing key decodes to 0 (= graceful static-weather fallback).
     [Key(10)] public uint MapWeatherDonor { get; set; }
+    // NB-44: does the host IMPOSE this weather on peers (explicit pick), or is it the zone's native baseline (peers keep
+    // their own natively-loaded sky)? New key index → older peers ignore it and a missing key decodes to false = "not
+    // forced", which is the safe legacy behaviour (peer resolves native). See HMSyncConfig.MapWeatherForced.
+    [Key(11)] public bool MapWeatherForced { get; set; }
 }
 
 // ═══════════════════════ CONTROL + JOIN PAYLOADS (shared encode/decode surface) ═══════════════════════

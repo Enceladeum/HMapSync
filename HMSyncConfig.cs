@@ -131,6 +131,10 @@ public class HMSyncConfig : IPluginConfiguration
     public uint MapSettingsTerritory { get; set; }         // selected territory in the Map Settings tab (0 = none)
     public byte MapWeatherId { get; set; }                 // 0 = default/atmospheric (valid)
     public uint MapWeatherDonor { get; set; }              // b183: day/night sky-graft donor tt (0 = static weather, no graft)
+    // NB-44: is MapWeatherId an EXPLICIT host pick (imposed on peers) vs the zone's native baseline (peers keep their
+    // own natively-loaded sky)? A byte can't tell "picked None (0)" from "no pick / follow native" — this flag does.
+    // Set true by DoMapWeather/setweather (the pick funnels), reset false on every zone load + session teardown.
+    public bool MapWeatherForced { get; set; }             // NB-44: true = force this weather on peers; false = peers keep native
     public bool MapTimeForced { get; set; }
     public ushort MapEorzeaHour { get; set; } = 12;
     public byte MapEorzeaMinute { get; set; }

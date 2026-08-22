@@ -149,8 +149,15 @@ public unsafe class MapSettingsService
             log.Information("[HMSync] [WXDIAG] territory=" + territoryId);
             byte def = GetDefaultWeather(territoryId);
             byte live = GetActiveWeather();
-            log.Information("[HMSync] [WXDIAG] defaultWeather(live WeatherManager)=" + def + " (" + WeatherName(def) + ")"
-                + "  activeWeather=" + live + " (" + WeatherName(live) + ")");
+            // NB-42: also dump the WeatherManager-RESOLVED current weather (GetCurrentWeather). On scripted/battle
+            // zones this exposes the desync at a glance: def (WeatherRate roll) can differ from displayed/resolved (the
+            // sky the engine actually shows). Host vs peer: compare `displayed`/`resolved` — if they differ across
+            // clients on the same zone, that's the weather desync; the reassert now broadcasts the RENDERED byte.
+            byte resolved = 0;
+            try { var wm = FFXIVClientStructs.FFXIV.Client.Game.WeatherManager.Instance(); if (wm != null) resolved = wm->GetCurrentWeather(); } catch { }
+            log.Information("[HMSync] [WXDIAG] defaultWeather(WeatherRate roll)=" + def + " (" + WeatherName(def) + ")"
+                + "  displayed(EnvManager+0x26)=" + live + " (" + WeatherName(live) + ")"
+                + "  resolved(WeatherManager)=" + resolved + " (" + WeatherName(resolved) + ")");
             // ⚠ The dropdown SKIPS any entry equal to defaultWeather (it's rendered as the "(native)" row above the
             // separator). So if a promoted id equals defaultWeather it is present in the list and invisible below.
             var legal = GetLegalWeather(territoryId);
@@ -1411,6 +1418,17 @@ public unsafe class MapSettingsService
         pendingVerifyFrames = 15;   // ~1/4s at 60fps: enough for the native UpdateEnvironment recompute to resolve the pick
     }
 
+    // NB-43: cancel any armed native-sky black-verify. Used by the PEER's host-authoritative map-state apply so the peer
+    // MIRRORS the host's sky VERBATIM and never runs the solo black-rescue re-route. That rescue independently re-resolves
+    // the id — the single-authority anti-pattern the rest of map-state avoids — and MISFIRES on the sync path: a fixed-time
+    // DUNGEON's own "Fair Skies" (a legitimately dark sky, and/or sampled mid-env-stream-in before the zone's EnvState has
+    // resolved) scores under the "black" heuristic (liveLanes<6 || maxAbs<0.02) and gets rescued into a day-night CITY
+    // keyframe graft → the peer shows a bright, time-marching city sky while the host shows the fixed dungeon one (1010
+    // Magna Glacies). The host never rescues on its native load (Reassert → ApplyWeather arms no verify), so neither must
+    // the peer. Solo/explicit picks KEEP the rescue — it's a single-client safety net for a user-chosen off-bank sky, not
+    // a sync path. Idempotent; safe to call when nothing is armed (the graft/foreign-cram branches arm no verify anyway).
+    public void CancelNativeSkyVerify() => pendingVerifyFrames = 0;
+
     // b173: per-frame tick (driven by the plugin's framework Update). When the arm window elapses, sample the freshly
     // resolved EnvState (EnvManager+0x58, 0x2F8 bytes) and score its degeneracy: over the SANE float lanes (finite,
     // |v|<1e4 — the same pointer/garbage filter KeyframeSetStore uses), count how many carry a non-trivial value and the
@@ -2299,6 +2317,31 @@ public unsafe class MapSettingsService
                 log.Debug("[HMSync] [WX-STAGE] " + ActiveStageBgForWeather + ": authored=" + stageWeather   // cutscene-only load-time diag
                     + " donor(" + loadedZoneId + ")=" + (loadedZoneId != 0 ? GetDefaultWeather(loadedZoneId) : 0)
                     + " → engaging " + nativeWeather + " (" + WeatherName(nativeWeather) + ")");
+            // NB-42: SCRIPTED / BATTLE-INSTANCE WEATHER. GetDefaultWeather resolves the WeatherRate table
+            // (GetWeatherForDaytime), but scripted/instance zones render a weather the RATE TABLE CANNOT COMPUTE — the
+            // sky is baked into the level env / set by the content director, not rolled from WeatherRate. e.g. 1010
+            // (btl/m5b1): WeatherRate row 0 → weather 2 (the bright standard "Fair Skies"), yet the engine renders a
+            // DIFFERENT same-named variant (a gloomy "Fair Skies" — the sheet has many: 2/30-34/52/63/65…). So the host
+            // broadcast byte 2 while itself showing the gloomy one → peers desync to bright ("definitely diff fair
+            // skies"). The re-apply nudge couldn't fix it because it re-shipped the same wrong byte: a RESOLUTION
+            // divergence, not a delivery failure. FIX: past the settle gate (this runs only from the 150-frame +
+            // IsZoneLoaded host reassert — see HMSyncPlugin), the byte the engine is DISPLAYING is authoritative and no
+            // longer the load-lag value NB-25 warned about, so prefer it over the rate default when they disagree.
+            // Read BEFORE the ApplyWeather below (which would clobber the displayed byte toward the rate value the
+            // director then re-overrides). Only in the plain zone-load baseline: a real cutscene STAGE keeps its authored
+            // .lvb weather (our own cram intent, not something to read back), and a held explicit pick / day-night graft
+            // never reaches here (handled above / not the baseline) so this can't ship the native byte over a graft (b184).
+            if (stageWeather == 0 && loadedZoneId != 0)
+            {
+                byte rendered = GetActiveWeather();   // EnvManager+0x26 = the sky the host is actually showing (settled)
+                if (rendered != 0 && rendered != nativeWeather)
+                {
+                    log.Information("[HMSync] [WX-SCRIPTED] zone " + loadedZoneId + " renders " + rendered + " ("
+                        + WeatherName(rendered) + ") but WeatherRate default is " + nativeWeather + " ("
+                        + WeatherName(nativeWeather) + ") — broadcasting the RENDERED sky so peers match the host.");
+                    nativeWeather = rendered;
+                }
+            }
             if (nativeWeather != 0) ApplyWeather(nativeWeather);
             resolvedWeather = nativeWeather;   // stage-authored for cutscenes, else the zone's deterministic native
         }

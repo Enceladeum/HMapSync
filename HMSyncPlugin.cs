@@ -338,7 +338,26 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 // latch below. Time still applies unconditionally beneath, so the graft interpolates to the new tod each frame.
                 if (td.MapWeatherId != lastAppliedPeerWeather || td.MapWeatherDonor != lastAppliedPeerDonor)
                 {
-                    mapSettings.SetWeatherOrGraft(td.MapWeatherId, td.MapWeatherDonor);   // verbatim id + graft donor; 0/0 == prior static behavior
+                    // NB-44: split the peer's weather apply by INTENT. The map-load reassert ships forced=false (the zone's
+                    // deterministic native baseline); an explicit host pick (mapweather/setweather) ships forced=true.
+                    //   • forced=true  → SetWeatherOrGraft: the FULL machinery (foreign cram, day-night city graft, doodads).
+                    //                    This is a deliberate host choice and MUST be imposed verbatim on peers.
+                    //   • forced=false → SetWeatherNativeOnly: a PLAIN native write of the zone's own resolved byte, which
+                    //                    NEVER routes through the marching-graft branch. This is the Magna Glacies (1010) fix:
+                    //                    the old path called SetWeatherOrGraft even for the native load byte, and because the
+                    //                    dungeon "Fair Skies" byte carries a baked time-marching city set, IsTimeMarching()
+                    //                    was true → the peer grafted a bright day-night CITY sky over the host's fixed dungeon
+                    //                    one. We still APPLY on load (a synthetic load leaves a stale/generic sky otherwise —
+                    //                    the same reason the host's Reassert re-applies native), but via the native lever so
+                    //                    the deterministic byte lands as the plain native sky, matching the host.
+                    // Both branches CancelNativeSkyVerify (NB-43): the deferred black-rescue independently re-resolves the id
+                    // and MISFIRES on the sync path — a legitimately-dark dungeon sky scores as "black" and gets rescued into
+                    // the very city graft we're avoiding. The host arms no verify on its native load, so neither must the peer.
+                    if (td.MapWeatherForced)
+                        mapSettings.SetWeatherOrGraft(td.MapWeatherId, td.MapWeatherDonor);   // explicit pick: verbatim id + graft donor (0/0 == static)
+                    else
+                        mapSettings.SetWeatherNativeOnly(td.MapWeatherId);                    // native baseline: plain native write, never the marching graft
+                    mapSettings.CancelNativeSkyVerify();
                     lastAppliedPeerWeather = td.MapWeatherId;
                     lastAppliedPeerDonor = td.MapWeatherDonor;
                 }
@@ -796,6 +815,19 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             }
         }
 
+        // NB-40: host-set-weather nudge. Re-broadcast the last explicit pick a couple more times (fresh epoch each) to
+        // defeat a dropped/not-yet-ready first delivery. Host-only; idempotent on peers (change-guard). Self-cancels if a
+        // load re-arms the reassert (ArmMapReassert → CancelMapNudge) so we never re-ship the previous map's sky.
+        if (mapNudgeCountdown > 0)
+        {
+            mapNudgeCountdown--;
+            if (mapNudgeCountdown == 0)
+            {
+                if (relay.HasMapAuthority) PushMapState(mapNudgeWeather, mapNudgeDonor);
+                if (--mapNudgeReps > 0) mapNudgeCountdown = 20;   // schedule the next repeat
+            }
+        }
+
         // S327j: guest post-load map-state re-apply. When it fires, clear the applied-epoch so the next transform
         // re-applies the host's held time/weather/BGM to the freshly-loaded map.
         if (guestMapReapplyCountdown > 0)
@@ -882,7 +914,25 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     private uint lastCramTerritory = uint.MaxValue;   // b105: last-seen real TerritoryType, for the weather-cram auto-disarm on zone change
     private bool wasLoggedIn;   // b113: prior-frame login state, for the session-end weather sanitise on logout
     private bool filterDropHandled;   // S326h: latch so the packet-filter-drop emergency return fires once
-    private void ArmMapReassert() => mapReassertCountdown = 150;
+
+    // NB-40: host-set-weather BROADCAST NUDGE. A single HOST-lane epoch is fire-and-forget: if that one emit is dropped
+    // in transit, or a peer is momentarily not-ready (mid-transition), the pick silently never lands ("occasionally host
+    // set weather wouldn't broadcast once set"). This is the "peers need a nudge" hardening we already learned the hard
+    // way for the plain-weather path. After an explicit host weather pick we re-broadcast the SAME verbatim (weather,donor)
+    // a couple more times over ~0.7s, each bumping a fresh epoch. Re-application is idempotent on peers (the
+    // lastAppliedPeerWeather change-guard skips an unchanged sky), so the extra epochs cost nothing when the first
+    // already landed, and self-correct the peer that missed it. Values are the explicit pick (not a live read) so a
+    // graft/None/debug id ships verbatim on every repeat, exactly as the first push did.
+    private int mapNudgeCountdown; private int mapNudgeReps;
+    private byte? mapNudgeWeather; private uint? mapNudgeDonor;
+    private void ArmMapNudge(byte? weather, uint? donor)
+    {
+        mapNudgeWeather = weather; mapNudgeDonor = donor;
+        mapNudgeReps = 2; mapNudgeCountdown = 20;   // ~0.33s to first repeat at 60fps, then again
+    }
+    private void CancelMapNudge() { mapNudgeReps = 0; mapNudgeCountdown = 0; }
+
+    private void ArmMapReassert() { mapReassertCountdown = 150; CancelMapNudge(); }   // a load re-pushes fresh; drop any stale per-pick nudge so we never re-ship the old map's sky
 
     // v0.7.448: arm the settle-gated auto map-reveal (consumed in the tick loop). Same ~2.5s lower bound as
     // the reassert; the tick holds it until the zone + agent are actually ready, so the value is just a floor.
@@ -1186,7 +1236,8 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                     if (relay.HasMapAuthority)
                     {
                         config.MapWeatherId = swid; config.MapWeatherDonor = 0;   // b183: manual setweather is a static pick — no day-night graft donor
-                        PushMapState(swid, 0);   // verbatim id, donor 0 → peers apply via SetWeatherOrGraft(id,0)=static (full-effects, un-gated)
+                        config.MapWeatherForced = true;   // NB-44: explicit pick — force it on peers (reset on next zone load)
+                        PushMapState(swid, 0, weatherForcedOverride: true);   // verbatim id, donor 0 → peers apply via SetWeatherOrGraft(id,0)=static (full-effects, un-gated)
                         chat.Print(swResult + " Displayed now: " + mapSettings.GetActiveWeather() + ". Broadcast to peers.");
                     }
                     else chat.Print(swResult + " Displayed now: " + mapSettings.GetActiveWeather() + ".");
@@ -2007,6 +2058,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // host picks sync as before.
         config.MapWeatherId = 0;    // pick does not carry across loads
         config.MapWeatherDonor = 0; // b183: the day/night graft donor is per-scene too — don't ride into the new zone
+        config.MapWeatherForced = false;   // NB-44: a fresh load carries NO explicit pick → the load reassert ships forced=false → peers keep their own native sky
         mapSettings.WeatherId = 0;  // service copy too, so post-load Reassert resolves the NEW zone's default
         mapSettings.WeatherDonor = 0;
         // WEATHER-CRAM (2026-08-16): a crammed foreign sky (WeatherCramService restamp) must NOT ride across a map
@@ -2104,6 +2156,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // set-but-never-reset value is a latent cross-session leak. Neutral defaults mirror the config initializers.
         config.MapWeatherId = 0;         // 0 = default/atmospheric
         config.MapWeatherDonor = 0;      // b183: clear the day/night graft donor (cross-session leak guard)
+        config.MapWeatherForced = false; // NB-44: no explicit pick carries into a later session (cross-session leak guard)
         config.MapTimeForced = false;
         config.MapEorzeaHour = 12;       // config default is noon, not 0
         config.MapEorzeaMinute = 0;
@@ -3559,7 +3612,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     // applies locally on the host so the host sees it immediately, and saves. Peers apply on receipt (StateApplyService).
     /// <param name="weatherOverride">The weather the host JUST picked, passed verbatim. See the note below on why
     /// an explicit pick must not be read back from the engine.</param>
-    private void PushMapState(byte? weatherOverride = null, uint? donorOverride = null)
+    private void PushMapState(byte? weatherOverride = null, uint? donorOverride = null, bool? weatherForcedOverride = null)
     {
         // Mirror config → capture holder and bump the epoch. Called by every map* handler after it updates config.
         // SINGLE-AUTHORITY WEATHER - v0.7.475: BROADCAST REALITY, NOT INTENT.
@@ -3628,8 +3681,16 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             if (effectiveWeather == 0)
                 effectiveWeather = mapSettings.GetDefaultWeather(zoneLoad.CurrentLoadedZone);
         }
+        // NB-44: is this weather an EXPLICIT host pick (imposed on peers) or the zone's native baseline (peers keep their
+        // own natively-loaded sky)? The pick funnels (DoMapWeather/setweather) pass true; every other push (map load
+        // reassert, time/BGM/NPC changes) reads the sticky config flag, which is set true on a pick and reset false on
+        // each zone load. This is the whole "don't broadcast first weather on map load" fix — a load ships forced=false,
+        // so the peer resolves its OWN deterministic native weather instead of re-routing the host's byte (the 1010
+        // Magna Glacies desync: the peer grafted a marching city "Fair Skies" over the host's fixed dungeon one).
+        bool effectiveForced = weatherForcedOverride ?? config.MapWeatherForced;
         stateCapture.MapState.WeatherId = effectiveWeather;
         stateCapture.MapState.WeatherDonor = effectiveDonor;
+        stateCapture.MapState.WeatherForced = effectiveForced;
         stateCapture.MapState.TimeForced = config.MapTimeForced;
         stateCapture.MapState.EorzeaHour = config.MapEorzeaHour;
         stateCapture.MapState.EorzeaMinute = config.MapEorzeaMinute;
@@ -3681,12 +3742,14 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         if (toks.Length > 1) uint.TryParse(toks[1], out donor);
         config.MapWeatherId = wid;
         config.MapWeatherDonor = donor;
+        config.MapWeatherForced = true;   // NB-44: this is an EXPLICIT host pick — peers must apply it (incl. an explicit None=0). Reset to false on the next zone load.
         // v0.7.475: apply BEFORE PushMapState. PushMapState now broadcasts the LIVE sky, so pushing first would
         // ship the PREVIOUS weather and every change would land on peers exactly one pick late. (The UI's Pick()
         // already applied-then-broadcast; this path was the odd one out.)
         // b183: route the live host apply through the donor-aware graft lever so the host sees the same day/night sky it ships.
         if (MapApplyLive) mapSettings.SetWeatherOrGraft(wid, donor);   // apply live only in-session on a loaded map
-        PushMapState(wid, donor);   // verbatim: the pick is intent, not something to read back off a lagging engine field
+        PushMapState(wid, donor, weatherForcedOverride: true);   // verbatim: the pick is intent, not something to read back off a lagging engine field; NB-44 force it on peers
+        ArmMapNudge(wid, donor);    // NB-40: re-broadcast the pick a couple more times so a dropped/not-ready first emit still lands on peers
         if (config.ShowDebugCommands) chat.Print("[HMSync] Map weather set to " + mapSettings.WeatherName(wid) + (MapApplyLive ? "." : " (saved, applies on map load)."));
     }
 
@@ -4419,6 +4482,14 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 {
                     stateCapture.MapState.WeatherId = inherited.MapWeatherId;
                     stateCapture.MapState.WeatherDonor = inherited.MapWeatherDonor;   // b183: inherit the day-night graft donor too
+                    stateCapture.MapState.WeatherForced = inherited.MapWeatherForced; // NB-44: inherit whether the weather is an explicit forced pick
+                    // NB-44: forced-ness is INTENT (not observable from the engine like the live weather byte is), so a
+                    // promoted host can't re-derive it by reading the sky — seed config from the inherited state so our
+                    // next PushMapState() (e.g. a time drag) keeps forcing the old host's pick instead of silently
+                    // dropping to forced=false and reverting every peer to native.
+                    config.MapWeatherId = inherited.MapWeatherId;
+                    config.MapWeatherDonor = inherited.MapWeatherDonor;
+                    config.MapWeatherForced = inherited.MapWeatherForced;
                     stateCapture.MapState.TimeForced = inherited.MapTimeForced;
                     stateCapture.MapState.EorzeaHour = inherited.MapEorzeaHour;
                     stateCapture.MapState.EorzeaMinute = inherited.MapEorzeaMinute;

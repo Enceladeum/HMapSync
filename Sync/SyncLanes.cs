@@ -124,6 +124,7 @@ public static class LaneCensus
         // ── HOST: map-state block (host-authoritative) ──
         ["MapWeatherId"] = SyncLane.Host,
         ["MapWeatherDonor"] = SyncLane.Host,       // b183: day/night sky-graft donor tt (rides the host lane beside MapWeatherId)
+        ["MapWeatherForced"] = SyncLane.Host,      // NB-44: force-weather-on-peers flag (rides the host lane beside MapWeatherId)
         ["MapTimeForced"] = SyncLane.Host,
         ["MapEorzeaHour"] = SyncLane.Host,
         ["MapEorzeaMinute"] = SyncLane.Host,
