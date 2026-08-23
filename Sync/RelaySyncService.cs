@@ -71,6 +71,13 @@ public class RelaySyncService : IDisposable
     public event Action<string>? OnHostTransfer;
     public event Action<string, TransformData, bool>? OnTransformReceived;   // (peerId, snapshot, isHotLane) - v0.7.461: lane bool for the HOT-only Seq gate
 
+    // ── FEAT-R2 (HDM disguise-sync) ── inbound disguise atom / one-shot action from a peer. The payload is self-
+    // describing (carries SenderContentId + SubjectId), so the receiver resolves identity itself - no relay peerId
+    // needed. See docs/HDM-sync-HMS-side-brief.md §4. A puppet's per-frame TRANSFORM rides its own PuppetMove (0x52).
+    public event Action<HMSync.Wire.DisguiseUpdatePayload>? OnDisguiseReceived;
+    public event Action<HMSync.Wire.ActionPulsePayload>? OnActionPulseReceived;
+    public event Action<HMSync.Wire.PuppetMovePayload>? OnPuppetMoveReceived;
+
     // ── Per-subject composite cache (Stage 2a) ── each lane message updates its slice of the subject's composite
     // TransformData; the merged whole feeds OnTransformReceived. Keyed by SUBJECT entity id (payload `sid`), not
     // sender - the entity-addressing seam. This preserves the burst-coalescing property: one composite per subject,
@@ -369,6 +376,37 @@ public class RelaySyncService : IDisposable
         await SendFrame(HMSync.Wire.WireKind.HostTransfer, payload);
     }
 
+    // ── FEAT-R2 (HDM disguise-sync) senders ── the caller (StateApplyService's HDM bridge) fills the atom/action
+    // fields (Kind/BaseId/… from HDM's IPC event, SenderContentId = local player, Epoch = HDM-authored); the service
+    // stamps the per-lane Seq (dedup/ordering, an envelope concern like hotSeq). Relay-opaque; no host gate (a source
+    // only ever disguises its own actor/puppets). SubjectId "" = own body, "<cid>:<slot>" = a spawned puppet.
+    private uint disguiseSeq;
+    private uint actionSeq;
+
+    public async Task SendDisguiseUpdate(HMSync.Wire.DisguiseUpdatePayload p)
+    {
+        if (!IsConnected) return;
+        p.Seq = ++disguiseSeq;
+        await SendFrame(HMSync.Wire.WireKind.DisguiseUpdate,
+            MessagePack.MessagePackSerializer.Serialize(p, HMSync.Wire.WireFormat.Options));
+    }
+
+    public async Task SendActionPulse(HMSync.Wire.ActionPulsePayload p)
+    {
+        if (!IsConnected) return;
+        p.Seq = ++actionSeq;
+        await SendFrame(HMSync.Wire.WireKind.ActionPulse,
+            MessagePack.MessagePackSerializer.Serialize(p, HMSync.Wire.WireFormat.Options));
+    }
+
+    // Puppet transform: no Seq (coalesced last-writer-wins; a dropped/reordered frame is self-correcting on the next).
+    public async Task SendPuppetMove(HMSync.Wire.PuppetMovePayload p)
+    {
+        if (!IsConnected) return;
+        await SendFrame(HMSync.Wire.WireKind.PuppetMove,
+            MessagePack.MessagePackSerializer.Serialize(p, HMSync.Wire.WireFormat.Options));
+    }
+
     private async Task ReceiveLoop(CancellationToken ct)
     {
         var buffer = new byte[8192];
@@ -590,6 +628,28 @@ public class RelaySyncService : IDisposable
                 break;
             }
 
+            // ── FEAT-R2 (HDM disguise-sync) receivers ── decode → hand the self-describing payload to the receiver,
+            // which resolves SenderContentId→objectIndex and drives HDM's IPC. Kind-agnostic (Monster/Demi/Human ride
+            // the same atom). A puppet's per-frame transform rides PuppetMove (0x52), decoded just below.
+            case HMSync.Wire.WireKind.DisguiseUpdate:
+            {
+                var d = MessagePack.MessagePackSerializer.Deserialize<HMSync.Wire.DisguiseUpdatePayload>(payload, HMSync.Wire.WireFormat.Options);
+                OnDisguiseReceived?.Invoke(d);
+                break;
+            }
+            case HMSync.Wire.WireKind.ActionPulse:
+            {
+                var a = MessagePack.MessagePackSerializer.Deserialize<HMSync.Wire.ActionPulsePayload>(payload, HMSync.Wire.WireFormat.Options);
+                OnActionPulseReceived?.Invoke(a);
+                break;
+            }
+            case HMSync.Wire.WireKind.PuppetMove:
+            {
+                var pm = MessagePack.MessagePackSerializer.Deserialize<HMSync.Wire.PuppetMovePayload>(payload, HMSync.Wire.WireFormat.Options);
+                OnPuppetMoveReceived?.Invoke(pm);
+                break;
+            }
+
             case HMSync.Wire.WireKind.ZoneLoadExecute:
             {
                 // ZoneLoad carries its JSON as payload bytes (not yet ported to a wire POCO - see SendZoneLoad).
@@ -626,6 +686,9 @@ public class RelaySyncService : IDisposable
         }
     }
 
+    // ── S331 (Stage 4): binary frame send. Builds an UPLEG frame [magic][kind][flags][timestamp][payload] and
+    // sends it as a WS BINARY message. The payload is already-serialized msgpack bytes. No sender/room - the relay
+    // stamps the trusted sender and knows the room from the connection (spec §1a). This replaces the JSON Send path.
     // App-level lobby keepalive loop (see KeepAliveIntervalMs). Runs for the life of the connection; ticks every
     // ~20s and, while the socket is up, sends a WireKind.Ping (empty payload). The relay answers Pong directly and
     // never fans it out. Gated on IsConnected only - a keepalive is purely socket-level, needed the moment we connect
@@ -646,9 +709,6 @@ public class RelaySyncService : IDisposable
         catch (Exception ex) { log.Debug("[HMSync] keepalive loop ended: " + ex.Message); }
     }
 
-    // ── S331 (Stage 4): binary frame send. Builds an UPLEG frame [magic][kind][flags][timestamp][payload] and
-    // sends it as a WS BINARY message. The payload is already-serialized msgpack bytes. No sender/room - the relay
-    // stamps the trusted sender and knows the room from the connection (spec §1a). This replaces the JSON Send path.
     private async Task SendFrame(byte kind, byte[] msgpackPayload)
     {
         if (ws?.State != WebSocketState.Open) return;
@@ -681,6 +741,9 @@ public class RelaySyncService : IDisposable
         HMSync.Wire.WireKind.ColdUpdate => "ColdUpdate",
         HMSync.Wire.WireKind.HostUpdate => "HostUpdate",
         HMSync.Wire.WireKind.EventPulse => "EventPulse",
+        HMSync.Wire.WireKind.DisguiseUpdate => "DisguiseUpdate",
+        HMSync.Wire.WireKind.ActionPulse => "ActionPulse",
+        HMSync.Wire.WireKind.PuppetMove => "PuppetMove",
         HMSync.Wire.WireKind.ZoneLoadExecute => "ZoneLoadExecute",
         HMSync.Wire.WireKind.SessionEnd => "SessionEnd",
         HMSync.Wire.WireKind.Ping => "Ping",

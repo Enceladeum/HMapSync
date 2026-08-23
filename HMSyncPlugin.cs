@@ -50,6 +50,8 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     private readonly InstalledPluginService installedPlugins;   // v0.7.371: Modules panel presence + open
     private readonly LocalStateDetector detector;
     private readonly MonikerService moniker;   // S328x: Moniker nameplate integration
+    private readonly HdmIpc hdm;   // FEAT-R2: HDM (mob-disguise) IPC consumer (optional; inert if HDM absent)
+    private readonly DisguiseSyncService disguiseSync;   // FEAT-R2: HDM ⇄ relay disguise-sync bridge
     private readonly NpcVisibilityService npcVisibility;   // S328aa: host-authoritative NPC scene-cleanup
     private readonly NetStatsService netStats;   // S328ag: relay bandwidth instrumentation
     private readonly RelayHealthService relayHealth;   // background /health poll → relay traffic-light
@@ -157,6 +159,10 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         stateApply = new StateApplyService(objectTable, framework, dataManager, log, pluginInterface, sigScanner);
         stateApply.LocoDiag = locoDiag;        // receiver-side locomotion diagnostic hook (after stateApply exists)
         stateApply.DebugTrace = config.ShowDebugCommands;   // S329b: receiver traces respect plugin debug mode
+        // FEAT-R2: HDM disguise sync. HdmIpc is the (optional) IPC boundary to the mob-disguise plugin; DisguiseSyncService
+        // bridges it to the relay wire (0x50/0x51/0x52), resolving identity via stateApply's roster. Inert if HDM absent.
+        hdm = new HdmIpc(pluginInterface, log);
+        disguiseSync = new DisguiseSyncService(hdm, relay, stateApply, framework, log, LocalContentId);
         packetFilter = new PacketFilterService(log, hooks, sigScanner);
         opcodeMap = new OpcodeMapService(log);
         // Say filter: supplier returns the set of session-member character names (local + peers), lower-cased. Used to
@@ -272,7 +278,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         mountHudDismount.Enable();
 
         relay.OnTransformReceived += stateApply.OnTransformReceived;
-        stateApply.OnPeerBound = idx => { actorVisibility.RegisterPeer(idx); zoneLoad.UnhidePreservedObject(idx); };   // S327/v0.7.335: show a puppet the moment it binds, clearing BOTH hide systems
+        stateApply.OnPeerBound = idx => { actorVisibility.RegisterPeer(idx); zoneLoad.UnhidePreservedObject(idx); disguiseSync.OnPeerBound(idx); };   // S327/v0.7.335: show a puppet the moment it binds, clearing BOTH hide systems; FEAT-R2: apply any cached disguise
         // S328x: Moniker nameplate integration - capture the local chosen name into outgoing transforms, and apply a
         // peer's chosen name to their puppet. Both no-op if Moniker isn't installed (MonikerService.Available == false).
         stateCapture.MonikerNameSupplier = () => moniker.GetLocalName();
@@ -458,13 +464,20 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             }).ToList(),
             // v0.7.371: Modules panel. Aliases cover the internal-vs-display name gap (HMS itself ships as "HM-Sync"),
             // so a module isn't silently reported missing just because its manifest name differs from the label.
+            // HDM ships as internal name "HDM" (renamed from "HGuise" at 0.8.54); keep the old name as an alias so a
+            // peer on a pre-rename build still resolves. Moniker keeps its own alias set.
             ModulePresent = n => n == "Moniker"
                 ? installedPlugins.IsPresent("Moniker", "HMoniker", "HM-Moniker")
-                : installedPlugins.IsPresent(n, "H" + n, "HM-" + n),
+                : n == "HDM"
+                    ? installedPlugins.IsPresent("HDM", "HGuise")
+                    : installedPlugins.IsPresent(n, "H" + n, "HM-" + n),
             ModuleCanOpen = n => n == "Moniker"
                 ? installedPlugins.CanOpen("Moniker", "HMoniker", "HM-Moniker")
-                : installedPlugins.CanOpen(n, "H" + n, "HM-" + n),
+                : n == "HDM"
+                    ? installedPlugins.CanOpen("HDM", "HGuise")
+                    : installedPlugins.CanOpen(n, "H" + n, "HM-" + n),
             OpenModule = n => { if (n == "Moniker") installedPlugins.Open("Moniker", "HMoniker", "HM-Moniker");
+                                else if (n == "HDM") installedPlugins.Open("HDM", "HGuise");
                                 else installedPlugins.Open(n, "H" + n, "HM-" + n); },
             CanLoad = () => relay.HasMapAuthority,
             RunCommand = (sub, arg) => RunCommandFromUI(sub, arg),
@@ -509,6 +522,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             SayDriftBanner = () => sayDriftBanner,
             DismissSayDriftBanner = () => sayDriftBanner = false,
             MonikerAvailable = () => moniker.Available,
+            HdmAvailable = () => hdm.Available,
             // S327x: packet inspector (Packets tab) wiring.
             CaptureActive = () => packetFilter.CaptureInbound,
             SetCapture = filterCsv => RunOnMainThread(() => DoPktCap(filterCsv ?? "")),
@@ -2207,6 +2221,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         stateApply.Stop();
         detector.Stop();
         actorVisibility.Stop();
+        disguiseSync.Reset();   // FEAT-R2: despawn every mirror puppet we spawned + clear the disguise caches on teardown
 
         bool announceMovement = noclip.IsActive;
 
@@ -4413,6 +4428,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             // (host only) so the newcomer loads the right map - see RequestZoneResend below.
             stateCapture.RequestFullResend();
             if (relay.IsHost) RequestZoneResend();
+            disguiseSync.BroadcastFullState();   // FEAT-R2: re-offer our current disguise + puppets so the newcomer catches up
         });
     }
 
@@ -4458,6 +4474,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             if (stateApply.Peers.TryGetValue(peerId, out var info))
             {
                 if (!string.IsNullOrEmpty(info.CharacterName)) who = info.CharacterName;
+                if (info.ContentId != 0) disguiseSync.OnPeerDeparted(info.ContentId);   // FEAT-R2: revert disguise + despawn their mirror puppets (before unregister drops the roster entry)
                 if (info.ObjectIndex.HasValue)
                 {
                     actorVisibility.UnregisterPeer(info.ObjectIndex.Value);
@@ -4854,6 +4871,8 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         try { weatherCram.Dispose(); } catch { }   // WEATHER-CRAM b96: drop the UpdateEnvironment restamp hook
         carpet.Dispose();
         moniker.Dispose();   // S328x
+        try { disguiseSync.Dispose(); } catch { }   // FEAT-R2: unsubscribe HDM ⇄ relay bridge (before hdm, which owns the IPC gates)
+        try { hdm.Dispose(); } catch { }            // FEAT-R2: unsubscribe HDM IPC event gates
         npcVisibility.Dispose();   // S328aa
         relay.Dispose();
 

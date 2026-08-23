@@ -77,6 +77,15 @@ public static class WireKind
     public const byte ColdUpdate      = 0x13;
     public const byte HostUpdate      = 0x14;
     public const byte EventPulse      = 0x15;   // reserved
+    // ── FEAT-R2: HDM (mob-disguise) sync family, reserved range 0x50–0x5F. Client-authored, relay-opaque (the relay
+    // fans these out verbatim via its default case, no logic change). Old clients ignore them (no default: in dispatch).
+    // See docs/HDM-sync-HMS-side-brief.md §2.1. DisguiseUpdate is snapshot-able (re-sent on late-join); ActionPulse is
+    // a one-shot (never backfilled). PuppetMove is a per-frame transform for a spawned puppet subject (the Hot render
+    // lane is still monolithic-TransformUpdate on the local player, so a mirror puppet gets its own compact opcode
+    // rather than threading a SubjectId through the not-yet-split Hot lane).
+    public const byte DisguiseUpdate  = 0x50;   // disguise atom - on change, coalesced, re-sent on first-sight
+    public const byte ActionPulse     = 0x51;   // one-shot action replay - immediate, one per fire, never snapshotted
+    public const byte PuppetMove      = 0x52;   // per-frame puppet transform (non-"" SubjectId); coalesced last-wins
     public const byte ZoneLoadExecute = 0x30;
     public const byte SessionEnd      = 0x40;
     public const byte Ping            = 0xF0;
@@ -257,6 +266,56 @@ public class HostPayload
     // their own natively-loaded sky)? New key index → older peers ignore it and a missing key decodes to false = "not
     // forced", which is the safe legacy behaviour (peer resolves native). See HMSyncConfig.MapWeatherForced.
     [Key(11)] public bool MapWeatherForced { get; set; }
+}
+
+// ═══════════════════════ HDM DISGUISE-SYNC PAYLOADS (FEAT-R2; client-authored, relay-opaque) ═══════════════════════
+// Not TransformData render fields → NOT governed by LaneCensus.Validate (that census covers the 4 render lanes only).
+// A separate payload family, like HostPayload's map-state block. See docs/HDM-sync-HMS-side-brief.md §2.2/§2.3/§2.5.
+// The atom field set MIRRORS HDM's DisguiseAtom (HGuise/docs/HDM-sync-IPC-decisions.md §E5) MINUS the envelope; HMS
+// stamps SubjectId/Seq/SenderContentId on egress. Kind==0 = REVERT (disguise off, source still present).
+
+/// <summary>DisguiseUpdate (0x50): a disguise atom for a subject (source's own body if SubjectId=="", else a puppet).
+/// Snapshot-able state - coalesced last-writer-wins per (source, SubjectId), re-sent on late-join/first-sight.</summary>
+[MessagePackObject]
+public class DisguiseUpdatePayload
+{
+    [Key(0)] public string SubjectId { get; set; } = "";   // "" = source's own body; "<cid>:<slot>" = a spawned puppet
+    [Key(1)] public uint Seq { get; set; }                 // dedup/ordering within the lane (envelope, like other lanes)
+    [Key(2)] public ulong SenderContentId { get; set; }    // source identity (the atom's owner)
+    [Key(3)] public uint Epoch { get; set; }               // per-source monotonic; bumps on every atom change (HDM authors)
+    [Key(4)] public byte Kind { get; set; }                // McType 1/2/3 → receiver apply path; 0 = REVERT (disguise off)
+    [Key(5)] public uint BaseId { get; set; }              // BNpcBase (<1e6) or ENpcBase (>=1e6); receiver resolves locally
+    [Key(6)] public int ModelCharaId { get; set; }         // render key (authoritative for Monster; carried for Demi/Human)
+    [Key(7)] public float Scale { get; set; }              // resolved absolute multiplier
+    [Key(8)] public float VOffset { get; set; }            // vertical draw offset, world units (F2: apply-time only)
+    [Key(9)] public ushort LoopId { get; set; }            // held animation timeline (Timeline.BaseOverride); 0 = none
+}
+
+/// <summary>ActionPulse (0x51): a one-shot action replay on a subject. Immediate, one per fire, NEVER snapshotted or
+/// backfilled. Receiver drops it if Epoch &lt; the subject's current applied disguise epoch (belongs to a gone disguise).</summary>
+[MessagePackObject]
+public class ActionPulsePayload
+{
+    [Key(0)] public string SubjectId { get; set; } = "";   // which actor/puppet the action plays on
+    [Key(1)] public ulong SenderContentId { get; set; }
+    [Key(2)] public uint Epoch { get; set; }               // the disguise epoch it was fired under (drop-if-stale gate)
+    [Key(3)] public uint Seq { get; set; }                 // orders bursts of one-shots
+    [Key(4)] public ushort PlayId { get; set; }            // AnimationService.PlayOnce timeline id
+}
+
+/// <summary>PuppetMove (0x52): a per-frame world transform for a spawned puppet subject (SubjectId is always non-"",
+/// "&lt;cid&gt;:&lt;slot&gt;"). Coalesced last-writer-wins - a dropped frame is self-correcting. The receiver maps the
+/// SubjectId to its LOCAL mirror puppet's object index and drives HDM.MovePuppet. Never carries a disguise (that rides
+/// DisguiseUpdate); a puppet with no prior DisguiseUpdate is unknown to the receiver and the move is dropped.</summary>
+[MessagePackObject]
+public class PuppetMovePayload
+{
+    [Key(0)] public string SubjectId { get; set; } = "";   // "<cid>:<slot>" - the owning source + puppet ordinal
+    [Key(1)] public ulong SenderContentId { get; set; }    // source identity (echo-suppress on receiver)
+    [Key(2)] public float X { get; set; }
+    [Key(3)] public float Y { get; set; }
+    [Key(4)] public float Z { get; set; }
+    [Key(5)] public float Rot { get; set; }                // facing, radians
 }
 
 // ═══════════════════════ CONTROL + JOIN PAYLOADS (shared encode/decode surface) ═══════════════════════

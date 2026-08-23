@@ -179,6 +179,7 @@ public class HMSyncUI
     public Func<bool>? SayDriftBanner;             // true when the passthrough auto-shut (drift/patch)
     public System.Action? DismissSayDriftBanner;
     public Func<bool>? MonikerAvailable;           // S328x: grey/green indicator chip for Moniker detection
+    public Func<bool>? HdmAvailable;               // FEAT-R2: grey/green chip for HDM (IPC-handshake-backed, like Moniker)
 
     // v0.7.371: Modules panel - presence + one-click open, wired by the plugin to InstalledPluginService.
     // ModulePresent(internalName) → installed AND loaded. ModuleCanOpen → it exposes a window we can open.
@@ -2142,12 +2143,12 @@ ImGui.Spacing();
             bool mk = MonikerAvailable?.Invoke() ?? ModulePresent?.Invoke("Moniker") ?? false;
             DrawModuleRow("Moniker", "Moniker", mk, "Sync custom character names across the session.");
 
-            // Outfits - presence-detected only (HMS has no Outfits IPC integration; this row is informational).
-            // v0.7.432: displayed WITHOUT the H prefix for consistency with Moniker. Detection key is also
-            // "Outfits" now; ModulePresent's existing "H"+n fallback matches the installed "HOutfits" plugin.
+            // HDM (mob disguise) - HMS integrates with it via IPC (the disguise-sync bridge), so prefer its own
+            // handshake-backed availability flag, falling back to plugin presence. Supersedes the old "Outfits" row
+            // (HOutfits had only limited NPC support; HDM is the full appearance + spawnable-NPC module now).
             ImGui.Spacing();
-            bool ho = ModulePresent?.Invoke("Outfits") ?? false;
-            DrawModuleRow("Outfits", "Outfits", ho, "Apply and manage Glamourer outfits.");
+            bool hdm = HdmAvailable?.Invoke() ?? ModulePresent?.Invoke("HDM") ?? false;
+            DrawModuleRow("HDM", "HDM", hdm, "Apply appearances, spawn and manage NPCs.");
 
             // World Editor - placeholder for a not-yet-released module. Grey dot, "coming soon" tagline.
             ImGui.Spacing();
