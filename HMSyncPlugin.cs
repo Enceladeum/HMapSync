@@ -138,6 +138,15 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         relay.NetStats = netStats;          // relay feeds byte counters
         relayHealth = new RelayHealthService(config, log, () => ui?.IsOpen ?? false);
         relayHealth.Start();                // /health poll while the window is open → the uplink light
+        // Auto-validate a stored key on load. KeyStatus defaults to NoKey and used to only advance on a MANUAL confirm,
+        // so after a plugin update/reopen a perfectly valid key showed "○ No key" until the user re-edited + re-confirmed
+        // it. Kick the same WS-handshake probe ConfirmRelayKey uses against the already-stored key (fire-and-forget,
+        // off-thread) so the status dot reflects reality without any manual step. Empty key → CheckKey no-ops to NoKey.
+        {
+            var svcs0 = config.RelayServices; int s0 = config.SelectedRelayService;
+            if (s0 >= 0 && s0 < svcs0.Count && !string.IsNullOrWhiteSpace(svcs0[s0].Key))
+                _ = relayHealth.CheckKey(svcs0[s0].Key ?? "");
+        }
         detector = new LocalStateDetector(objectTable, dataManager, log);
         detector.DebugTrace = config.ShowDebugCommands;   // S328w: LOCOTRACE only when debug mode is on
         moniker = new MonikerService(pluginInterface, log);   // S328x: Moniker nameplate integration (optional; inert if absent)

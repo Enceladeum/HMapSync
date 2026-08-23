@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Pose changes now sync on the first try**: cycling your standing or sitting pose (`/cpose`) sometimes did not reach other players until you repeated it; the first change now broadcasts reliably.
 - **Matching sky on instanced zones**: in some instanced zones (for example Magna Glacies), a synced player could show a different sky than the host even when both were on the zone's own weather; synced players now match the host's native sky, and a chosen weather preset is only imposed when the host actually picks one.
+- **Relay key status is correct after a restart**: a valid key could show as "No key" until you re-entered it; the plugin now re-checks your saved key on launch so the status reflects reality without any manual step.
 
 ## [1.0.1.0] - 2026-08-21
 
