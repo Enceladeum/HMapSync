@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1.2] - 2026-08-24
+
+### Added
+
+- **Keep a session open with no map loaded**: a hosted lobby can now stay live for open-world roleplay without loading a virtual zone first.
+- **HDM groundwork**: adds the disguise-sync and accent handshake the upcoming HDM module builds on, plus its entry in the modules list; inert until HDM is installed.
+
 ## [1.0.1.1] - 2026-08-23
 
 ### Changed
@@ -168,6 +175,8 @@ Initial public release.
 - **Curated spawns** for every zone, with your own spawn points recorded via `/hms memo`.
 - **Optional integrations**: Glamourer for cosmetic visibility toggles, and Moniker for in-session nameplate changes.
 
+[1.0.1.2]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.1.2
+[1.0.1.1]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.1.1
 [1.0.1.0]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.1.0
 [1.0.0.9]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.9
 [1.0.0.8]: https://github.com/Enceladeum/HMapSync/releases/tag/v1.0.0.8
