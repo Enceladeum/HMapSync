@@ -180,6 +180,7 @@ public class HMSyncUI
     public System.Action? DismissSayDriftBanner;
     public Func<bool>? MonikerAvailable;           // S328x: grey/green indicator chip for Moniker detection
     public Func<bool>? HdmAvailable;               // FEAT-R2: grey/green chip for HDM (IPC-handshake-backed, like Moniker)
+    public System.Action? AccentChanged;           // fired after the user commits an accent change → pushes HMSync.AccentChanged over IPC
 
     // v0.7.371: Modules panel - presence + one-click open, wired by the plugin to InstalledPluginService.
     // ModulePresent(internalName) → installed AND loaded. ModuleCanOpen → it exposes a window we can open.
@@ -2106,7 +2107,7 @@ ImGui.Spacing();
                 bool isSel = Math.Abs(c.X - accV.X) < 0.01f && Math.Abs(c.Y - accV.Y) < 0.01f && Math.Abs(c.Z - accV.Z) < 0.01f;
                 var p0 = ImGui.GetCursorScreenPos();
                 if (ImGui.ColorButton("##pa" + c.X.ToString("F2") + c.Y.ToString("F2"), c, ImGuiColorEditFlags.NoTooltip, new Vector2(26, 26)))
-                { config.AccentColor = new[] { c.X, c.Y, c.Z, 1f }; config.Save(); }
+                { config.AccentColor = new[] { c.X, c.Y, c.Z, 1f }; config.Save(); AccentChanged?.Invoke(); }
                 if (isSel)
                     ImGui.GetWindowDrawList().AddRect(new Vector2(p0.X - 2, p0.Y - 2), new Vector2(p0.X + 28, p0.Y + 28),
                         ImGui.GetColorU32(new Vector4(0.95f, 0.95f, 0.98f, 1f)), 4f);
@@ -2127,7 +2128,7 @@ ImGui.Spacing();
             if (ImGui.BeginPopup("##accentpick"))
             {
                 if (ImGui.ColorPicker4("##accentpicker", ref accV, ImGuiColorEditFlags.NoAlpha))
-                { config.AccentColor = new[] { accV.X, accV.Y, accV.Z, 1f }; config.Save(); }
+                { config.AccentColor = new[] { accV.X, accV.Y, accV.Z, 1f }; config.Save(); AccentChanged?.Invoke(); }
                 ImGui.EndPopup();
             }
             ImGui.SameLine(); ImGui.AlignTextToFramePadding(); ImGui.TextDisabled("custom");

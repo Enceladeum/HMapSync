@@ -51,6 +51,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     private readonly LocalStateDetector detector;
     private readonly MonikerService moniker;   // S328x: Moniker nameplate integration
     private readonly HdmIpc hdm;   // FEAT-R2: HDM (mob-disguise) IPC consumer (optional; inert if HDM absent)
+    private readonly HmsIpcProvider hmsProvider;   // HMS's first IPC PROVIDER surface (HMSync.* — accent + version gate)
     private readonly DisguiseSyncService disguiseSync;   // FEAT-R2: HDM ⇄ relay disguise-sync bridge
     private readonly NpcVisibilityService npcVisibility;   // S328aa: host-authoritative NPC scene-cleanup
     private readonly NetStatsService netStats;   // S328ag: relay bandwidth instrumentation
@@ -152,6 +153,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         detector = new LocalStateDetector(objectTable, dataManager, log);
         detector.DebugTrace = config.ShowDebugCommands;   // S328w: LOCOTRACE only when debug mode is on
         moniker = new MonikerService(pluginInterface, log);   // S328x: Moniker nameplate integration (optional; inert if absent)
+        hmsProvider = new HmsIpcProvider(pluginInterface, log, () => config.AccentColor);   // HMS→modules IPC (HMSync.* accent/version)
         npcVisibility = new NpcVisibilityService(objectTable, log);   // S328aa: NPC scene-cleanup (despawn / hide quest signs)
         stateCapture = new StateCaptureService(objectTable, framework, relay, detector, log);
         // (S328ag dirty-check toggle removed - change-detection is always on now.)
@@ -523,6 +525,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             DismissSayDriftBanner = () => sayDriftBanner = false,
             MonikerAvailable = () => moniker.Available,
             HdmAvailable = () => hdm.Available,
+            AccentChanged = () => hmsProvider.NotifyAccentChanged(),   // push HMSync.AccentChanged on accent commit (drops the consumer's poll lag)
             // S327x: packet inspector (Packets tab) wiring.
             CaptureActive = () => packetFilter.CaptureInbound,
             SetCapture = filterCsv => RunOnMainThread(() => DoPktCap(filterCsv ?? "")),
@@ -4871,6 +4874,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         try { weatherCram.Dispose(); } catch { }   // WEATHER-CRAM b96: drop the UpdateEnvironment restamp hook
         carpet.Dispose();
         moniker.Dispose();   // S328x
+        try { hmsProvider.Dispose(); } catch { }   // HMSync.* provider: unregister the accent/version gates
         try { disguiseSync.Dispose(); } catch { }   // FEAT-R2: unsubscribe HDM ⇄ relay bridge (before hdm, which owns the IPC gates)
         try { hdm.Dispose(); } catch { }            // FEAT-R2: unsubscribe HDM IPC event gates
         npcVisibility.Dispose();   // S328aa
