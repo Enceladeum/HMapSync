@@ -16,6 +16,20 @@ public class RelaySyncService : IDisposable
     private ClientWebSocket? ws;
     private CancellationTokenSource? cts;
     private Task? receiveTask;
+    private Task? keepAliveTask;
+
+    // App-level lobby keepalive interval. A no-map lobby (participants gathered, no zone loaded yet) engages NO
+    // synthetic session, so StateCaptureService - the only source of the HOT liveness heartbeat - never starts, and
+    // the connection is otherwise held open by nothing but the 15s WebSocket protocol ping. If that ping fails to
+    // traverse the Cloudflare tunnel (idle drop / client sleep / a blip) the socket dies, the relay reaps the peer,
+    // and once every peer is in the same silent state the room empties and is pruned - the "lobby times out when no
+    // map is loaded" symptom. This app-level Ping (relay answers Pong directly, never fanned out, negligible rate
+    // cost) keeps the socket demonstrably alive from the moment we connect, independent of a map load - so a lobby
+    // (e.g. an HDM open-world roleplay gather that never loads an HMS map) persists as long as anyone stays. It does
+    // NOT engage the packet filter or broadcast anything, so the "friends stay real characters Mare can cache"
+    // property of the pre-load lobby is preserved. Redundant-but-harmless during a synthetic session (the HOT
+    // heartbeat already flows far more often); kept unconditional to stay decoupled from StateCaptureService.
+    private const int KeepAliveIntervalMs = 20000;
 
     public string LocalPeerId { get; private set; } = Guid.NewGuid().ToString("N")[..12];
     // S331 (Stage 4): true once the relay's RoomJoined has arrived (it mints our peer id). The capture/send loop must
@@ -180,6 +194,7 @@ public class RelaySyncService : IDisposable
                 MessagePack.MessagePackSerializer.Serialize(joinWire, HMSync.Wire.WireFormat.Options));
 
             receiveTask = Task.Run(() => ReceiveLoop(cts.Token));
+            keepAliveTask = Task.Run(() => KeepAliveLoop(cts.Token));
             return true;
         }
         catch (Exception ex)
@@ -609,6 +624,26 @@ public class RelaySyncService : IDisposable
                 break;
             }
         }
+    }
+
+    // App-level lobby keepalive loop (see KeepAliveIntervalMs). Runs for the life of the connection; ticks every
+    // ~20s and, while the socket is up, sends a WireKind.Ping (empty payload). The relay answers Pong directly and
+    // never fans it out. Gated on IsConnected only - a keepalive is purely socket-level, needed the moment we connect
+    // (before RoomJoined, before any zone-load). Cancelled via the shared cts on Disconnect, so the Task.Delay breaks
+    // and the loop exits cleanly. Every failure is swallowed - a keepalive must never fault the session.
+    private async Task KeepAliveLoop(CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(KeepAliveIntervalMs, ct).ConfigureAwait(false);
+                if (IsConnected && ws?.State == WebSocketState.Open)
+                    await SendFrame(HMSync.Wire.WireKind.Ping, System.Array.Empty<byte>()).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) { /* disconnect - normal exit */ }
+        catch (Exception ex) { log.Debug("[HMSync] keepalive loop ended: " + ex.Message); }
     }
 
     // ── S331 (Stage 4): binary frame send. Builds an UPLEG frame [magic][kind][flags][timestamp][payload] and
