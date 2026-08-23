@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1.1] - 2026-08-23
+
 ### Changed
 
 - **See which weather preset is currently live**: the **Extra presets** and **City sky variants** grids in Map Control now highlight the sky you have applied right now, so the active pick stands out from the others that are merely available to choose.
