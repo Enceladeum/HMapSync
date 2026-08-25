@@ -165,6 +165,11 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // bridges it to the relay wire (0x50/0x51/0x52), resolving identity via stateApply's roster. Inert if HDM absent.
         hdm = new HdmIpc(pluginInterface, log);
         disguiseSync = new DisguiseSyncService(hdm, relay, stateApply, framework, log, LocalContentId);
+        // NOTE: puppet POSSESSION (drive an NPC from the DM's MoveController intent while the DM body stays static) is
+        // owned by HDM, not HMS. HMS's role is peer sync only: when HDM drives a possessed puppet it fires PuppetMoved
+        // each frame, which DisguiseSyncService.OnLocalPuppetMoved reads + broadcasts (transform + resolved timeline)
+        // to session peers. No HMS-side possession loop. (The b191 HMS-side PossessionService was rolled back; see
+        // _coord/threads/common/2026-08-24-locomotion-possession.md and worklog/HMSTesting.md.)
         packetFilter = new PacketFilterService(log, hooks, sigScanner);
         opcodeMap = new OpcodeMapService(log);
         // Say filter: supplier returns the set of session-member character names (local + peers), lower-cased. Used to
@@ -4547,7 +4552,23 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 {
                     relay.IsHost = false;
                     stateApply.ForceMapStateReapply();
-                    log.Information("[HMSync] Demoted from host on transfer - now a guest, mirroring the new host.");
+                    // NB-45: RELINQUISH MAP-STATE AUTHORITY on demotion. The epoch gate (StateApplyService) has NO
+                    // host-identity check — it trusts the invariant "a nonzero epoch only comes from the host; peers
+                    // leave it 0". But our stateCapture kept stamping our epoch on every outbound frame, and demotion
+                    // never zeroed it, so after a transfer TWO senders carried a nonzero epoch: the new host, and us
+                    // frozen at our last epoch E_A (we stop bumping it once HasMapAuthority is false). When E_A collides
+                    // with — or sits above — the new host's inherited epoch, peers latch OUR stale map-state (usually the
+                    // forced=false native baseline → SetWeatherNativeOnly → zone default) and IGNORE the new host's
+                    // same-epoch frames: the scene "resets to default and won't change" until the new host bumps its
+                    // epoch clear past E_A (which is exactly why a city-preset / time-shift "kicks weather sync back
+                    // in"). Zero our epoch so peers see epoch 0 from us and ignore our map-state, like any other guest.
+                    stateCapture.MapState.Epoch = 0;
+                    // Also clear our own weather change-guard: ForceMapStateReapply only re-opens the epoch gate; the
+                    // (weather,donor) latch inside ApplyMapState is separate, so without this the new host's first
+                    // broadcast could be skipped if its (weather,donor) happens to match our stale latch.
+                    lastAppliedPeerWeather = -1;
+                    lastAppliedPeerDonor = uint.MaxValue;
+                    log.Information("[HMSync] Demoted from host on transfer - now a guest, mirroring the new host (epoch relinquished).");
                 }
 
                 var shortId = newHostId.Length >= 6 ? newHostId[..6] : newHostId;
