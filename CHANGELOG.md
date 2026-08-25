@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Sync custom names in the lobby**: an optional setting (Modules panel, under Moniker) shows each other's custom Moniker names while gathered together before anyone loads a map. Previously custom names only appeared once inside a loaded map. Off by default; requires the Moniker plugin.
+
 ## [1.0.1.3] - 2026-08-25
 
 ### Fixed

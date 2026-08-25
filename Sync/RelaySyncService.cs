@@ -77,6 +77,10 @@ public class RelaySyncService : IDisposable
     public event Action<HMSync.Wire.DisguiseUpdatePayload>? OnDisguiseReceived;
     public event Action<HMSync.Wire.ActionPulsePayload>? OnActionPulseReceived;
     public event Action<HMSync.Wire.PuppetMovePayload>? OnPuppetMoveReceived;
+    // Lobby nameplate sync (0x54): a source's chosen Moniker nameplate, carried so peers see custom names in the LOBBY
+    // (out of map, where the Cold transform lane that normally couriers Moniker isn't running). Self-describing
+    // (SenderContentId), snapshot-able (re-broadcast on peer-join). Receiver resolves ContentId→ObjectIndex and applies.
+    public event Action<HMSync.Wire.LobbyNameplatePayload>? OnLobbyNameplateReceived;
 
     // ── Per-subject composite cache (Stage 2a) ── each lane message updates its slice of the subject's composite
     // TransformData; the merged whole feeds OnTransformReceived. Keyed by SUBJECT entity id (payload `sid`), not
@@ -382,6 +386,7 @@ public class RelaySyncService : IDisposable
     // only ever disguises its own actor/puppets). SubjectId "" = own body, "<cid>:<slot>" = a spawned puppet.
     private uint disguiseSeq;
     private uint actionSeq;
+    private uint lobbyNameSeq;
 
     public async Task SendDisguiseUpdate(HMSync.Wire.DisguiseUpdatePayload p)
     {
@@ -404,6 +409,17 @@ public class RelaySyncService : IDisposable
     {
         if (!IsConnected) return;
         await SendFrame(HMSync.Wire.WireKind.PuppetMove,
+            MessagePack.MessagePackSerializer.Serialize(p, HMSync.Wire.WireFormat.Options));
+    }
+
+    // Lobby nameplate (0x54): the source's chosen Moniker nameplate for out-of-map (lobby) display. Snapshot-able
+    // (coalesced last-writer-wins per source), Seq-stamped like the other relay-opaque lanes so a peer applies the
+    // latest and re-broadcasts on peer-join carry a fresh Seq.
+    public async Task SendLobbyNameplate(HMSync.Wire.LobbyNameplatePayload p)
+    {
+        if (!IsConnected) return;
+        p.Seq = ++lobbyNameSeq;
+        await SendFrame(HMSync.Wire.WireKind.LobbyNameplate,
             MessagePack.MessagePackSerializer.Serialize(p, HMSync.Wire.WireFormat.Options));
     }
 
@@ -649,6 +665,12 @@ public class RelaySyncService : IDisposable
                 OnPuppetMoveReceived?.Invoke(pm);
                 break;
             }
+            case HMSync.Wire.WireKind.LobbyNameplate:
+            {
+                var ln = MessagePack.MessagePackSerializer.Deserialize<HMSync.Wire.LobbyNameplatePayload>(payload, HMSync.Wire.WireFormat.Options);
+                OnLobbyNameplateReceived?.Invoke(ln);
+                break;
+            }
 
             case HMSync.Wire.WireKind.ZoneLoadExecute:
             {
@@ -744,6 +766,7 @@ public class RelaySyncService : IDisposable
         HMSync.Wire.WireKind.DisguiseUpdate => "DisguiseUpdate",
         HMSync.Wire.WireKind.ActionPulse => "ActionPulse",
         HMSync.Wire.WireKind.PuppetMove => "PuppetMove",
+        HMSync.Wire.WireKind.LobbyNameplate => "LobbyNameplate",
         HMSync.Wire.WireKind.ZoneLoadExecute => "ZoneLoadExecute",
         HMSync.Wire.WireKind.SessionEnd => "SessionEnd",
         HMSync.Wire.WireKind.Ping => "Ping",

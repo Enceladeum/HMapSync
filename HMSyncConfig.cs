@@ -222,6 +222,12 @@ public class HMSyncConfig : IPluginConfiguration
     public string SayOpcodesGameVersion { get; set; } = "";
     public bool ShowDebugCommands { get; set; }
 
+    // b195: sync Moniker nameplates in the LOBBY (connected + room-joined, no synthetic map loaded). The Moniker courier
+    // normally rides the Cold transform lane, which only runs inside a synthetic session - so out-of-map, peers can't see
+    // each other's custom names. This opts into a dedicated relay-opaque lane (WireKind.LobbyNameplate 0x54) that carries
+    // the local chosen name to peers while lobbied. OFF by default (opt-in identity broadcast). Local preference.
+    public bool SyncLobbyNameplates { get; set; } = false;
+
     // b185: drop section colliders (boss-arena fences, section gates, phase walls, NPC pens) automatically on every HMS
     // map load, so a loaded scene is freely traversable with no command. Local preference (never synced). Reversible and
     // persisted: /hms dropcolliders off restores them and clears this; on re-engages. Meshes remain (ghost-through);

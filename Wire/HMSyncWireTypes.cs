@@ -86,6 +86,14 @@ public static class WireKind
     public const byte DisguiseUpdate  = 0x50;   // disguise atom - on change, coalesced, re-sent on first-sight
     public const byte ActionPulse     = 0x51;   // one-shot action replay - immediate, one per fire, never snapshotted
     public const byte PuppetMove      = 0x52;   // per-frame puppet transform (non-"" SubjectId); coalesced last-wins
+    // ── LOBBY NAMEPLATE SYNC (0x54, HMS-native). Carries the sender's chosen Moniker nameplate so peers can see each
+    // other's custom names WHILE IN THE LOBBY (connected + room-joined, no synthetic map loaded). Needed because the
+    // Moniker courier normally rides the Cold transform lane, which only runs inside a synthetic session (stateCapture/
+    // stateApply are Start()ed in EngageSyntheticSession) - so in the lobby nothing carries the name. Rides the relay-
+    // opaque family so RMS fans it out verbatim (no relay change; old clients ignore it). Snapshot-able: coalesced
+    // last-writer-wins per source, re-broadcast on peer-join for late-joiners. Gated behind config.SyncLobbyNameplates
+    // (off by default). Cleared on toggle-off / session-engage / peer-departure. See WORKING-CHANGELOG b195.
+    public const byte LobbyNameplate  = 0x54;   // sender's Moniker nameplate for lobby (out-of-map) display; coalesced last-wins
     public const byte ZoneLoadExecute = 0x30;
     public const byte SessionEnd      = 0x40;
     public const byte Ping            = 0xF0;
@@ -323,6 +331,26 @@ public class PuppetMovePayload
     [Key(3)] public float Y { get; set; }
     [Key(4)] public float Z { get; set; }
     [Key(5)] public float Rot { get; set; }                // facing, radians
+}
+
+/// <summary>LobbyNameplate (0x54): the sender's chosen Moniker nameplate, so peers can display each other's custom
+/// names while in the LOBBY (connected, room-joined, no synthetic map loaded). Mirrors the Moniker fields that
+/// otherwise ride the Cold transform lane (ColdPayload MonikerName/HideFc/HideName/HideTitle) - but the Cold lane only
+/// runs inside a synthetic session, so in the lobby this dedicated lane is the only carrier. SubjectId is always "" (a
+/// source has exactly one nameplate = its own player character). Snapshot-able: coalesced last-writer-wins per source,
+/// re-broadcast on peer-join for late-joiners. Receiver resolves SenderContentId → ObjectIndex → MonikerService.ApplyName,
+/// gated on config.SyncLobbyNameplates. An empty MonikerName means "clear" (no custom name set). Not a TransformData
+/// render field → LaneCensus-exempt.</summary>
+[MessagePackObject]
+public class LobbyNameplatePayload
+{
+    [Key(0)] public string SubjectId { get; set; } = "";   // always "" (source's own player character); reserved for forward-compat
+    [Key(1)] public ulong SenderContentId { get; set; }    // source identity (resolved to an ObjectIndex on the receiver)
+    [Key(2)] public uint Seq { get; set; }                 // dedup/ordering within the lane (envelope, like other lanes)
+    [Key(3)] public string MonikerName { get; set; } = ""; // the chosen nameplate text; "" = clear (no custom name)
+    [Key(4)] public bool MonikerHideFc { get; set; }       // hide free-company tag
+    [Key(5)] public bool MonikerHideName { get; set; }     // hide the base character name line
+    [Key(6)] public bool MonikerHideTitle { get; set; }    // hide the title line
 }
 
 // ═══════════════════════ CONTROL + JOIN PAYLOADS (shared encode/decode surface) ═══════════════════════

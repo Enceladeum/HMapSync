@@ -53,6 +53,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     private readonly HdmIpc hdm;   // FEAT-R2: HDM (mob-disguise) IPC consumer (optional; inert if HDM absent)
     private readonly HmsIpcProvider hmsProvider;   // HMS's first IPC PROVIDER surface (HMSync.* — accent + version gate)
     private readonly DisguiseSyncService disguiseSync;   // FEAT-R2: HDM ⇄ relay disguise-sync bridge
+    private readonly LobbyNameplateSyncService lobbyNameplate;   // b195: Moniker nameplate sync in the lobby (out of map)
     private readonly NpcVisibilityService npcVisibility;   // S328aa: host-authoritative NPC scene-cleanup
     private readonly NetStatsService netStats;   // S328ag: relay bandwidth instrumentation
     private readonly RelayHealthService relayHealth;   // background /health poll → relay traffic-light
@@ -204,6 +205,11 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             return -1f;
         });
         zoneLoad = new ZoneLoadService(objectTable, log, sigScanner, hooks, framework, dataManager);
+        // b195: lobby nameplate sync — carries the local Moniker name to peers on the dedicated 0x54 lane while in the
+        // lobby (out of map), where the Cold-lane courier isn't running. Constructed here (after zoneLoad) so its
+        // inLoadedMap probe (zoneLoad.IsZoneLoaded) references an assigned field. Off unless config.SyncLobbyNameplates.
+        lobbyNameplate = new LobbyNameplateSyncService(relay, stateApply, moniker, config, framework, log,
+            LocalContentId, () => zoneLoad.IsZoneLoaded);
         zoneLoad.DebugMode = config.ShowDebugCommands;      // v0.7.259: origin/map-hop notifications only in debug (must be AFTER construction)
         zoneLoad.AutoDropColliders = config.AutoDropColliders;   // b185: auto-drop section colliders on every HMS map load (default ON)
         questSpoof = new QuestSpoofService(sigScanner, hooks, framework, dataManager, log);   // NB-19 read-spoof (hooks created disabled)
@@ -675,6 +681,10 @@ public sealed class HMSyncPlugin : IDalamudPlugin
 
         // Apply an in-progress teleport for a few frames so the engine's re-grounding doesn't revert it.
         if (teleportHoldFrames > 0 && teleportHoldTarget.HasValue) { ApplyTeleportHold(); teleportHoldFrames--; }
+
+        // b195: drive lobby nameplate sync (broadcast our Moniker name + apply peers' names while out of a map). Self-
+        // gating: no-op unless config.SyncLobbyNameplates && connected && room-joined && NOT in a loaded map.
+        lobbyNameplate.Tick();
 
         // b140 Path I: hold the donor-bank handle swap in EnvSpace+0x90 against any per-frame zone reassert (no-op unless
         // a wxcyclecram is active). Runs before the zone-change clear below so a real hop still tears it down cleanly.
@@ -2230,6 +2240,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         detector.Stop();
         actorVisibility.Stop();
         disguiseSync.Reset();   // FEAT-R2: despawn every mirror puppet we spawned + clear the disguise caches on teardown
+        lobbyNameplate.Reset();   // b195: revert any lobby-applied nameplates + forget cached peer names on session teardown
 
         bool announceMovement = noclip.IsActive;
 
@@ -4437,6 +4448,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             stateCapture.RequestFullResend();
             if (relay.IsHost) RequestZoneResend();
             disguiseSync.BroadcastFullState();   // FEAT-R2: re-offer our current disguise + puppets so the newcomer catches up
+            lobbyNameplate.RequestRebroadcast();   // b195: re-offer our lobby nameplate so the newcomer sees our chosen name
         });
     }
 
@@ -4483,6 +4495,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             {
                 if (!string.IsNullOrEmpty(info.CharacterName)) who = info.CharacterName;
                 if (info.ContentId != 0) disguiseSync.OnPeerDeparted(info.ContentId);   // FEAT-R2: revert disguise + despawn their mirror puppets (before unregister drops the roster entry)
+                if (info.ContentId != 0) lobbyNameplate.OnPeerDeparted(info.ContentId);   // b195: forget their cached lobby nameplate (ClearName below restores the real plate)
                 if (info.ObjectIndex.HasValue)
                 {
                     actorVisibility.UnregisterPeer(info.ObjectIndex.Value);
@@ -4897,6 +4910,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         moniker.Dispose();   // S328x
         try { hmsProvider.Dispose(); } catch { }   // HMSync.* provider: unregister the accent/version gates
         try { disguiseSync.Dispose(); } catch { }   // FEAT-R2: unsubscribe HDM ⇄ relay bridge (before hdm, which owns the IPC gates)
+        try { lobbyNameplate.Dispose(); } catch { }   // b195: unsubscribe the lobby-nameplate lane + revert any applied names
         try { hdm.Dispose(); } catch { }            // FEAT-R2: unsubscribe HDM IPC event gates
         npcVisibility.Dispose();   // S328aa
         relay.Dispose();

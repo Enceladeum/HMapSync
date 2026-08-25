@@ -2165,6 +2165,20 @@ ImGui.Spacing();
             bool mk = MonikerAvailable?.Invoke() ?? ModulePresent?.Invoke("Moniker") ?? false;
             DrawModuleRow("Moniker", "Moniker", mk, "Sync custom character names across the session.");
 
+            // b195: opt-in nameplate sync in the LOBBY (out of a loaded map). Inside a map, Moniker names already ride
+            // the session sync; this extends it to peers gathered in the lobby before anyone loads a map. Off by default.
+            ImGui.Indent(18f);
+            if (!mk) ImGui.BeginDisabled();
+            bool lobbyNames = config.SyncLobbyNameplates;
+            if (ImGui.Checkbox("Sync nameplates in the lobby", ref lobbyNames))
+            {
+                config.SyncLobbyNameplates = lobbyNames;
+                config.Save();
+            }
+            if (!mk) ImGui.EndDisabled();
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Show each other's custom Moniker names while gathered in the lobby, before a map is loaded. Requires Moniker.");
+            ImGui.Unindent(18f);
+
             // HDM (mob disguise) - HMS integrates with it via IPC (the disguise-sync bridge), so prefer its own
             // handshake-backed availability flag, falling back to plugin presence. Supersedes the old "Outfits" row
             // (HOutfits had only limited NPC support; HDM is the full appearance + spawnable-NPC module now).
