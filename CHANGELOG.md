@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Summoned puppets are visible to other players again**: a companion you spawn in a session now appears for everyone in the lobby, not only once you disguise it. A recent change left the "spawn" and "remove" signals for a puppet indistinguishable on the wire, so peers treated every spawn as a removal and never showed the puppet; the two are now told apart explicitly.
+
 ## [1.0.1.2] - 2026-08-24
 
 ### Added

@@ -289,6 +289,13 @@ public class DisguiseUpdatePayload
     [Key(7)] public float Scale { get; set; }              // resolved absolute multiplier
     [Key(8)] public float VOffset { get; set; }            // vertical draw offset, world units (F2: apply-time only)
     [Key(9)] public ushort LoopId { get; set; }            // held animation timeline (Timeline.BaseOverride); 0 = none
+    // b189: DESPAWN discriminator. Kind==0 alone is AMBIGUOUS on a puppet subject - it means BOTH "spawn a blank
+    // clone" (HDM reports a row-less puppet as Kind 0) AND "revert this puppet's guise" - neither of which is a
+    // despawn. Before this key the receiver read every Kind-0-on-a-puppet as DESPAWN, so a summoned blank puppet
+    // never mirrored and reverting a puppet's guise despawned it. Despawn is now explicit; only OnLocalPuppetDespawned
+    // sets it. New key index → old peers ignore it and a missing key decodes to false (safe: pre-b189 wire had no
+    // despawn atoms in flight, blank spawns were simply dropped). Not a TransformData render field → LaneCensus-exempt.
+    [Key(10)] public bool Despawn { get; set; }            // true = remove the mirror puppet; false = spawn/apply/revert-guise
 }
 
 /// <summary>ActionPulse (0x51): a one-shot action replay on a subject. Immediate, one per fire, NEVER snapshotted or

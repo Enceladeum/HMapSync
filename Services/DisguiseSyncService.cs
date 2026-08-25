@@ -108,8 +108,11 @@ public sealed class DisguiseSyncService : IDisposable
     private void OnLocalPuppetDespawned(int slot)
     {
         var self = RefreshSelfCid();
-        // Despawn == a Kind-0 (revert) disguise on the puppet subject; the receiver treats revert-on-a-puppet as despawn.
-        _ = relay.SendDisguiseUpdate(BuildDisguise(PuppetSubject(self, slot), self, new HdmDisguiseAtom { Kind = 0 }));
+        // b189: despawn is now EXPLICIT (Despawn flag), not inferred from Kind==0 - a blank spawn and a guise-revert
+        // are also Kind 0 on a puppet subject, and neither is a despawn. Only this path sets the flag.
+        var payload = BuildDisguise(PuppetSubject(self, slot), self, new HdmDisguiseAtom { Kind = 0 });
+        payload.Despawn = true;
+        _ = relay.SendDisguiseUpdate(payload);
     }
 
     private void OnLocalPuppetMoved(int slot, float x, float y, float z, float rot)
@@ -164,8 +167,14 @@ public sealed class DisguiseSyncService : IDisposable
             }
             else
             {
-                // A puppet subject. Kind 0 = despawn our mirror; else spawn (first sight) or re-apply.
-                if (d.Kind == 0)
+                // A puppet subject. b189: DESPAWN is explicit now (was inferred from Kind==0, which also collides with
+                // "spawn a blank clone" and "revert a puppet's guise" - both non-despawn). Branches:
+                //   Despawn=true                    → drop our mirror.
+                //   not despawn, no mirror yet      → SPAWN (first sight). A Kind-0 atom = a blank clone; HDM's
+                //                                     SpawnPuppet honours Kind 0 (spawns the actor, skips the guise),
+                //                                     so a summoned-but-undisguised puppet now mirrors + tracks position.
+                //   not despawn, mirror exists      → Kind 0 = un-guise (keep the actor); else re-apply the disguise.
+                if (d.Despawn)
                 {
                     if (mirrorPuppets.TryGetValue(d.SubjectId, out var gone))
                     {
@@ -176,11 +185,12 @@ public sealed class DisguiseSyncService : IDisposable
                 }
                 if (mirrorPuppets.TryGetValue(d.SubjectId, out var li))
                 {
-                    hdm.ApplyDisguise(li, ToAtom(d));
+                    if (d.Kind == 0) hdm.RevertDisguise(li);   // puppet un-guised but still spawned - keep the mirror
+                    else hdm.ApplyDisguise(li, ToAtom(d));
                 }
                 else
                 {
-                    var spawned = hdm.SpawnPuppet(ToAtom(d));
+                    var spawned = hdm.SpawnPuppet(ToAtom(d));   // Kind 0 → blank mirror; Kind 1/2/3 → spawned + guised
                     if (spawned >= 0) mirrorPuppets[d.SubjectId] = spawned;
                     else log.Debug("[HMSync] disguise-sync: mirror puppet spawn failed for " + d.SubjectId);
                 }
