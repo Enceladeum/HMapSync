@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Summoned puppets are visible to other players again**: a companion you spawn in a session now appears for everyone in the lobby, not only once you disguise it. A recent change left the "spawn" and "remove" signals for a puppet indistinguishable on the wire, so peers treated every spawn as a removal and never showed the puppet; the two are now told apart explicitly.
 - **Weather no longer resets when the host changes**: after the host role passed to another player, the sky could snap back to the zone default and stop following the new host until they picked a fresh preset; the scene now keeps tracking the new host across a handoff.
+- **Tidier weather-preset headers**: the **Extra presets** and **City sky variants** collapsibles in Map Control no longer extend slightly past the panel's right edge; their frames now line up with the controls beneath them.
 
 ## [1.0.1.2] - 2026-08-24
 

@@ -1169,6 +1169,27 @@ public class HMSyncUI
         ImGui.Spacing();
     }
 
+    // A CollapsingHeader whose frame respects the panel's right inset (PanelPad) instead of bleeding past the border.
+    // CollapsingHeader always spans to the window WorkRect.Max.x and ignores SetNextItemWidth, so full-width headers
+    // inside a BeginPanel (which only left-indents by PanelPad) bleed PanelPad past the right edge of the drawn border.
+    // Render the header inside a borderless, padding-free child sized to (avail - PanelPad) high as one frame; that
+    // pulls the right edge in to match the -PanelPad inset the combos use. Returns the header's open state; the caller
+    // renders the collapsible BODY after this returns (outside the child), so the body is unaffected.
+    private bool InsetCollapsingHeader(string label)
+    {
+        float w = ImGui.GetContentRegionAvail().X - PanelPad;
+        if (w < 1f) w = 1f;
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
+        bool open = false;
+        // Always pair with EndChild regardless of the return value (child-window rule).
+        if (ImGui.BeginChild("##ins_" + label, new Vector2(w, ImGui.GetFrameHeight()), false,
+                ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse))
+            open = ImGui.CollapsingHeader(label);
+        ImGui.EndChild();
+        ImGui.PopStyleVar();
+        return open;
+    }
+
     // Recent-5 quick-load. Tapping a row loads that map; from idle it silently starts a solo session first (see
     // DoQuickLoad). Names resolve via MapSettings; unknown ids fall back to the number.
     private void DrawRecentMaps()
@@ -1392,7 +1413,7 @@ public class HMSyncUI
         // below. showAllWeather tracks the header's open state (kept as the field so the zone-hop invalidation at ~line 1245
         // and the lazy rebuild below still key off it). b168: no longer DEBUG-gated — the cram/day-set feature is proven.
         ImGui.Spacing();
-        showAllWeather = ImGui.CollapsingHeader("Extra presets##extrapresets");
+        showAllWeather = InsetCollapsingHeader("Extra presets##extrapresets");
         // Rebuild the full list if it's on but was invalidated by a zone change (so the grid persists across hops).
         if (showAllWeather && mapAllWeather == null) mapAllWeather = MapSettings.GetZoneWeathers(loadedZone, true);
         if (showAllWeather && mapAllWeather != null)
@@ -1495,7 +1516,7 @@ public class HMSyncUI
         // b177: city sky variants are their own SET-ONCE COLLAPSIBLE (was an always-open TextDisabled block). Like the extra
         // presets above, a city sky is something you pick once and leave; the collapsible keeps it from crowding the music /
         // time controls below. The header only appears once wxkfcities has populated at least one cycling donor set.
-        if (cityWeathers != null && cityWeathers.Count > 0 && ImGui.CollapsingHeader("City sky variants##cityvariants"))
+        if (cityWeathers != null && cityWeathers.Count > 0 && InsetCollapsingHeader("City sky variants##cityvariants"))
         {
             float dvAvail = ImGui.GetContentRegionAvail().X;
             const float dvGap = 6f;
