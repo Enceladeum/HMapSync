@@ -17,8 +17,8 @@ using Newtonsoft.Json;
 // FLOW:
 //   - Local (broadcast): GetLocalName() reads the host's own chosen name (empty if none/disabled) → HMS puts it in the
 //     transform stream.
-//   - Remote (apply): ApplyName(objectIndex, name, hideFc, hideName) calls Moniker.SetCharacterName on a peer's puppet so the
-//     peer renders the chosen name. ClearName removes it (on teardown / when the sender clears theirs).
+//   - Remote (apply): ApplyName(objectIndex, name, hideFc, hideName, hideTitle, hideStatus) calls Moniker.SetCharacterName on a
+//     peer's puppet so the peer renders the chosen name (and hide flags). ClearName removes it (on teardown / when the sender clears theirs).
 public sealed class MonikerService : IDisposable
 {
     private const uint RequiredMajor = 2;   // Moniker IpcProvider.MajorVersion
@@ -47,11 +47,11 @@ public sealed class MonikerService : IDisposable
         catch { return false; }
     }
 
-    // Mirror of Moniker's carried payload (name + hide-FC + hide-name + hide-title flags). HideName is additive
-    // (Moniker IPC 2.2), HideTitle additive (Moniker IPC 2.3): JSON from an older sender lacks it → defaults false;
-    // older receivers ignore it. Must stay a superset of what we both read and write, or the flag is silently dropped
-    // in transit (which is exactly the bug this fixes).
-    private sealed class NameData { public string Name = ""; public bool HideFcTag; public bool HideName; public bool HideTitle; }
+    // Mirror of Moniker's carried payload (name + hide-FC + hide-name + hide-title + hide-status flags). HideName is
+    // additive (Moniker IPC 2.2), HideTitle additive (2.3), HideStatus additive (2.4): JSON from an older sender lacks
+    // a newer flag → defaults false; older receivers ignore it. Must stay a superset of what we both read and write, or
+    // the flag is silently dropped in transit (which is exactly the class of bug this mirror keeps closed).
+    private sealed class NameData { public string Name = ""; public bool HideFcTag; public bool HideName; public bool HideTitle; public bool HideStatus; }
 
     public MonikerService(IDalamudPluginInterface pi, IPluginLog log)
     {
@@ -98,17 +98,17 @@ public sealed class MonikerService : IDisposable
     }
 
     // The host's own chosen nameplate name (empty if none set or Moniker disabled). Broadcast into the transform.
-    public (string name, bool hideFc, bool hideName, bool hideTitle) GetLocalName()
+    public (string name, bool hideFc, bool hideName, bool hideTitle, bool hideStatus) GetLocalName()
     {
-        if (!Available || getLocalName == null) return ("", false, false, false);
+        if (!Available || getLocalName == null) return ("", false, false, false, false);
         try
         {
             var json = getLocalName.InvokeFunc();
-            if (string.IsNullOrEmpty(json)) return ("", false, false, false);
+            if (string.IsNullOrEmpty(json)) return ("", false, false, false, false);
             var data = JsonConvert.DeserializeObject<NameData>(json);
-            return data == null ? ("", false, false, false) : (data.Name ?? "", data.HideFcTag, data.HideName, data.HideTitle);
+            return data == null ? ("", false, false, false, false) : (data.Name ?? "", data.HideFcTag, data.HideName, data.HideTitle, data.HideStatus);
         }
-        catch (Exception ex) { log.Debug("[HMSync] Moniker GetLocalName failed: " + ex.Message); return ("", false, false, false); }
+        catch (Exception ex) { log.Debug("[HMSync] Moniker GetLocalName failed: " + ex.Message); return ("", false, false, false, false); }
     }
 
     // Apply a chosen name to a peer's puppet (by object index) so this client renders it. Empty name clears.
@@ -116,21 +116,21 @@ public sealed class MonikerService : IDisposable
     // data but doesn't always invalidate the already-drawn nameplate (observed: first set redraws, subsequent changes
     // don't). So on a re-set we CLEAR first, then set, forcing a full invalidate→redraw cycle (the pattern nameplate
     // plugins like Honorific use). forceRedraw is passed by the apply layer when the name is CHANGING (not initial).
-    public void ApplyName(int objectIndex, string name, bool hideFc, bool hideName, bool hideTitle, bool forceRedraw = false)
+    public void ApplyName(int objectIndex, string name, bool hideFc, bool hideName, bool hideTitle, bool hideStatus, bool forceRedraw = false)
     {
         if (!Available) return;
         if (IsLocalIndex(objectIndex)) return;   // never touch the host's own nameplate
         try
         {
             // A hide-name payload carries an EMPTY name on purpose (the plate is blanked), so it must NOT be mistaken
-            // for a clear: only clear when there is genuinely nothing to apply (no name AND neither hide flag set).
-            if (string.IsNullOrEmpty(name) && !hideFc && !hideName && !hideTitle) { clearName?.InvokeAction(objectIndex); return; }
+            // for a clear: only clear when there is genuinely nothing to apply (no name AND no hide flag set).
+            if (string.IsNullOrEmpty(name) && !hideFc && !hideName && !hideTitle && !hideStatus) { clearName?.InvokeAction(objectIndex); return; }
             // v0.7.369: a plain set is sufficient. Moniker's IPC handlers now call RequestNameplateRedraw() themselves
             // (its Set/Clear previously mutated the peer-name dictionary without dirtying the plate, so a peer's plate
             // waited for the next ORGANIC rebuild - the "flag change doesn't repaint, name change does" bug). HMS no
             // longer clears-then-sets or defers across frames to force it; forceRedraw is retained in the signature but
             // is now a no-op hint, since redraws coalesce per frame on Moniker's side.
-            var json = JsonConvert.SerializeObject(new NameData { Name = name, HideFcTag = hideFc, HideName = hideName, HideTitle = hideTitle });
+            var json = JsonConvert.SerializeObject(new NameData { Name = name, HideFcTag = hideFc, HideName = hideName, HideTitle = hideTitle, HideStatus = hideStatus });
             setName?.InvokeAction(objectIndex, json);
         }
         catch (Exception ex) { log.Debug("[HMSync] Moniker ApplyName failed: " + ex.Message); }

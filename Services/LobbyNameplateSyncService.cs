@@ -75,8 +75,8 @@ public sealed class LobbyNameplateSyncService : IDisposable
         relay.OnLobbyNameplateReceived += OnReceived;
     }
 
-    private static string Composite(string name, bool hideFc, bool hideName, bool hideTitle)
-        => name + "|" + (hideFc ? 1 : 0) + (hideName ? 1 : 0) + (hideTitle ? 1 : 0);
+    private static string Composite(string name, bool hideFc, bool hideName, bool hideTitle, bool hideStatus)
+        => name + "|" + (hideFc ? 1 : 0) + (hideName ? 1 : 0) + (hideTitle ? 1 : 0) + (hideStatus ? 1 : 0);
 
     // RECEIVE thread: just cache the latest per source. All apply happens on the framework thread in Tick.
     private void OnReceived(LobbyNameplatePayload p)
@@ -139,12 +139,12 @@ public sealed class LobbyNameplateSyncService : IDisposable
 
         // SENDER: broadcast our local name on change (or when a re-offer was requested).
         cachedSelfCid = localContentId();
-        var (name, hideFc, hideName, hideTitle) = moniker.GetLocalName();
-        string key = Composite(name, hideFc, hideName, hideTitle);
+        var (name, hideFc, hideName, hideTitle, hideStatus) = moniker.GetLocalName();
+        string key = Composite(name, hideFc, hideName, hideTitle, hideStatus);
         if (key != lastLocalBroadcast)
         {
             lastLocalBroadcast = key;
-            log.Debug($"[LobbyNameplate] TX name='{name}' cid={cachedSelfCid} (hideFc={hideFc},hideName={hideName},hideTitle={hideTitle})");
+            log.Debug($"[LobbyNameplate] TX name='{name}' cid={cachedSelfCid} (hideFc={hideFc},hideName={hideName},hideTitle={hideTitle},hideStatus={hideStatus})");
             _ = relay.SendLobbyNameplate(new LobbyNameplatePayload
             {
                 SubjectId = "",
@@ -153,6 +153,7 @@ public sealed class LobbyNameplateSyncService : IDisposable
                 MonikerHideFc = hideFc,
                 MonikerHideName = hideName,
                 MonikerHideTitle = hideTitle,
+                MonikerHideStatus = hideStatus,
             });
         }
 
@@ -177,11 +178,11 @@ public sealed class LobbyNameplateSyncService : IDisposable
             loggedUnbound.Remove(info.ContentId);
 
             ushort idx = info.ObjectIndex.Value;
-            string ck = Composite(p.MonikerName, p.MonikerHideFc, p.MonikerHideName, p.MonikerHideTitle);
+            string ck = Composite(p.MonikerName, p.MonikerHideFc, p.MonikerHideName, p.MonikerHideTitle, p.MonikerHideStatus);
             if (appliedNames.TryGetValue(idx, out var prev) && prev == ck) continue;   // already applied this exact name
 
             log.Debug($"[LobbyNameplate] APPLY name='{p.MonikerName}' idx={idx} cid={info.ContentId} forceRedraw={appliedNames.ContainsKey(idx)}");
-            moniker.ApplyName(idx, p.MonikerName, p.MonikerHideFc, p.MonikerHideName, p.MonikerHideTitle,
+            moniker.ApplyName(idx, p.MonikerName, p.MonikerHideFc, p.MonikerHideName, p.MonikerHideTitle, p.MonikerHideStatus,
                 forceRedraw: appliedNames.ContainsKey(idx));
             appliedNames[idx] = ck;
         }

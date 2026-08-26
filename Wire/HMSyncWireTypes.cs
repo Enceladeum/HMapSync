@@ -16,8 +16,8 @@ using MessagePack;
 //
 //   • LANE PAYLOADS (Hot/Warm/Cold/Host) - MAY LEGALLY LEAD ON THE CLIENT. The relay never deserializes a lane
 //     payload (control is read, cargo is not), so client-only lane keys cost it nothing. The plugin's copy is
-//     AHEAD by design: WarmPayload Keys 27–49 (face-camera, gaze, skill replay) and ColdPayload Keys 5-6
-//     (MonikerHideName, MonikerHideTitle) exist here and NOT in the relay's copy.
+//     AHEAD by design: WarmPayload Keys 27–49 (face-camera, gaze, skill replay) and ColdPayload Keys 5-7
+//     (MonikerHideName, MonikerHideTitle, MonikerHideStatus) exist here and NOT in the relay's copy.
 //
 //   ⛔ NEVER "resync" this file by copying the relay's copy over the plugin's - that silently DELETES the
 //      shipped client-ahead lane features above. Sync the control surface only; diff the lane blocks by eye, never by overwrite.
@@ -245,6 +245,7 @@ public class ColdPayload
     [Key(2)] public bool MonikerHideFc { get; set; }
     [Key(5)] public bool MonikerHideName { get; set; }   // additive (Moniker IPC 2.2): NEW key index so VisorToggled(3)/HatHidden(4) keep theirs; old peers ignore key 5, missing key 5 → false
     [Key(6)] public bool MonikerHideTitle { get; set; }  // additive (Moniker IPC 2.3): next free key after HideName(5); old peers ignore key 6, missing key 6 → false (title shown)
+    [Key(7)] public bool MonikerHideStatus { get; set; } // additive (Moniker IPC 2.4): next free key after HideTitle(6); old peers ignore key 7, missing key 7 → false (status icon shown)
     [Key(3)] public bool VisorToggled { get; set; }
     [Key(4)] public bool HatHidden { get; set; }
 }
@@ -335,7 +336,7 @@ public class PuppetMovePayload
 
 /// <summary>LobbyNameplate (0x54): the sender's chosen Moniker nameplate, so peers can display each other's custom
 /// names while in the LOBBY (connected, room-joined, no synthetic map loaded). Mirrors the Moniker fields that
-/// otherwise ride the Cold transform lane (ColdPayload MonikerName/HideFc/HideName/HideTitle) - but the Cold lane only
+/// otherwise ride the Cold transform lane (ColdPayload MonikerName/HideFc/HideName/HideTitle/HideStatus) - but the Cold lane only
 /// runs inside a synthetic session, so in the lobby this dedicated lane is the only carrier. SubjectId is always "" (a
 /// source has exactly one nameplate = its own player character). Snapshot-able: coalesced last-writer-wins per source,
 /// re-broadcast on peer-join for late-joiners. Receiver resolves SenderContentId → ObjectIndex → MonikerService.ApplyName,
@@ -351,6 +352,7 @@ public class LobbyNameplatePayload
     [Key(4)] public bool MonikerHideFc { get; set; }       // hide free-company tag
     [Key(5)] public bool MonikerHideName { get; set; }     // hide the base character name line
     [Key(6)] public bool MonikerHideTitle { get; set; }    // hide the title line
+    [Key(7)] public bool MonikerHideStatus { get; set; }   // hide the status icon (additive, Moniker IPC 2.4; missing → false = shown)
 }
 
 // ═══════════════════════ CONTROL + JOIN PAYLOADS (shared encode/decode surface) ═══════════════════════

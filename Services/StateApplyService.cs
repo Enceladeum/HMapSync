@@ -123,7 +123,7 @@ public class StateApplyService : IDisposable
     public Action<ushort>? OnPeerBound { get; set; }
     // S328x: apply a peer's chosen nameplate name to their puppet (objectIndex, name, hideFc). Wired to MonikerService
     // by the plugin; null if Moniker isn't present (then the call is simply skipped).
-    public Action<ushort, string, bool, bool, bool, bool>? ApplyMonikerName { get; set; }   // (objIdx, name, hideFc, hideName, hideTitle, forceRedraw)
+    public Action<ushort, string, bool, bool, bool, bool, bool>? ApplyMonikerName { get; set; }   // (objIdx, name, hideFc, hideName, hideTitle, hideStatus, forceRedraw)
     private uint lastAppliedMapEpoch;
 
     public unsafe HashSet<ushort> GetPeerObjectIndices()
@@ -332,13 +332,14 @@ public class StateApplyService : IDisposable
             if (character == null) continue;
 
             // S328x: clear any applied Moniker nameplate name so the peer's real name returns on session end.
-            if (!string.IsNullOrEmpty(info.LastAppliedMonikerName) || info.LastAppliedMonikerHideFc || info.LastAppliedMonikerHideName || info.LastAppliedMonikerHideTitle)
+            if (!string.IsNullOrEmpty(info.LastAppliedMonikerName) || info.LastAppliedMonikerHideFc || info.LastAppliedMonikerHideName || info.LastAppliedMonikerHideTitle || info.LastAppliedMonikerHideStatus)
             {
-                ApplyMonikerName?.Invoke(info.ObjectIndex.Value, "", false, false, false, false);
+                ApplyMonikerName?.Invoke(info.ObjectIndex.Value, "", false, false, false, false, false);
                 info.LastAppliedMonikerName = "";
                 info.LastAppliedMonikerHideFc = false;
                 info.LastAppliedMonikerHideName = false;
                 info.LastAppliedMonikerHideTitle = false;
+                info.LastAppliedMonikerHideStatus = false;
             }
 
             // Mount: dismount any synthetic mount we set, AND restore Normal mode (S193 - the
@@ -1394,19 +1395,21 @@ public class StateApplyService : IDisposable
                 bool wireHideFc = data.MonikerHideFc;
                 bool wireHideName = data.MonikerHideName;
                 bool wireHideTitle = data.MonikerHideTitle;
-                if (wireName != info.LastAppliedMonikerName || wireHideFc != info.LastAppliedMonikerHideFc || wireHideName != info.LastAppliedMonikerHideName || wireHideTitle != info.LastAppliedMonikerHideTitle)
+                bool wireHideStatus = data.MonikerHideStatus;
+                if (wireName != info.LastAppliedMonikerName || wireHideFc != info.LastAppliedMonikerHideFc || wireHideName != info.LastAppliedMonikerHideName || wireHideTitle != info.LastAppliedMonikerHideTitle || wireHideStatus != info.LastAppliedMonikerHideStatus)
                 {
                     // v0.7.369: `hadApplied` is retained as a hint only. It used to mean "clear-then-set to force a
                     // repaint", but Moniker's IPC handlers now call RequestNameplateRedraw() themselves, so a plain set
                     // repaints correctly. (The old bug: Set/Clear mutated Moniker's peer-name dictionary without
                     // dirtying the plate, and a peer's plate is never organically dirty - so a flag-only change waited
                     // for the next natural rebuild while a name-string change repainted immediately.)
-                    bool hadApplied = !string.IsNullOrEmpty(info.LastAppliedMonikerName) || info.LastAppliedMonikerHideFc || info.LastAppliedMonikerHideName || info.LastAppliedMonikerHideTitle;
-                    ApplyMonikerName?.Invoke(info.ObjectIndex.Value, wireName, wireHideFc, wireHideName, wireHideTitle, hadApplied);
+                    bool hadApplied = !string.IsNullOrEmpty(info.LastAppliedMonikerName) || info.LastAppliedMonikerHideFc || info.LastAppliedMonikerHideName || info.LastAppliedMonikerHideTitle || info.LastAppliedMonikerHideStatus;
+                    ApplyMonikerName?.Invoke(info.ObjectIndex.Value, wireName, wireHideFc, wireHideName, wireHideTitle, wireHideStatus, hadApplied);
                     info.LastAppliedMonikerName = wireName;
                     info.LastAppliedMonikerHideFc = wireHideFc;
                     info.LastAppliedMonikerHideName = wireHideName;
                     info.LastAppliedMonikerHideTitle = wireHideTitle;
+                    info.LastAppliedMonikerHideStatus = wireHideStatus;
                 }
             }
 
@@ -2883,6 +2886,7 @@ public class PeerInfo
     public bool LastAppliedMonikerHideFc { get; set; }       // S328x: hide-FC flag currently applied
     public bool LastAppliedMonikerHideName { get; set; }     // hide-name flag currently applied (Moniker IPC 2.2)
     public bool LastAppliedMonikerHideTitle { get; set; }    // hide-title flag currently applied (Moniker IPC 2.3)
+    public bool LastAppliedMonikerHideStatus { get; set; }   // hide-status-icon flag currently applied (Moniker IPC 2.4)
     public uint LastOrnActionEpoch { get; set; }       // S323g: last ornament-action epoch replayed on this puppet
     public uint LastMountActionEpoch { get; set; }     // S323j: last mount-action epoch replayed on this puppet
     public uint LastActionEpoch { get; set; }          // COSM_1_016: last SKILL epoch replayed on this puppet

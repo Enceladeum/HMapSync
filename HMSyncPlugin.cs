@@ -295,7 +295,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // S328x: Moniker nameplate integration - capture the local chosen name into outgoing transforms, and apply a
         // peer's chosen name to their puppet. Both no-op if Moniker isn't installed (MonikerService.Available == false).
         stateCapture.MonikerNameSupplier = () => moniker.GetLocalName();
-        stateApply.ApplyMonikerName = (idx, name, hideFc, hideName, hideTitle, redraw) => moniker.ApplyName(idx, name, hideFc, hideName, hideTitle, redraw);
+        stateApply.ApplyMonikerName = (idx, name, hideFc, hideName, hideTitle, hideStatus, redraw) => moniker.ApplyName(idx, name, hideFc, hideName, hideTitle, hideStatus, redraw);
         moniker.LocalPlayerIndex = () => { var lp = objectTable.LocalPlayer; return lp != null ? (int)lp.ObjectIndex : -1; };
         relay.OnPeerJoined += OnPeerJoined;
         relay.OnPeerLeft += OnPeerLeft;
