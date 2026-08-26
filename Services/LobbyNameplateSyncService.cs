@@ -15,8 +15,9 @@ using HMSync.Wire;
 // peers sit together in the lobby — connected, room-joined, but before anyone loads a map — nothing carries the
 // chosen name, and everyone sees each other's real character name. This service fills that gap with a dedicated
 // relay-opaque lane (WireKind.LobbyNameplate 0x54, in the 0x50–0x5F family → RMS fans it out verbatim, no relay
-// change, old clients ignore it), gated behind config.SyncLobbyNameplates (OFF by default — it's an opt-in
-// identity broadcast). It follows the b193 OwnBodyHidden dedicated-lane precedent.
+// change, old clients ignore it), gated behind config.SyncLobbyNameplates (ON by default as of b198, so the lobby
+// mirrors in-session nameplate sync without a hidden opt-in; user can still untick it). It follows the b193
+// OwnBodyHidden dedicated-lane precedent.
 //
 // SCOPE. Lobby ONLY. The instant a map loads (inLoadedMap → true) this service reverts everything it applied and
 // hands the nameplate concern back to the Cold-lane courier, so the two never fight. Symmetric on disconnect /

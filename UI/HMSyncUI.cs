@@ -1172,21 +1172,22 @@ public class HMSyncUI
     // A CollapsingHeader whose frame respects the panel's right inset (PanelPad) instead of bleeding past the border.
     // CollapsingHeader always spans to the window WorkRect.Max.x and ignores SetNextItemWidth, so full-width headers
     // inside a BeginPanel (which only left-indents by PanelPad) bleed PanelPad past the right edge of the drawn border.
-    // Render the header inside a borderless, padding-free child sized to (avail - PanelPad) high as one frame; that
-    // pulls the right edge in to match the -PanelPad inset the combos use. Returns the header's open state; the caller
-    // renders the collapsible BODY after this returns (outside the child), so the body is unaffected.
+    //
+    // We previously inset the right edge by wrapping the header in a 1-frame-tall BeginChild. That worked visually but
+    // created a NESTED child window inside the scrolling tab body — its own nav/scroll context. Clicking the header made
+    // it the NavId inside that sub-window, and ImGui repeatedly scrolled the sub-window "back into view" near the top of
+    // the tab body, yanking the whole tab body to the top every frame. Result: with "Extra presets" expanded you could
+    // not scroll down to the controls below it. Fix: keep the header a PLAIN item in the parent window (no child, no
+    // sub-context, so no scroll fight) and just CLIP its frame draw to the inset width. The header's hit-rect still spans
+    // full width, but the visible frame stops at the border — same look, no nested scroll context.
     private bool InsetCollapsingHeader(string label)
     {
         float w = ImGui.GetContentRegionAvail().X - PanelPad;
         if (w < 1f) w = 1f;
-        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
-        bool open = false;
-        // Always pair with EndChild regardless of the return value (child-window rule).
-        if (ImGui.BeginChild("##ins_" + label, new Vector2(w, ImGui.GetFrameHeight()), false,
-                ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse))
-            open = ImGui.CollapsingHeader(label);
-        ImGui.EndChild();
-        ImGui.PopStyleVar();
+        Vector2 p = ImGui.GetCursorScreenPos();
+        ImGui.PushClipRect(p, new Vector2(p.X + w, p.Y + ImGui.GetFrameHeight()), true);
+        bool open = ImGui.CollapsingHeader(label);
+        ImGui.PopClipRect();
         return open;
     }
 
@@ -2165,8 +2166,9 @@ ImGui.Spacing();
             bool mk = MonikerAvailable?.Invoke() ?? ModulePresent?.Invoke("Moniker") ?? false;
             DrawModuleRow("Moniker", "Moniker", mk, "Sync custom character names across the session.");
 
-            // b195: opt-in nameplate sync in the LOBBY (out of a loaded map). Inside a map, Moniker names already ride
-            // the session sync; this extends it to peers gathered in the lobby before anyone loads a map. Off by default.
+            // b195: nameplate sync in the LOBBY (out of a loaded map). Inside a map, Moniker names already ride
+            // the session sync; this extends it to peers gathered in the lobby before anyone loads a map. ON by default
+            // (b198) so it matches in-session behaviour; user can untick.
             ImGui.Indent(18f);
             if (!mk) ImGui.BeginDisabled();
             bool lobbyNames = config.SyncLobbyNameplates;
