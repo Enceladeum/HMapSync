@@ -7,9 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1.4] - 2026-08-26
+
 ### Added
 
-- **Sync custom names in the lobby**: an optional setting (Modules panel, under Moniker) shows each other's custom Moniker names while gathered together before anyone loads a map. Previously custom names only appeared once inside a loaded map. Off by default; requires the Moniker plugin.
+- **Sync custom names in the lobby**: shows each other's custom Moniker names while gathered together before anyone loads a map, not only once inside a loaded map. On by default (a setting under Moniker in the Modules panel lets you turn it off); requires the Moniker plugin.
+
+### Fixed
+
+- **Hidden status icon now syncs**: if you use Moniker's option to hide the status icon on your nameplate, other players in your session now see it hidden too, matching the name, title, and Free Company tag options that already synced.
+- **Weather-preset sections no longer jump the view**: opening **Extra presets** or **City sky variants** in Map Control could snap the tab back to the top; they now expand in place.
 
 ## [1.0.1.3] - 2026-08-25
 
