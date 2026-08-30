@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1.5] - 2026-08-30
+
+### Added
+
+- **Custom names in chat**: your session's custom Moniker names can now appear in the chat log too, not only on nameplates. Say, yell, shout, and /em emotes from you and other session members show the Moniker name so chat matches the plate. On by default (a "Use custom names in chat" toggle under Moniker in the Modules panel turns it off); requires the Moniker plugin.
+- **Possession sync (HDM)**: when a player drives a possessed NPC through the HDM disguise module, everyone in the session now sees that NPC move and animate, and the driver's own hidden body stays hidden for the whole group. Requires HDM.
+- **Frozen poses sync (HDM)**: freezing a disguise or puppet in place through HDM now holds it in the same pose for everyone in the session. Requires HDM.
+
+### Fixed
+
+- **Disguise returns to normal when a session ends (HDM)**: ending or leaving a session while wearing an HDM disguise now restores your character's normal size and height straight away, instead of leaving it shrunk or floating until you reloaded the area or relogged. Requires HDM.
+
 ## [1.0.1.4] - 2026-08-26
 
 ### Added

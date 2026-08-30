@@ -58,11 +58,15 @@ public sealed class HdmPuppetInfo
     public float Py { get; set; }
     public float Pz { get; set; }
     public float Rot { get; set; }
+    public bool Frozen { get; set; }        // MinorVersion 4: this puppet's freeze-animation pin (late-join snapshot)
 }
 
 public sealed class HdmIpc : IDisposable
 {
     private const uint RequiredMajor = 1;   // HDM HdmIpc.MajorVersion
+    private const uint SanitizeSelfMinor = 3;  // HDM.SanitizeSelf own-body sanitiser landed at MinorVersion 3 (HDMT b8)
+    private const uint FreezeMinor = 4;        // HDM.FreezeChanged/GetFrozenOwnBody/SetFrozen landed at MinorVersion 4 (HDMT b9)
+    private uint minor;                     // HDM HdmIpc.MinorVersion captured at connect; gates additive (minor-bumped) calls
 
     private readonly IPluginLog log;
     private readonly IDalamudPluginInterface pi;
@@ -79,14 +83,20 @@ public sealed class HdmIpc : IDisposable
     private ICallGateSubscriber<int, object?>? evPuppetReady;                              // (objectIndex)
     private ICallGateSubscriber<int, object?>? evPuppetDespawned;                          // (slot)
     private ICallGateSubscriber<int, float, float, float, float, object?>? evPuppetMoved;  // (slot,x,y,z,rot)
+    private ICallGateSubscriber<bool, object?>? evOwnBodyHidden;                           // Bug B (v1.1): DM own-body hide edge
+    private ICallGateSubscriber<int, bool, object?>? evFreezeChanged;                      // MinorVersion 4: (slot: -1 = own body, frozen)
 
     // ── Snapshot getters (HMS pull) ──
     private ICallGateSubscriber<string>? getDisguise;   // JSON atom, or "" if none
     private ICallGateSubscriber<string>? getPuppets;    // JSON PuppetInfo[], or "[]"
+    private ICallGateSubscriber<bool>? getOwnBodyHidden; // Bug B (v1.1): current DM own-body hide state (late-join snapshot)
+    private ICallGateSubscriber<bool>? getFrozenOwnBody; // MinorVersion 4: current DM own-body freeze state (late-join snapshot)
 
     // ── Receiver methods (HMS → HDM) ──
     private ICallGateSubscriber<int, string, object?>? applyDisguise;                       // (objectIndex, atomJson)
     private ICallGateSubscriber<int, object?>? revertDisguise;                              // (objectIndex)
+    private ICallGateSubscriber<bool, object?>? sanitizeSelf;                               // (restoreVisual) own-body sanitiser, minor>=3
+    private ICallGateSubscriber<int, bool, object?>? setFrozen;                             // (objectIndex, frozen) freeze-anim pin, minor>=4
     private ICallGateSubscriber<int, uint, object?>? playAction;                            // (objectIndex, playId)
     private ICallGateSubscriber<string, int>? spawnPuppet;                                  // (atomJson) -> objectIndex, -1 fail
     private ICallGateSubscriber<int, float, float, float, float, object?>? movePuppet;      // (idx,x,y,z,rot)
@@ -101,6 +111,12 @@ public sealed class HdmIpc : IDisposable
     public event Action<int>? OnPuppetReady;                        // (objectIndex — SOURCE-local)
     public event Action<int>? OnPuppetDespawned;                    // (slot)
     public event Action<int, float, float, float, float>? OnPuppetMoved;   // (slot,x,y,z,rot)
+    // Bug B (v1.1): the DM's own body just became hidden (true) / visible (false). Fires only on a CHANGE (HDM dedupes);
+    // the SENDER puts the bit on the wire so peers suppress the DM's own-body mirror while it drives a possessed puppet.
+    public event Action<bool>? OnOwnBodyHidden;
+    // MinorVersion 4: a subject's freeze-animation pin just toggled. slot -1 = the DM's own body, N = puppet ordinal.
+    // The SENDER puts the per-subject bit on the wire so peers freeze/release the matching mirror actor.
+    public event Action<int, bool>? OnFreezeChanged;   // (slot: -1 = own body, frozen)
     // Fired when HDM (re)announces itself, so the sync layer can re-pull snapshots / re-broadcast own state.
     public event Action? OnHdmReady;
 
@@ -125,6 +141,12 @@ public sealed class HdmIpc : IDisposable
             evPuppetDespawned.Subscribe(OnPuppetDespawnedRaw);
             evPuppetMoved = pi.GetIpcSubscriber<int, float, float, float, float, object?>("HDM.PuppetMoved");
             evPuppetMoved.Subscribe(OnPuppetMovedRaw);
+            // Bug B (v1.1): additive - safe to bind unconditionally against a pre-v1.1 HDM (it simply never fires it).
+            evOwnBodyHidden = pi.GetIpcSubscriber<bool, object?>("HDM.OwnBodyHidden");
+            evOwnBodyHidden.Subscribe(OnOwnBodyHiddenRaw);
+            // MinorVersion 4: additive - safe to bind unconditionally against a pre-b9 HDM (it simply never fires it).
+            evFreezeChanged = pi.GetIpcSubscriber<int, bool, object?>("HDM.FreezeChanged");
+            evFreezeChanged.Subscribe(OnFreezeChangedRaw);
 
             onReady = pi.GetIpcSubscriber<object?>("HDM.Ready");
             onReady.Subscribe(OnHdmReadyRaw);
@@ -145,17 +167,22 @@ public sealed class HdmIpc : IDisposable
         try
         {
             apiVersion = pi.GetIpcSubscriber<(uint, uint)>("HDM.ApiVersion");
-            var (major, _) = apiVersion.InvokeFunc();
+            var (major, minorV) = apiVersion.InvokeFunc();
             if (major != RequiredMajor)
             {
                 Available = false;
                 log.Information($"[HMSync] HDM present but API v{major} != required v{RequiredMajor} - disguise sync off.");
                 return;
             }
+            minor = minorV;   // gate additive calls (SanitizeSelf) on this rather than probe-by-throw
             getDisguise = pi.GetIpcSubscriber<string>("HDM.GetDisguise");
             getPuppets = pi.GetIpcSubscriber<string>("HDM.GetPuppets");
+            getOwnBodyHidden = pi.GetIpcSubscriber<bool>("HDM.GetOwnBodyHidden");   // Bug B (v1.1)
+            getFrozenOwnBody = pi.GetIpcSubscriber<bool>("HDM.GetFrozenOwnBody");   // minor>=4
             applyDisguise = pi.GetIpcSubscriber<int, string, object?>("HDM.ApplyDisguise");
             revertDisguise = pi.GetIpcSubscriber<int, object?>("HDM.RevertDisguise");
+            sanitizeSelf = pi.GetIpcSubscriber<bool, object?>("HDM.SanitizeSelf");   // minor>=3; guarded at call site
+            setFrozen = pi.GetIpcSubscriber<int, bool, object?>("HDM.SetFrozen");    // minor>=4; guarded at call site
             playAction = pi.GetIpcSubscriber<int, uint, object?>("HDM.PlayAction");
             spawnPuppet = pi.GetIpcSubscriber<string, int>("HDM.SpawnPuppet");
             movePuppet = pi.GetIpcSubscriber<int, float, float, float, float, object?>("HDM.MovePuppet");
@@ -199,6 +226,8 @@ public sealed class HdmIpc : IDisposable
     private void OnPuppetReadyRaw(int objectIndex) { try { OnPuppetReady?.Invoke(objectIndex); } catch (Exception ex) { log.Debug("[HMSync] HDM PuppetReady handler failed: " + ex.Message); } }
     private void OnPuppetDespawnedRaw(int slot) { try { OnPuppetDespawned?.Invoke(slot); } catch (Exception ex) { log.Debug("[HMSync] HDM PuppetDespawned handler failed: " + ex.Message); } }
     private void OnPuppetMovedRaw(int slot, float x, float y, float z, float rot) { try { OnPuppetMoved?.Invoke(slot, x, y, z, rot); } catch (Exception ex) { log.Debug("[HMSync] HDM PuppetMoved handler failed: " + ex.Message); } }
+    private void OnOwnBodyHiddenRaw(bool hidden) { try { OnOwnBodyHidden?.Invoke(hidden); } catch (Exception ex) { log.Debug("[HMSync] HDM OwnBodyHidden handler failed: " + ex.Message); } }
+    private void OnFreezeChangedRaw(int slot, bool frozen) { try { OnFreezeChanged?.Invoke(slot, frozen); } catch (Exception ex) { log.Debug("[HMSync] HDM FreezeChanged handler failed: " + ex.Message); } }
 
     // ── Snapshot getters (late-join / first-sight; safety net for a mid-session HMS reload) ──
     /// <summary>The source's own-body disguise, or null if none (HDM returns "" for none).</summary>
@@ -212,6 +241,24 @@ public sealed class HdmIpc : IDisposable
             return JsonConvert.DeserializeObject<HdmDisguiseAtom>(json);
         }
         catch (Exception ex) { log.Debug("[HMSync] HDM GetDisguise failed: " + ex.Message); return null; }
+    }
+
+    /// <summary>Bug B (v1.1): the source DM's CURRENT own-body hide state. Call on first-sight of this source (late-join)
+    /// so a peer that starts mirroring mid-possession begins suppressed. A pre-v1.1 HDM has no getter → throws → false.</summary>
+    public bool GetOwnBodyHidden()
+    {
+        if (!Available || getOwnBodyHidden == null) return false;
+        try { return getOwnBodyHidden.InvokeFunc(); }
+        catch (Exception ex) { log.Debug("[HMSync] HDM GetOwnBodyHidden failed: " + ex.Message); return false; }
+    }
+
+    /// <summary>MinorVersion 4: the source DM's CURRENT own-body freeze-animation state. Call on late-join so a peer that
+    /// starts mirroring mid-session begins frozen. A pre-b9 HDM has no getter → throws → false (unfrozen).</summary>
+    public bool GetFrozenOwnBody()
+    {
+        if (!Available || getFrozenOwnBody == null) return false;
+        try { return getFrozenOwnBody.InvokeFunc(); }
+        catch (Exception ex) { log.Debug("[HMSync] HDM GetFrozenOwnBody failed: " + ex.Message); return false; }
     }
 
     /// <summary>Every live puppet the source owns (HDM returns "[]" for none).</summary>
@@ -243,6 +290,35 @@ public sealed class HdmIpc : IDisposable
         if (!Available || revertDisguise == null) return;
         try { revertDisguise.InvokeAction(objectIndex); }
         catch (Exception ex) { log.Debug("[HMSync] HDM RevertDisguise failed: " + ex.Message); }
+    }
+
+    /// <summary>HDM's own-body sanitiser (MinorVersion &gt;= 3, HDMT b8). Reverts the persistent leak fields that
+    /// survive a logout/login round-trip — GameObject.Scale, the vertical DrawOffset, and the own-body hide — plus,
+    /// when <paramref name="restoreVisual"/> is true, the model + Glamourer look via a redraw. Idempotent and
+    /// edge-safe (HDM guards a dead/absent own-body internally), so HMS fires restoreVisual:false on its reliable
+    /// logout edge as a belt-and-suspenders trigger dual with HDM's own OnLogout — whichever runs while the body is
+    /// still live wins. Gated on minor: a pre-b8 HDM has no such gate, so this is inert there (that HDM's OnLogout
+    /// still covers the model path; only the field leak is what b8 closes).</summary>
+    public bool SanitizeSelfSupported => Available && sanitizeSelf != null && minor >= SanitizeSelfMinor;
+
+    public void SanitizeSelf(bool restoreVisual)
+    {
+        if (!SanitizeSelfSupported) return;
+        try { sanitizeSelf!.InvokeAction(restoreVisual); }
+        catch (Exception ex) { log.Debug("[HMSync] HDM SanitizeSelf failed: " + ex.Message); }
+    }
+
+    /// <summary>MinorVersion 4 (HDMT b9): pin (frozen=true) or release a LOCAL actor's animation, mirroring a remote DM's
+    /// freeze toggle. HDM drives AnimationService.SetSpeed and re-asserts the pin every frame via its two speed hooks, so
+    /// the hold sticks without HMS poking it per-frame - HMS just re-calls on rebind/first-sight. Idempotent; a stale
+    /// objectIndex no-ops HDM-side. Gated on minor>=4 → inert against a pre-b9 HDM or none.</summary>
+    public bool SetFrozenSupported => Available && setFrozen != null && minor >= FreezeMinor;
+
+    public void SetFrozen(int objectIndex, bool frozen)
+    {
+        if (!SetFrozenSupported) return;
+        try { setFrozen!.InvokeAction(objectIndex, frozen); }
+        catch (Exception ex) { log.Debug("[HMSync] HDM SetFrozen failed: " + ex.Message); }
     }
 
     public void PlayAction(int objectIndex, uint playId)
@@ -283,6 +359,8 @@ public sealed class HdmIpc : IDisposable
         try { evPuppetReady?.Unsubscribe(OnPuppetReadyRaw); } catch { }
         try { evPuppetDespawned?.Unsubscribe(OnPuppetDespawnedRaw); } catch { }
         try { evPuppetMoved?.Unsubscribe(OnPuppetMovedRaw); } catch { }
+        try { evOwnBodyHidden?.Unsubscribe(OnOwnBodyHiddenRaw); } catch { }
+        try { evFreezeChanged?.Unsubscribe(OnFreezeChangedRaw); } catch { }
         try { onReady?.Unsubscribe(OnHdmReadyRaw); } catch { }
         try { onDisposing?.Unsubscribe(OnHdmDisposingRaw); } catch { }
     }

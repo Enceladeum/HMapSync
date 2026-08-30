@@ -44,6 +44,18 @@ public sealed class DisguiseSyncService : IDisposable
     // Local mirror puppets we've spawned to represent a remote DM's puppets. Keyed by the wire SubjectId
     // ("<sourceCid>:<slot>") → our LOCAL object index.
     private readonly Dictionary<string, int> mirrorPuppets = new();
+    // Freeze-anim (0x55): last-seen freeze bit per remote OWN body (keyed by SenderContentId), applied the moment the
+    // peer binds (OnPeerBound) if it arrived early. Only "true" is cached-meaningful — a fresh bind is unfrozen by default.
+    private readonly Dictionary<ulong, bool> lastFrozenOwnBody = new();
+    // Freeze-anim last-seen bit per remote PUPPET subject ("<sourceCid>:<slot>"), applied on mirror spawn if the freeze
+    // edge arrived before the puppet existed. Cleared when the owning peer departs.
+    private readonly Dictionary<string, bool> lastFrozenPuppet = new();
+
+    // ── SENDER state (framework-thread only) ──
+    // Our OWN live puppets' slot → local object index, so the per-frame move handler (which only carries a slot) can
+    // read the puppet's live resolved locomotion timeline to broadcast in PuppetMove.Anim. Populated on spawn,
+    // dropped on despawn. HdmPuppetInfo carries ObjectIndex on spawn/broadcast; the move event does not, hence this map.
+    private readonly Dictionary<int, int> localPuppets = new();
 
     public DisguiseSyncService(HdmIpc hdm, RelaySyncService relay, StateApplyService stateApply,
         IFramework framework, IPluginLog log, Func<ulong> localContentId)
@@ -61,6 +73,8 @@ public sealed class DisguiseSyncService : IDisposable
         hdm.OnPuppetSpawned += OnLocalPuppetSpawned;
         hdm.OnPuppetDespawned += OnLocalPuppetDespawned;
         hdm.OnPuppetMoved += OnLocalPuppetMoved;
+        hdm.OnOwnBodyHidden += OnLocalOwnBodyHidden;   // Bug B: mirror the DM's own-body hide edge to peers
+        hdm.OnFreezeChanged += OnLocalFrozen;          // Freeze-anim: mirror the DM's per-actor freeze edge to peers
         // HDM (re)appeared mid-session → re-offer our full current state so peers catch up.
         hdm.OnHdmReady += BroadcastFullState;
 
@@ -68,6 +82,8 @@ public sealed class DisguiseSyncService : IDisposable
         relay.OnDisguiseReceived += OnDisguiseReceived;
         relay.OnActionPulseReceived += OnActionPulseReceived;
         relay.OnPuppetMoveReceived += OnPuppetMoveReceived;
+        relay.OnOwnBodyHiddenReceived += OnOwnBodyHiddenReceived;   // Bug B: suppress a remote DM's own body while hidden
+        relay.OnFreezeReceived += OnFreezeReceived;                 // Freeze-anim: drive HDM SetFrozen on the mirrored actor
     }
 
     // ═══════════════════════════ SENDER (local DM → wire) ═══════════════════════════
@@ -96,18 +112,24 @@ public sealed class DisguiseSyncService : IDisposable
     {
         var self = RefreshSelfCid();
         var subject = PuppetSubject(self, info.Slot);
+        localPuppets[info.Slot] = info.ObjectIndex;   // track for the per-frame move handler's Anim read
         // The disguise (spawn-or-apply on the receiver) and the initial pose ride two opcodes; send them in order.
         _ = relay.SendDisguiseUpdate(BuildDisguise(subject, self, info.Atom));
         _ = relay.SendPuppetMove(new PuppetMovePayload
         {
             SubjectId = subject, SenderContentId = self,
             X = info.Px, Y = info.Py, Z = info.Pz, Rot = info.Rot,
+            Anim = stateApply.ReadLocomotionTimeline(info.ObjectIndex),
         });
+        // Freeze-anim: if the puppet spawned already frozen, carry that bit so the mirror pins immediately (visible=default).
+        if (info.Frozen)
+            _ = relay.SendFreezeUpdate(new FreezeUpdatePayload { SubjectId = subject, SenderContentId = self, Frozen = true });
     }
 
     private void OnLocalPuppetDespawned(int slot)
     {
         var self = RefreshSelfCid();
+        localPuppets.Remove(slot);
         // b189: despawn is now EXPLICIT (Despawn flag), not inferred from Kind==0 - a blank spawn and a guise-revert
         // are also Kind 0 on a puppet subject, and neither is a despawn. Only this path sets the flag.
         var payload = BuildDisguise(PuppetSubject(self, slot), self, new HdmDisguiseAtom { Kind = 0 });
@@ -118,10 +140,42 @@ public sealed class DisguiseSyncService : IDisposable
     private void OnLocalPuppetMoved(int slot, float x, float y, float z, float rot)
     {
         var self = RefreshSelfCid();
+        // Read the puppet's live resolved locomotion timeline so peers animate the mirror instead of sliding it.
+        // slot→objectIndex from the spawn map; 0 (idle) if not yet tracked (self-corrects once the spawn registers).
+        ushort anim = localPuppets.TryGetValue(slot, out var objIdx) ? stateApply.ReadLocomotionTimeline(objIdx) : (ushort)0;
         _ = relay.SendPuppetMove(new PuppetMovePayload
         {
             SubjectId = PuppetSubject(self, slot), SenderContentId = self,
             X = x, Y = y, Z = z, Rot = rot,
+            Anim = anim,
+        });
+    }
+
+    // Bug B: the DM's own body just became hidden/visible (possession start/release, or the "hide me while driving"
+    // toggle). Put the edge on the wire so peers suppress/restore our own-body mirror. Deduped HDM-side (one per edge).
+    private void OnLocalOwnBodyHidden(bool hidden)
+    {
+        var self = RefreshSelfCid();
+        _ = relay.SendOwnBodyHidden(new OwnBodyHiddenPayload
+        {
+            SubjectId = "",
+            SenderContentId = self,
+            Hidden = hidden,
+        });
+    }
+
+    // Freeze-anim: the DM toggled the animation-freeze checkbox for one actor (own body or a puppet). Put the per-subject
+    // edge on the wire so peers pin/unpin the matching mirror's animation speed. slot < 0 = own body (scalar lane), like
+    // OnLocalActionFired. Deduped HDM-side (one event per edge, per actor).
+    private void OnLocalFrozen(int slot, bool frozen)
+    {
+        var self = RefreshSelfCid();
+        var subject = slot < 0 ? "" : PuppetSubject(self, slot);
+        _ = relay.SendFreezeUpdate(new FreezeUpdatePayload
+        {
+            SubjectId = subject,
+            SenderContentId = self,
+            Frozen = frozen,
         });
     }
 
@@ -139,13 +193,25 @@ public sealed class DisguiseSyncService : IDisposable
             foreach (var p in hdm.GetPuppets())
             {
                 var subject = PuppetSubject(self, p.Slot);
+                localPuppets[p.Slot] = p.ObjectIndex;   // keep the sender map authoritative on re-broadcast
                 _ = relay.SendDisguiseUpdate(BuildDisguise(subject, self, p.Atom));
                 _ = relay.SendPuppetMove(new PuppetMovePayload
                 {
                     SubjectId = subject, SenderContentId = self,
                     X = p.Px, Y = p.Py, Z = p.Pz, Rot = p.Rot,
+                    Anim = stateApply.ReadLocomotionTimeline(p.ObjectIndex),
                 });
+                // Freeze-anim late-join: a puppet that's currently frozen carries its bit so the newcomer pins it on first-sight.
+                if (p.Frozen)
+                    _ = relay.SendFreezeUpdate(new FreezeUpdatePayload { SubjectId = subject, SenderContentId = self, Frozen = true });
             }
+            // Bug B late-join: if we're mid-possession with our own body hidden, tell the newcomer so it renders us
+            // suppressed on first-sight. Only re-send the "hidden" edge (visible is the default; no need to spam false).
+            if (hdm.GetOwnBodyHidden())
+                _ = relay.SendOwnBodyHidden(new OwnBodyHiddenPayload { SubjectId = "", SenderContentId = self, Hidden = true });
+            // Freeze-anim late-join: if our own body is currently frozen, tell the newcomer (unfrozen is the default).
+            if (hdm.GetFrozenOwnBody())
+                _ = relay.SendFreezeUpdate(new FreezeUpdatePayload { SubjectId = "", SenderContentId = self, Frozen = true });
         });
     }
 
@@ -180,6 +246,7 @@ public sealed class DisguiseSyncService : IDisposable
                     {
                         hdm.DespawnPuppet(gone);
                         mirrorPuppets.Remove(d.SubjectId);
+                        stateApply.ForgetMirrorLocomotion(gone);   // clean EDGE if the index is later reused
                     }
                     return;
                 }
@@ -191,7 +258,13 @@ public sealed class DisguiseSyncService : IDisposable
                 else
                 {
                     var spawned = hdm.SpawnPuppet(ToAtom(d));   // Kind 0 → blank mirror; Kind 1/2/3 → spawned + guised
-                    if (spawned >= 0) mirrorPuppets[d.SubjectId] = spawned;
+                    if (spawned >= 0)
+                    {
+                        mirrorPuppets[d.SubjectId] = spawned;
+                        // Freeze-anim: if a freeze edge for this subject arrived before the mirror existed, apply it now.
+                        if (lastFrozenPuppet.TryGetValue(d.SubjectId, out var fr) && fr)
+                            hdm.SetFrozen(spawned, true);
+                    }
                     else log.Debug("[HMSync] disguise-sync: mirror puppet spawn failed for " + d.SubjectId);
                 }
             }
@@ -216,8 +289,46 @@ public sealed class DisguiseSyncService : IDisposable
         _ = framework.RunOnFrameworkThread(() =>
         {
             if (mirrorPuppets.TryGetValue(p.SubjectId, out var li))
+            {
                 hdm.MovePuppet(li, p.X, p.Y, p.Z, p.Rot);
+                stateApply.DriveMirrorLocomotion(li, p.Anim);   // animate the mirror so it walks/runs instead of sliding
+            }
             // unknown subject (move before spawn) → drop; self-corrects on the next move after the DisguiseUpdate lands
+        });
+    }
+
+    // Bug B: a remote DM's own-body hide bit arrived. Suppress (Alpha 0) or restore their own-body mirror. Kept in
+    // StateApplyService (it owns the per-frame re-assert + the object-table resolve + unsafe Character* access). The set
+    // is authoritative there, so a bit that arrives before the DM is in render range is honoured the moment they bind.
+    private void OnOwnBodyHiddenReceived(OwnBodyHiddenPayload p)
+    {
+        if (IsSelf(p.SenderContentId)) return;
+        _ = framework.RunOnFrameworkThread(() => stateApply.SetOwnBodyHidden(p.SenderContentId, p.Hidden));
+    }
+
+    // Freeze-anim: a remote DM toggled the freeze checkbox for one of their actors. Resolve the subject to a LOCAL
+    // object and drive HDM's SetFrozen (HDM pins the animation speed every frame thereafter, so one call sticks). The
+    // bit is cached so a freeze that arrives before the target actor exists locally is honoured on bind / mirror-spawn.
+    private void OnFreezeReceived(FreezeUpdatePayload p)
+    {
+        if (IsSelf(p.SenderContentId)) return;
+        _ = framework.RunOnFrameworkThread(() =>
+        {
+            if (string.IsNullOrEmpty(p.SubjectId))
+            {
+                // Remote DM's own body → their SYNCED puppet body (must be bound to a local object).
+                lastFrozenOwnBody[p.SenderContentId] = p.Frozen;
+                var idx = ResolveObjectIndex(p.SenderContentId);
+                if (idx < 0) return;   // not in render range yet → applied on OnPeerBound from the cache above
+                hdm.SetFrozen(idx, p.Frozen);
+            }
+            else
+            {
+                // A puppet subject → our local mirror. Cache so a freeze that beats the DisguiseUpdate applies on spawn.
+                lastFrozenPuppet[p.SubjectId] = p.Frozen;
+                if (mirrorPuppets.TryGetValue(p.SubjectId, out var li))
+                    hdm.SetFrozen(li, p.Frozen);
+            }
         });
     }
 
@@ -230,6 +341,9 @@ public sealed class DisguiseSyncService : IDisposable
         if (cid == 0) return;
         if (lastOwnBody.TryGetValue(cid, out var d) && d.Kind != 0)
             hdm.ApplyDisguise(objectIndex, ToAtom(d));
+        // Freeze-anim: re-assert a cached own-body freeze the moment the peer binds (unfrozen is the default, so only true).
+        if (lastFrozenOwnBody.TryGetValue(cid, out var fr) && fr)
+            hdm.SetFrozen(objectIndex, true);
     }
 
     // A peer left the session → revert their body disguise + despawn every mirror puppet we spawned for them.
@@ -237,8 +351,14 @@ public sealed class DisguiseSyncService : IDisposable
     {
         if (contentId == 0) return;
         var idx = ResolveObjectIndex(contentId);
-        if (idx >= 0) hdm.RevertDisguise(idx);
+        if (idx >= 0)
+        {
+            hdm.RevertDisguise(idx);
+            hdm.SetFrozen(idx, false);   // Freeze-anim: unpin the departing peer's own body so a reused index isn't stuck
+        }
         lastOwnBody.Remove(contentId);
+        lastFrozenOwnBody.Remove(contentId);
+        stateApply.SetOwnBodyHidden(contentId, false);   // Bug B: drop any own-body suppression for the departing source
 
         var prefix = contentId.ToString() + ":";
         var stale = new List<string>();
@@ -246,9 +366,16 @@ public sealed class DisguiseSyncService : IDisposable
             if (kv.Key.StartsWith(prefix, StringComparison.Ordinal)) stale.Add(kv.Key);
         foreach (var key in stale)
         {
-            hdm.DespawnPuppet(mirrorPuppets[key]);
+            var li = mirrorPuppets[key];
+            hdm.DespawnPuppet(li);
             mirrorPuppets.Remove(key);
+            stateApply.ForgetMirrorLocomotion(li);
         }
+        // Freeze-anim: drop any cached puppet-freeze bits for the departing source (mirrors are despawned above).
+        var staleFrozen = new List<string>();
+        foreach (var kv in lastFrozenPuppet)
+            if (kv.Key.StartsWith(prefix, StringComparison.Ordinal)) staleFrozen.Add(kv.Key);
+        foreach (var key in staleFrozen) lastFrozenPuppet.Remove(key);
     }
 
     // Session teardown / disconnect → drop every mirror we own and clear caches.
@@ -256,9 +383,12 @@ public sealed class DisguiseSyncService : IDisposable
     {
         _ = framework.RunOnFrameworkThread(() =>
         {
-            foreach (var li in mirrorPuppets.Values) hdm.DespawnPuppet(li);
+            foreach (var li in mirrorPuppets.Values) { hdm.DespawnPuppet(li); stateApply.ForgetMirrorLocomotion(li); }
             mirrorPuppets.Clear();
             lastOwnBody.Clear();
+            lastFrozenOwnBody.Clear();
+            lastFrozenPuppet.Clear();
+            localPuppets.Clear();
         });
     }
 
@@ -323,9 +453,13 @@ public sealed class DisguiseSyncService : IDisposable
         try { hdm.OnPuppetSpawned -= OnLocalPuppetSpawned; } catch { }
         try { hdm.OnPuppetDespawned -= OnLocalPuppetDespawned; } catch { }
         try { hdm.OnPuppetMoved -= OnLocalPuppetMoved; } catch { }
+        try { hdm.OnOwnBodyHidden -= OnLocalOwnBodyHidden; } catch { }
+        try { hdm.OnFreezeChanged -= OnLocalFrozen; } catch { }
         try { hdm.OnHdmReady -= BroadcastFullState; } catch { }
         try { relay.OnDisguiseReceived -= OnDisguiseReceived; } catch { }
         try { relay.OnActionPulseReceived -= OnActionPulseReceived; } catch { }
         try { relay.OnPuppetMoveReceived -= OnPuppetMoveReceived; } catch { }
+        try { relay.OnOwnBodyHiddenReceived -= OnOwnBodyHiddenReceived; } catch { }
+        try { relay.OnFreezeReceived -= OnFreezeReceived; } catch { }
     }
 }

@@ -2179,6 +2179,18 @@ ImGui.Spacing();
             }
             if (!mk) ImGui.EndDisabled();
             if (ImGui.IsItemHovered()) ImGui.SetTooltip("Show each other's custom Moniker names while gathered in the lobby, before a map is loaded. Requires Moniker.");
+
+            // b200: also replace the name shown in CHAT (not just the nameplate). Chat lines carry the real character
+            // name; this restamps shown say/yell/shout AND /em emotes with the synced Moniker name so chat matches the plate.
+            if (!mk) ImGui.BeginDisabled();
+            bool chatNames = config.ReplaceChatNames;
+            if (ImGui.Checkbox("Use custom names in chat", ref chatNames))
+            {
+                config.ReplaceChatNames = chatNames;
+                config.Save();
+            }
+            if (!mk) ImGui.EndDisabled();
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Show Moniker names in the chat log too (say / yell / shout and /em emotes), not just on nameplates, for you and session members. Requires Moniker.");
             ImGui.Unindent(18f);
 
             // HDM (mob disguise) - HMS integrates with it via IPC (the disguise-sync bridge), so prefer its own

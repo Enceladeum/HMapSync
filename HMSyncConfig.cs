@@ -230,6 +230,17 @@ public class HMSyncConfig : IPluginConfiguration
     // local preference the user can untick. Only does anything with Moniker installed + peers in the lobby.
     public bool SyncLobbyNameplates { get; set; } = true;
 
+    // b200: replace the DISPLAYED chat sender with a session member's synced Moniker name (and our own). HMS already
+    // syncs the moniker onto peers' NAMEPLATES, but chat lines carry the real character's PlayerPayload, so chat kept
+    // showing the real name while the plate showed the moniker. This restamps the sender at the display layer (SDK 15
+    // IHandleableChatMessage.Sender) for shown say/yell/shout, using a plain masked name (no clickable real-name link).
+    // Emote (/em custom + standard emotes) carry the actor's name in the message BODY, not the sender, so those are
+    // covered by a second rewrite (find the real name in the text, swap the first occurrence) under this SAME toggle —
+    // players don't care about channel technicalities, they just want "what I send" to look consistent. Local
+    // preference; only acts in-session with Moniker present and a moniker actually set for that member. ON by default
+    // to match nameplate sync.
+    public bool ReplaceChatNames { get; set; } = true;
+
     // b185: drop section colliders (boss-arena fences, section gates, phase walls, NPC pens) automatically on every HMS
     // map load, so a loaded scene is freely traversable with no command. Local preference (never synced). Reversible and
     // persisted: /hms dropcolliders off restores them and clears this; on re-engages. Meshes remain (ghost-through);

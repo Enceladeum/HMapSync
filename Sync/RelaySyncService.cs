@@ -77,10 +77,17 @@ public class RelaySyncService : IDisposable
     public event Action<HMSync.Wire.DisguiseUpdatePayload>? OnDisguiseReceived;
     public event Action<HMSync.Wire.ActionPulsePayload>? OnActionPulseReceived;
     public event Action<HMSync.Wire.PuppetMovePayload>? OnPuppetMoveReceived;
+    // Bug B (IPC v1.1): a source DM's own-body hide bit. Self-describing (SenderContentId), snapshot-able (re-sent on
+    // first-sight). Receiver suppresses that source's own-body mirror (Alpha 0) while Hidden - never reverts the disguise.
+    public event Action<HMSync.Wire.OwnBodyHiddenPayload>? OnOwnBodyHiddenReceived;
     // Lobby nameplate sync (0x54): a source's chosen Moniker nameplate, carried so peers see custom names in the LOBBY
     // (out of map, where the Cold transform lane that normally couriers Moniker isn't running). Self-describing
     // (SenderContentId), snapshot-able (re-broadcast on peer-join). Receiver resolves ContentId→ObjectIndex and applies.
     public event Action<HMSync.Wire.LobbyNameplatePayload>? OnLobbyNameplateReceived;
+    // Freeze-animation sync (0x55, HDM IPC MinorVersion 4): a source's per-subject freeze bit. Self-describing
+    // (SenderContentId + SubjectId), snapshot-able (re-sent on first-sight). Receiver drives HDM.SetFrozen on the
+    // resolved local actor (peer's synced body for "", else the mirror puppet).
+    public event Action<HMSync.Wire.FreezeUpdatePayload>? OnFreezeReceived;
 
     // ── Per-subject composite cache (Stage 2a) ── each lane message updates its slice of the subject's composite
     // TransformData; the merged whole feeds OnTransformReceived. Keyed by SUBJECT entity id (payload `sid`), not
@@ -386,7 +393,9 @@ public class RelaySyncService : IDisposable
     // only ever disguises its own actor/puppets). SubjectId "" = own body, "<cid>:<slot>" = a spawned puppet.
     private uint disguiseSeq;
     private uint actionSeq;
+    private uint ownHiddenSeq;
     private uint lobbyNameSeq;
+    private uint freezeSeq;
 
     public async Task SendDisguiseUpdate(HMSync.Wire.DisguiseUpdatePayload p)
     {
@@ -412,6 +421,16 @@ public class RelaySyncService : IDisposable
             MessagePack.MessagePackSerializer.Serialize(p, HMSync.Wire.WireFormat.Options));
     }
 
+    // Bug B (v1.1): DM own-body hide bit. Snapshot-able (coalesced last-writer-wins per source), Seq-stamped like the
+    // disguise lane so a peer applies the latest transition and re-sends carry a fresh Seq on first-sight.
+    public async Task SendOwnBodyHidden(HMSync.Wire.OwnBodyHiddenPayload p)
+    {
+        if (!IsConnected) return;
+        p.Seq = ++ownHiddenSeq;
+        await SendFrame(HMSync.Wire.WireKind.OwnBodyHidden,
+            MessagePack.MessagePackSerializer.Serialize(p, HMSync.Wire.WireFormat.Options));
+    }
+
     // Lobby nameplate (0x54): the source's chosen Moniker nameplate for out-of-map (lobby) display. Snapshot-able
     // (coalesced last-writer-wins per source), Seq-stamped like the other relay-opaque lanes so a peer applies the
     // latest and re-broadcasts on peer-join carry a fresh Seq.
@@ -420,6 +439,17 @@ public class RelaySyncService : IDisposable
         if (!IsConnected) return;
         p.Seq = ++lobbyNameSeq;
         await SendFrame(HMSync.Wire.WireKind.LobbyNameplate,
+            MessagePack.MessagePackSerializer.Serialize(p, HMSync.Wire.WireFormat.Options));
+    }
+
+    // Freeze anim (0x55): per-subject animation-freeze bit (own body "" OR puppet "<cid>:<slot>"). Snapshot-able
+    // (coalesced last-writer-wins per subject), Seq-stamped like the other relay-opaque lanes so a peer applies the
+    // latest transition and re-broadcasts on peer-join carry a fresh Seq.
+    public async Task SendFreezeUpdate(HMSync.Wire.FreezeUpdatePayload p)
+    {
+        if (!IsConnected) return;
+        p.Seq = ++freezeSeq;
+        await SendFrame(HMSync.Wire.WireKind.FreezeUpdate,
             MessagePack.MessagePackSerializer.Serialize(p, HMSync.Wire.WireFormat.Options));
     }
 
@@ -665,10 +695,22 @@ public class RelaySyncService : IDisposable
                 OnPuppetMoveReceived?.Invoke(pm);
                 break;
             }
+            case HMSync.Wire.WireKind.OwnBodyHidden:
+            {
+                var ob = MessagePack.MessagePackSerializer.Deserialize<HMSync.Wire.OwnBodyHiddenPayload>(payload, HMSync.Wire.WireFormat.Options);
+                OnOwnBodyHiddenReceived?.Invoke(ob);
+                break;
+            }
             case HMSync.Wire.WireKind.LobbyNameplate:
             {
                 var ln = MessagePack.MessagePackSerializer.Deserialize<HMSync.Wire.LobbyNameplatePayload>(payload, HMSync.Wire.WireFormat.Options);
                 OnLobbyNameplateReceived?.Invoke(ln);
+                break;
+            }
+            case HMSync.Wire.WireKind.FreezeUpdate:
+            {
+                var fu = MessagePack.MessagePackSerializer.Deserialize<HMSync.Wire.FreezeUpdatePayload>(payload, HMSync.Wire.WireFormat.Options);
+                OnFreezeReceived?.Invoke(fu);
                 break;
             }
 
@@ -766,7 +808,9 @@ public class RelaySyncService : IDisposable
         HMSync.Wire.WireKind.DisguiseUpdate => "DisguiseUpdate",
         HMSync.Wire.WireKind.ActionPulse => "ActionPulse",
         HMSync.Wire.WireKind.PuppetMove => "PuppetMove",
+        HMSync.Wire.WireKind.OwnBodyHidden => "OwnBodyHidden",
         HMSync.Wire.WireKind.LobbyNameplate => "LobbyNameplate",
+        HMSync.Wire.WireKind.FreezeUpdate => "FreezeUpdate",
         HMSync.Wire.WireKind.ZoneLoadExecute => "ZoneLoadExecute",
         HMSync.Wire.WireKind.SessionEnd => "SessionEnd",
         HMSync.Wire.WireKind.Ping => "Ping",

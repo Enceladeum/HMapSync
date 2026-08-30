@@ -86,6 +86,11 @@ public static class WireKind
     public const byte DisguiseUpdate  = 0x50;   // disguise atom - on change, coalesced, re-sent on first-sight
     public const byte ActionPulse     = 0x51;   // one-shot action replay - immediate, one per fire, never snapshotted
     public const byte PuppetMove      = 0x52;   // per-frame puppet transform (non-"" SubjectId); coalesced last-wins
+    // Bug B (IPC v1.1): the DM's OWN-body render-visibility bit. Pure visibility state, NOT identity/transform - kept
+    // OFF the DisguiseUpdate lane on purpose so it works when the DM possesses UNDISGUISED (no own-body atom to carry
+    // it) and so a late-join snapshot doesn't ride a spurious Kind-0 revert. Snapshot-able (last-writer-wins per
+    // source, re-sent on first-sight).
+    public const byte OwnBodyHidden   = 0x53;   // DM own-body hide bit (true = suppress on peers via Alpha 0); coalesced last-wins
     // ── LOBBY NAMEPLATE SYNC (0x54, HMS-native). Carries the sender's chosen Moniker nameplate so peers can see each
     // other's custom names WHILE IN THE LOBBY (connected + room-joined, no synthetic map loaded). Needed because the
     // Moniker courier normally rides the Cold transform lane, which only runs inside a synthetic session (stateCapture/
@@ -94,6 +99,13 @@ public static class WireKind
     // last-writer-wins per source, re-broadcast on peer-join for late-joiners. Gated behind config.SyncLobbyNameplates
     // (off by default). Cleared on toggle-off / session-engage / peer-departure. See WORKING-CHANGELOG b195.
     public const byte LobbyNameplate  = 0x54;   // sender's Moniker nameplate for lobby (out-of-map) display; coalesced last-wins
+    // Freeze-animation sync (0x55, HDM IPC MinorVersion 4 / HDMT b9). Per-SUBJECT boolean: a source froze an actor's
+    // animation (idle-sway suppressed, "stand still"). Unlike OwnBodyHidden this is NOT own-body-only - HDM's freeze is
+    // per-actor (own body AND each puppet hold independent speed pins), so SubjectId is meaningful ("" = own body,
+    // "<cid>:<slot>" = a puppet). Snapshot-able (coalesced last-writer-wins per (source, subject), re-sent on first-sight).
+    // Receiver drives HDM.SetFrozen on the resolved local actor; HDM re-asserts the speed pin every frame, so the hold
+    // sticks with no per-frame poke from HMS. Not a TransformData render field → LaneCensus-exempt. See Q-0008.
+    public const byte FreezeUpdate    = 0x55;   // per-subject freeze-animation bit; coalesced last-wins
     public const byte ZoneLoadExecute = 0x30;
     public const byte SessionEnd      = 0x40;
     public const byte Ping            = 0xF0;
@@ -332,6 +344,22 @@ public class PuppetMovePayload
     [Key(3)] public float Y { get; set; }
     [Key(4)] public float Z { get; set; }
     [Key(5)] public float Rot { get; set; }                // facing, radians
+    [Key(6)] public ushort Anim { get; set; }              // puppet's live resolved locomotion timeline (TimelineIds[0]); 0=idle/none. Additive: old peers omit → 0.
+}
+
+/// <summary>OwnBodyHidden (0x53): the source DM's own-body render-visibility bit (Bug B / HDM IPC v1.1). SubjectId is
+/// ALWAYS "" - the signal is implicitly "this source's own body" (there is exactly one DM per HDM instance, and only
+/// the DM's own body is ever hidden - never a puppet). Snapshot-able: coalesced last-writer-wins per source, re-sent on
+/// late-join/first-sight. Hidden=true → the receiver forces that source's own-body actor to Alpha=0 (re-asserted every
+/// frame, since the game restores it) and back to 1 when false. NEVER a disguise revert - suppress visibility, keep the
+/// disguise (works disguised AND undisguised). Not a TransformData render field → LaneCensus-exempt.</summary>
+[MessagePackObject]
+public class OwnBodyHiddenPayload
+{
+    [Key(0)] public string SubjectId { get; set; } = "";   // always "" (source's own body); reserved for forward-compat ("ghost DM")
+    [Key(1)] public ulong SenderContentId { get; set; }    // source identity (the DM whose body is hidden)
+    [Key(2)] public uint Seq { get; set; }                 // dedup/ordering within the lane (envelope, like other lanes)
+    [Key(3)] public bool Hidden { get; set; }              // true = suppress this DM's own body on peers (Alpha 0); false = show
 }
 
 /// <summary>LobbyNameplate (0x54): the sender's chosen Moniker nameplate, so peers can display each other's custom
@@ -353,6 +381,22 @@ public class LobbyNameplatePayload
     [Key(5)] public bool MonikerHideName { get; set; }     // hide the base character name line
     [Key(6)] public bool MonikerHideTitle { get; set; }    // hide the title line
     [Key(7)] public bool MonikerHideStatus { get; set; }   // hide the status icon (additive, Moniker IPC 2.4; missing → false = shown)
+}
+
+/// <summary>FreezeUpdate (0x55): a source's per-subject freeze-animation bit (HDM IPC MinorVersion 4 / HDMT b9). SubjectId
+/// "" = the source's own body; "&lt;cid&gt;:&lt;slot&gt;" = one of its spawned puppets (HDM's freeze is per-actor, not global -
+/// own body and each puppet hold independent speed pins, so the subject is meaningful, unlike OwnBodyHidden which is
+/// always own-body). Snapshot-able: coalesced last-writer-wins per (source, subject), re-sent on late-join/first-sight.
+/// Frozen=true → the receiver calls HDM.SetFrozen(idx, true) on that subject's local actor (the peer's synced body for "",
+/// else the mirror puppet); HDM pins animation speed to 0 and re-asserts it every frame, so no per-frame poke is needed.
+/// Not a TransformData render field → LaneCensus-exempt.</summary>
+[MessagePackObject]
+public class FreezeUpdatePayload
+{
+    [Key(0)] public string SubjectId { get; set; } = "";   // "" = source's own body; "<cid>:<slot>" = a spawned puppet
+    [Key(1)] public ulong SenderContentId { get; set; }    // source identity (resolved to a local actor on the receiver)
+    [Key(2)] public uint Seq { get; set; }                 // dedup/ordering within the lane (envelope, like the other lanes)
+    [Key(3)] public bool Frozen { get; set; }              // true = pin this subject's animation (stand still); false = release
 }
 
 // ═══════════════════════ CONTROL + JOIN PAYLOADS (shared encode/decode surface) ═══════════════════════

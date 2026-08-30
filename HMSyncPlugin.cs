@@ -169,8 +169,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // NOTE: puppet POSSESSION (drive an NPC from the DM's MoveController intent while the DM body stays static) is
         // owned by HDM, not HMS. HMS's role is peer sync only: when HDM drives a possessed puppet it fires PuppetMoved
         // each frame, which DisguiseSyncService.OnLocalPuppetMoved reads + broadcasts (transform + resolved timeline)
-        // to session peers. No HMS-side possession loop. (The b191 HMS-side PossessionService was rolled back; see
-        // _coord/threads/common/2026-08-24-locomotion-possession.md and worklog/HMSTesting.md.)
+        // to session peers. No HMS-side possession loop. (The b191 HMS-side PossessionService was rolled back.)
         packetFilter = new PacketFilterService(log, hooks, sigScanner);
         opcodeMap = new OpcodeMapService(log);
         // Say filter: supplier returns the set of session-member character names (local + peers), lower-cased. Used to
@@ -203,7 +202,28 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 return -1f;   // known peer but no resolved body → don't cull
             }
             return -1f;
-        });
+        },
+        // b200 chat-name replacement: real name → the chosen Moniker name. Self-aware — if the real name is the local
+        // player's, returns our own Moniker (GetLocalName); otherwise the peer's synced LastAppliedMonikerName (the same
+        // value HMS pushed to their nameplate). Null when the pref is off, Moniker is absent, the name isn't a session
+        // member, or they have no moniker set → the say filter then leaves the real name untouched.
+        realName =>
+        {
+            if (!config.ReplaceChatNames || !moniker.Available || string.IsNullOrEmpty(realName)) return null;
+            var lp = objectTable.LocalPlayer;
+            if (lp != null && string.Equals(lp.Name.TextValue, realName, StringComparison.OrdinalIgnoreCase))
+            {
+                var own = moniker.GetLocalName().name;
+                return string.IsNullOrEmpty(own) ? null : own;
+            }
+            foreach (var info in stateApply.Peers.Values)
+                if (string.Equals(info.CharacterName, realName, StringComparison.OrdinalIgnoreCase))
+                    return string.IsNullOrEmpty(info.LastAppliedMonikerName) ? null : info.LastAppliedMonikerName;
+            return null;
+        },
+        // b200: our own REAL name, so own emote/flat lines (which never carry a PlayerPayload) can be resolved back
+        // through the self-aware moniker lookup above.
+        () => objectTable.LocalPlayer?.Name.TextValue);
         zoneLoad = new ZoneLoadService(objectTable, log, sigScanner, hooks, framework, dataManager);
         // b195: lobby nameplate sync — carries the local Moniker name to peers on the dedicated 0x54 lane while in the
         // lobby (out of map), where the Cold-lane courier isn't running. Constructed here (after zoneLoad) so its
@@ -739,6 +759,12 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 // across logout/login (the reported "wxkfclear persists between sessions" bug). Fully reset it here.
                 mapSettings.ResetKeyframeGraftForSession();
                 log.Information("[HMSync] weather sanitised on logout.");
+                // NOTE (b201): no HDM own-body sanitise on the LOGOUT edge — it isn't needed. A true logout DESTROYS the
+                // local GameObject; relog recreates it fresh, so the game resets Scale + DrawOffset on its own (they can't
+                // survive an object that no longer exists). The real leak is the session-STOP edge (DoLeaveInternal),
+                // where the object is NOT destroyed — only its draw object is rebuilt by a zone reload while the logical
+                // GameObject's Scale/DrawOffset persist. That edge is sanitised in DoLeaveInternal below.
+                // (HDM independently keeps its own OnLogout revert; nothing here relies on it.)
             }
             wasLoggedIn = loggedIn;
         }
@@ -2276,6 +2302,25 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // never gets its release call. ClearAll resets the static flags so the next session starts clean
         // and the zone reload's DrawObject rebuild doesn't inherit a stale look-at target.
         FaceControlState.ClearAll();
+
+        // Q-0007b (b201): HDM OWN-BODY SANITISE ON SESSION TEARDOWN. disguiseSync.Reset() above dropped PEER mirror
+        // puppets, but the DM's OWN-body HDM disguise — Scale + a vertical DrawOffset on our GameObject, plus any
+        // in-progress possession pin — is HDM-owned and untouched by it. Those are plain GameObject fields that SURVIVE
+        // the zone reload below (Revert rebuilds the DRAW object, not the logical GameObject), so on a session STOP (the
+        // edge a DM hits constantly, which the b200 logout-only wiring missed) a wisp's downscale + raised elevation
+        // stranded the DM mini + floating at origin. "Fine on relog" is NOT acceptable — baseline must return on session
+        // end. Every stop/leave/host-end/disconnect funnels through DoLeaveInternal, so this is the right chokepoint.
+        // Share IsZoneLoaded with the Revert on the next line so both read the same flag: pass restoreVisual=FALSE when a
+        // zone is loaded (the reload reverts the MODEL, so we need only the cheap leak-field zeroing and must NOT queue a
+        // redraw that races the reload); pass TRUE when no zone is loaded (Revert is skipped, so HDM reverts the model
+        // itself via its own redraw — safe: HDM excludes the local index from model re-assertion, GuiseService.cs:1027).
+        // Sub-ms field writes on the common (zone-loaded) path → no exit stutter. Additive + HDM-optional (guarded).
+        if (hdm.SanitizeSelfSupported)
+        {
+            bool restoreVisual = !zoneLoad.IsZoneLoaded;
+            hdm.SanitizeSelf(restoreVisual);
+            log.Information("[HMSync] HDM own-body sanitised on session teardown (restoreVisual=" + restoreVisual + ").");
+        }
 
         if (zoneLoad.IsZoneLoaded) zoneLoad.Revert();
 

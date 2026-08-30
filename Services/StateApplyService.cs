@@ -47,6 +47,19 @@ public class StateApplyService : IDisposable
     private readonly ConcurrentDictionary<string, PeerInterpolationState> peerStates = new();
     private readonly ConcurrentDictionary<string, PeerInfo> peerInfos = new();
 
+    // Phase 1: per-mirror-puppet last-applied locomotion timeline (objectIndex → tl0). The single source of truth
+    // for the EDGE/SUSTAIN one-writer discipline in DriveMirrorLocomotion, exactly like PeerInfo.LastAppliedAnim
+    // does for real peer bodies. Framework-thread only (all reads/writes happen in the marshalled receiver path).
+    private readonly Dictionary<int, ushort> mirrorLoco = new();
+
+    // Bug B (HDM IPC v1.1): source ContentIds whose OWN body must be render-suppressed on this client while they drive a
+    // possessed puppet. The DM's local Alpha=0 fade only hides them on their OWN screen; a peer renders a separate
+    // HMS-driven mirror of the DM's frozen body, so we force that mirror's Character.Alpha to 0 here (re-asserted every
+    // frame in OnFrameworkUpdate, since the game restores Alpha on its own draw passes) and back to 1 on clear. This is
+    // pure visibility suppression - it NEVER reverts the disguise, so unhide is instant and the disguise stays intact.
+    // Framework-thread only (SetOwnBodyHidden is called from the marshalled relay-receive path). Keyed by ContentId.
+    private readonly HashSet<ulong> hiddenOwnBodies = new();
+
     // ── Tier 2: Penumbra redraw-lifecycle coordination ──
     // Chair-sit on a Penumbra-managed (glamoured/Mare-synced) actor triggers a full
     // CharacterBase teardown+rebuild (confirmed in xllog: "[Penumbra] [Create CharacterBase]"
@@ -95,9 +108,30 @@ public class StateApplyService : IDisposable
         return null;
     }
 
+    // Bug B (HDM IPC v1.1): mark/unmark a source DM's own body as render-suppressed on this client. hidden=true adds it
+    // to the per-frame Alpha=0 re-assert set; hidden=false removes it AND restores Alpha=1 immediately so unhide is
+    // instant (never waits on a frame tick). Framework-thread only (the relay receiver marshals before calling). This
+    // is visibility-only - the disguise is untouched, so the body reappears exactly as it was disguised.
+    public unsafe void SetOwnBodyHidden(ulong contentId, bool hidden)
+    {
+        if (contentId == 0) return;
+        if (hidden)
+        {
+            hiddenOwnBodies.Add(contentId);
+            var ch = FindCharacterByContentId(contentId);
+            if (ch != null) ch->Alpha = 0f;   // apply at once; the frame loop keeps re-asserting it
+        }
+        else
+        {
+            if (!hiddenOwnBodies.Remove(contentId)) return;
+            var ch = FindCharacterByContentId(contentId);
+            if (ch != null) ch->Alpha = 1f;   // restore opacity now; disguise/actor untouched
+        }
+    }
+
     // Unconditionally drop the roster. Called on entering a fresh room (RoomJoined) and on teardown - safe whether or
     // not the apply loop is active (unlike Stop's clear, which is active-gated and misses the two-phase lobby).
-    public void ClearRoster() { peerInfos.Clear(); departedOrigins.Clear(); }   // v0.7.370: departed origins are session-scoped
+    public void ClearRoster() { peerInfos.Clear(); departedOrigins.Clear(); hiddenOwnBodies.Clear(); }   // v0.7.370: departed origins are session-scoped; Bug B: drop stale own-body suppressions
 
     // S322j: user-facing chat sink (wired to chat.Print by the plugin, like the other services' StatusReport).
     public Action<string>? Notify { get; set; }
@@ -732,6 +766,65 @@ public class StateApplyService : IDisposable
         if (rot.HasValue) go->SetRotation(rot.Value);
     }
 
+    // ═══════════════════════ Phase 1: mirror-puppet locomotion drive ═══════════════════════
+    // A spawned puppet is NOT a live actor on the receiver - it has no input loop, so its legs never animate on
+    // their own (Principle 1). The owner reads the puppet's live resolved TimelineIds[0] each frame and ships it in
+    // PuppetMove.Anim; the receiver replays it here onto its LOCAL mirror puppet. This is the puppet analogue of the
+    // per-peer body write in ResolvePuppetAnimation - same EDGE/SUSTAIN/landing-one-shot discipline, keyed by the
+    // mirror's own object index instead of PeerInfo.
+
+    /// <summary>Read a local puppet's live resolved base-locomotion timeline (TimelineIds[0]) - the value the OWNER
+    /// broadcasts in PuppetMove.Anim. Returns 0 if the object is gone/unresolvable (treated as idle).</summary>
+    public unsafe ushort ReadLocomotionTimeline(int objectIndex)
+    {
+        if (objectIndex < 0) return 0;
+        var obj = objectTable[objectIndex];
+        if (obj == null) return 0;
+        var chara = (Character*)obj.Address;
+        return chara->Timeline.TimelineSequencer.TimelineIds[0];
+    }
+
+    /// <summary>Drive a mirror puppet's base-locomotion timeline to <paramref name="target"/> (the owner's broadcast
+    /// TimelineIds[0]). One writer, keyed by objectIndex - mirrors ResolvePuppetAnimation's write block verbatim:
+    /// LOOPING clips sustain BaseOverride every frame; a TERMINAL landing one-shot fires once then plays out to idle
+    /// (never re-pinned, so no double-squat); target 0 clears to natural idle.</summary>
+    public unsafe void DriveMirrorLocomotion(int objectIndex, ushort target)
+    {
+        if (objectIndex < 0) return;
+        var obj = objectTable[objectIndex];
+        if (obj == null) return;
+        var character = (Character*)obj.Address;
+
+        mirrorLoco.TryGetValue(objectIndex, out ushort last);
+
+        bool targetIsLandingOneShot = target != 0 && LocomotionData.IsLandingClip(target);
+        if (target != 0)
+        {
+            if (last != target)
+            {
+                if (targetIsLandingOneShot)
+                    character->Timeline.BaseOverride = 0;   // release, let the landing play out to idle
+                else
+                    character->Timeline.BaseOverride = target;
+                character->Timeline.TimelineSequencer.PlayTimeline(target);
+                mirrorLoco[objectIndex] = target;
+            }
+            else if (!targetIsLandingOneShot)
+            {
+                character->Timeline.BaseOverride = target;   // SUSTAIN looping clips
+            }
+        }
+        else if (last != 0)
+        {
+            character->Timeline.BaseOverride = 0;
+            mirrorLoco[objectIndex] = 0;
+        }
+    }
+
+    /// <summary>Drop the tracked locomotion state for a despawned/departed mirror puppet, so a later puppet reusing
+    /// the same object index starts from a clean EDGE (no stale LastAppliedAnim suppressing its first PlayTimeline).</summary>
+    public void ForgetMirrorLocomotion(int objectIndex) => mirrorLoco.Remove(objectIndex);
+
     // v0.7.419 - post-settle peer posture cleanup. The Stop() cleanup ran before the zone reload,
     // but the reload rebuilt peer actors from cached HMS state (the same problem as self). This
     // re-clears every nearby Pc actor to standing/idle after the reload settles. Walks the object
@@ -1125,6 +1218,18 @@ public class StateApplyService : IDisposable
                     if (info.ObjectIndex.HasValue)
                         OnPeerBound?.Invoke(info.ObjectIndex.Value);
                 }
+            }
+        }
+
+        // Bug B: re-assert Alpha=0 on every render-suppressed DM own body. The game restores Alpha on its own draw
+        // passes (same reason HDM re-asserts the DM's local fade each frame), so a one-shot write on receive isn't
+        // enough. A suppressed source not yet in render range resolves to null → skipped, self-correcting once it binds.
+        if (hiddenOwnBodies.Count > 0)
+        {
+            foreach (var cid in hiddenOwnBodies)
+            {
+                var ch = FindCharacterByContentId(cid);
+                if (ch != null) ch->Alpha = 0f;
             }
         }
 

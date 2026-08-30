@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Dalamud.Game.Chat;
 using Dalamud.Game.Text;
+using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Game.Text.SeStringHandling.Payloads;
 using Dalamud.Plugin.Services;
 
@@ -48,13 +49,27 @@ public sealed class SayFilterService : IDisposable
     // isn't a resolvable session peer. Local player's own /say returns 0 (always in range). Used for the range cull.
     private readonly Func<string, float> senderDistance;
 
+    // Chat-name replacement ("moniker in chat"). HMS syncs each session member's chosen Moniker name onto their
+    // NAMEPLATE, but chat lines carry the real character's name, so the DISPLAYED chat name stays the real name. These
+    // delegates close the gap at the display layer without HMS learning anything new. `monikerForRealName` maps ANY
+    // real name — a session member's OR the local player's own — to the Moniker name to show, or null when there's no
+    // override / the feature is off. `localPlayerName` supplies the host's own real character name, needed to locate
+    // and swap the name in our OWN flat-printed lines (which carry no PlayerPayload to read it from). The plugin
+    // supplies both (closing over the peer registry + the local Moniker name + the config toggle), so this service
+    // keeps no Moniker/config dependency of its own. Null-safe: unwired = feature off.
+    private readonly Func<string, string?>? monikerForRealName;
+    private readonly Func<string?>? localPlayerName;
+
     public SayFilterService(IChatGui chat, IPluginLog log, Func<HashSet<string>> sessionMemberNames,
-        Func<string, float> senderDistance)
+        Func<string, float> senderDistance, Func<string, string?>? monikerForRealName = null,
+        Func<string?>? localPlayerName = null)
     {
         this.chat = chat;
         this.log = log;
         this.sessionMemberNames = sessionMemberNames;
         this.senderDistance = senderDistance;
+        this.monikerForRealName = monikerForRealName;
+        this.localPlayerName = localPlayerName;
     }
 
     public void Initialize()
@@ -88,6 +103,14 @@ public sealed class SayFilterService : IDisposable
             bool isSay = message.LogKind == XivChatType.Say;
             bool isYell = message.LogKind == XivChatType.Yell;
             bool isShout = message.LogKind == XivChatType.Shout;
+            // Emotes (/em custom + the standard emotes) render the actor's name in the message BODY, not the sender
+            // field, so they need a different rewrite than say/yell/shout. They're never culled (a member's emote
+            // always shows), so we only restamp the name and return. Same ReplaceChatNames gate (via the delegates).
+            if (message.LogKind == XivChatType.CustomEmote || message.LogKind == XivChatType.StandardEmote)
+            {
+                RewriteEmoteName(message);
+                return;
+            }
             if (!isSay && !isYell && !isShout) return;
 
             // NB-17: COSMETIC-PROOF sender match. Match on the player's REAL identity from the SeString's PlayerPayload,
@@ -105,6 +128,8 @@ public sealed class SayFilterService : IDisposable
             if (senderName == null)
             {
                 if (Diag) log.Information("[HMSync] [SAYCULL] no PlayerPayload (own message) → SHOW");
+                // Own flat-printed spatial message → restamp with our OWN Moniker name so our chat matches our plate.
+                RewriteSender(message, monikerForRealName?.Invoke(localPlayerName?.Invoke() ?? ""));
                 return;
             }
             if (string.IsNullOrEmpty(senderName)) return;
@@ -131,12 +156,51 @@ public sealed class SayFilterService : IDisposable
                     return;
                 }
             }
+            // Session member, shown (in-range say/yell, or any shout) → restamp the displayed sender with their synced
+            // Moniker name so chat matches the nameplate. No-op when they have no moniker or the feature is off.
+            RewriteSender(message, monikerForRealName?.Invoke(senderName));
             // Otherwise → allow.
         }
         catch (Exception ex)
         {
             log.Error("[HMSync] SayFilter error: " + ex.Message);
         }
+    }
+
+    // Replace the displayed chat sender with the given Moniker name, IN PLACE (Dalamud SDK 15's IHandleableChatMessage
+    // exposes a settable Sender + SenderModified flag). No-op when there is no moniker to apply. We deliberately emit a
+    // PLAIN TextPayload rather than a PlayerPayload: the moniker is meant to MASK identity, and a clickable player link
+    // would leak the real name via its tooltip/target. The cull above already resolved the REAL name from the original
+    // payload, so replacing the sender here cannot affect member matching (it runs only on the show path, after).
+    private void RewriteSender(IHandleableChatMessage message, string? moniker)
+    {
+        if (string.IsNullOrEmpty(moniker)) return;
+        // Assigning Sender is what marks the message dirty (SenderModified is a read-only flag Dalamud sets from this
+        // assignment); the game then re-encodes the sender from our replacement on display.
+        try { message.Sender = new SeString(new TextPayload(moniker)); }
+        catch (Exception ex) { log.Debug("[HMSync] chat-name rewrite failed: " + ex.Message); }
+    }
+
+    // Restamp the actor's name inside an EMOTE message body (custom /em + standard emotes) with their Moniker name.
+    // Emote lines read "<Name> <does something>" with the name at the FRONT of the MESSAGE (the sender field is empty),
+    // so we find the real name in the rendered text and swap the first occurrence. Remote actor: real name from a
+    // PlayerPayload in the message. Own emote: no PlayerPayload (own lines are flat), so we fall back to the local
+    // player's name. Degrades safely: if the name isn't present verbatim (e.g. a "You ..." standard-emote line) we
+    // leave the message untouched. Rebuilt as plain text (drops the clickable link) — same privacy stance as the
+    // sender rewrite. The FIRST occurrence is the leading actor name; a later mention (e.g. an emote targeting the
+    // actor) is left alone.
+    private void RewriteEmoteName(IHandleableChatMessage message)
+    {
+        string? real = RealNameFromPayload(message.Message) ?? localPlayerName?.Invoke();
+        if (string.IsNullOrEmpty(real)) return;
+        var moniker = monikerForRealName?.Invoke(real);
+        if (string.IsNullOrEmpty(moniker)) return;
+        var text = message.Message.TextValue;
+        int i = text.IndexOf(real, StringComparison.Ordinal);
+        if (i < 0) return;
+        var rewritten = string.Concat(text.AsSpan(0, i), moniker, text.AsSpan(i + real.Length));
+        try { message.Message = new SeString(new TextPayload(rewritten)); }
+        catch (Exception ex) { log.Debug("[HMSync] emote-name rewrite failed: " + ex.Message); }
     }
 
     // NB-17: pull the player's REAL name out of the sender SeString's PlayerPayload - the true identity, immune to any
