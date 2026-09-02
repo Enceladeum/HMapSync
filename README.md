@@ -2,6 +2,8 @@
 
 > Explore any zone together. Built for roleplayers and gposers.
 
+> https://www.patreon.com/c/Enceladeumlab to support development
+
 Enter any in-game map and explore it with friends. HMS puts you behind a firewall and lets you load any location client-side, including otherwise unavailable cutscenes while the server sees you sitting afk in your room.
 
 <img width="486" height="612" alt="Screenshot_5" src="https://github.com/user-attachments/assets/47849b11-343a-451b-9418-eb24be90b6e8" />
