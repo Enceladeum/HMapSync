@@ -106,6 +106,15 @@ public static class WireKind
     // Receiver drives HDM.SetFrozen on the resolved local actor; HDM re-asserts the speed pin every frame, so the hold
     // sticks with no per-frame poke from HMS. Not a TransformData render field → LaneCensus-exempt. See Q-0008.
     public const byte FreezeUpdate    = 0x55;   // per-subject freeze-animation bit; coalesced last-wins
+    // Lights-out sync (0x56, HMS-native). MAP-GLOBAL atmosphere toggle for instanced dungeons: a source extinguished
+    // the placed stage/brazier LIGHTS (Layer 0) or the flame VFX (Layer 1) on THIS territory. Not per-actor and not
+    // host-gated - ANYONE in the session may toggle, and each peer runs the SAME local suppression on its own layout
+    // copy (no light data on the wire, just the intent bit + which territory + which layer). Snapshot-able: coalesced
+    // last-writer-wins per (source, territory, layer), re-offered on peer-join for late-joiners. Receiver applies only
+    // when TerritoryId == its own current zone (peers are co-located, so this is a co-map + late-join guard). Rides the
+    // relay-opaque family so RMS fans it out verbatim (no relay change; old clients ignore it). Not a TransformData
+    // render field → LaneCensus-exempt. See Q-0010.
+    public const byte LightsOut       = 0x56;   // map-global stage-light / flame-VFX suppression bit; coalesced last-wins
     public const byte ZoneLoadExecute = 0x30;
     public const byte SessionEnd      = 0x40;
     public const byte Ping            = 0xF0;
@@ -397,6 +406,24 @@ public class FreezeUpdatePayload
     [Key(1)] public ulong SenderContentId { get; set; }    // source identity (resolved to a local actor on the receiver)
     [Key(2)] public uint Seq { get; set; }                 // dedup/ordering within the lane (envelope, like the other lanes)
     [Key(3)] public bool Frozen { get; set; }              // true = pin this subject's animation (stand still); false = release
+}
+
+/// <summary>LightsOut (0x56): a source's MAP-GLOBAL light/flame suppression edge for one instanced dungeon. SubjectId is
+/// ALWAYS "" — this is map state, not per-actor (unlike Freeze/OwnBodyHidden). Layer selects WHICH suppression: 0 = the
+/// placed stage/brazier LIGHTS (amber glow, extinguished via SetColor-black), 1 = the flame VFX (fire sprites + their
+/// slaved bloom, hidden via DrawObject.IsVisible=false). Suppressed=true → lights out; false → restore. No light DATA
+/// rides the wire — the receiver runs the identical local suppression on its own layout copy. Snapshot-able: coalesced
+/// last-writer-wins per (source, TerritoryId, Layer), re-offered on peer-join. The receiver applies ONLY when TerritoryId
+/// matches its own current zone (co-located co-map guard). Not a TransformData render field → LaneCensus-exempt.</summary>
+[MessagePackObject]
+public class LightsOutPayload
+{
+    [Key(0)] public string SubjectId { get; set; } = "";   // always "" (map-global, not per-actor); reserved for forward-compat
+    [Key(1)] public ulong SenderContentId { get; set; }    // source identity (echo-suppress on the receiver + logging)
+    [Key(2)] public uint Seq { get; set; }                 // dedup/ordering within the lane (envelope, like the other lanes)
+    [Key(3)] public uint TerritoryId { get; set; }         // the map this suppression applies to (receiver applies only if it matches)
+    [Key(4)] public byte Layer { get; set; }               // 0 = stage lights, 1 = flame VFX
+    [Key(5)] public bool Suppressed { get; set; }          // true = lights out (suppress); false = restore
 }
 
 // ═══════════════════════ CONTROL + JOIN PAYLOADS (shared encode/decode surface) ═══════════════════════

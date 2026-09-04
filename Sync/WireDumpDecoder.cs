@@ -32,6 +32,7 @@ internal static class WireDumpDecoder
                 WireKind.OwnBodyHidden => JsonSerializer.Serialize(MessagePackSerializer.Deserialize<OwnBodyHiddenPayload>(payload, WireFormat.Options), JsonOpts),
                 WireKind.LobbyNameplate => JsonSerializer.Serialize(MessagePackSerializer.Deserialize<LobbyNameplatePayload>(payload, WireFormat.Options), JsonOpts),
                 WireKind.FreezeUpdate => JsonSerializer.Serialize(MessagePackSerializer.Deserialize<FreezeUpdatePayload>(payload, WireFormat.Options), JsonOpts),
+                WireKind.LightsOut    => JsonSerializer.Serialize(MessagePackSerializer.Deserialize<LightsOutPayload>(payload, WireFormat.Options), JsonOpts),
                 WireKind.JoinRoom     => JsonSerializer.Serialize(MessagePackSerializer.Deserialize<JoinPayload>(payload, WireFormat.Options), JsonOpts),
                 WireKind.RoomJoined   => JsonSerializer.Serialize(MessagePackSerializer.Deserialize<RoomJoinedPayload>(payload, WireFormat.Options), JsonOpts),
                 WireKind.PeerJoined   => JsonSerializer.Serialize(MessagePackSerializer.Deserialize<PeerJoinedPayload>(payload, WireFormat.Options), JsonOpts),

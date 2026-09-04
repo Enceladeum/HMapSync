@@ -88,6 +88,10 @@ public class RelaySyncService : IDisposable
     // (SenderContentId + SubjectId), snapshot-able (re-sent on first-sight). Receiver drives HDM.SetFrozen on the
     // resolved local actor (peer's synced body for "", else the mirror puppet).
     public event Action<HMSync.Wire.FreezeUpdatePayload>? OnFreezeReceived;
+    // Lights-out sync (0x56, HMS-native): a source's map-global light/flame suppression edge for one instanced
+    // dungeon. Self-describing (SenderContentId + TerritoryId + Layer), snapshot-able (re-offered on peer-join).
+    // Receiver runs the identical local suppression on its own layout copy when the TerritoryId matches its zone.
+    public event Action<HMSync.Wire.LightsOutPayload>? OnLightsOutReceived;
 
     // ── Per-subject composite cache (Stage 2a) ── each lane message updates its slice of the subject's composite
     // TransformData; the merged whole feeds OnTransformReceived. Keyed by SUBJECT entity id (payload `sid`), not
@@ -396,6 +400,7 @@ public class RelaySyncService : IDisposable
     private uint ownHiddenSeq;
     private uint lobbyNameSeq;
     private uint freezeSeq;
+    private uint lightsOutSeq;
 
     public async Task SendDisguiseUpdate(HMSync.Wire.DisguiseUpdatePayload p)
     {
@@ -450,6 +455,17 @@ public class RelaySyncService : IDisposable
         if (!IsConnected) return;
         p.Seq = ++freezeSeq;
         await SendFrame(HMSync.Wire.WireKind.FreezeUpdate,
+            MessagePack.MessagePackSerializer.Serialize(p, HMSync.Wire.WireFormat.Options));
+    }
+
+    // Lights-out (0x56): map-global light/flame suppression bit for one instanced dungeon. Snapshot-able (coalesced
+    // last-writer-wins per (source, territory, layer)), Seq-stamped like the other relay-opaque lanes so a peer applies
+    // the latest transition and re-offers on peer-join carry a fresh Seq.
+    public async Task SendLightsOut(HMSync.Wire.LightsOutPayload p)
+    {
+        if (!IsConnected) return;
+        p.Seq = ++lightsOutSeq;
+        await SendFrame(HMSync.Wire.WireKind.LightsOut,
             MessagePack.MessagePackSerializer.Serialize(p, HMSync.Wire.WireFormat.Options));
     }
 
@@ -713,6 +729,12 @@ public class RelaySyncService : IDisposable
                 OnFreezeReceived?.Invoke(fu);
                 break;
             }
+            case HMSync.Wire.WireKind.LightsOut:
+            {
+                var lo = MessagePack.MessagePackSerializer.Deserialize<HMSync.Wire.LightsOutPayload>(payload, HMSync.Wire.WireFormat.Options);
+                OnLightsOutReceived?.Invoke(lo);
+                break;
+            }
 
             case HMSync.Wire.WireKind.ZoneLoadExecute:
             {
@@ -811,6 +833,7 @@ public class RelaySyncService : IDisposable
         HMSync.Wire.WireKind.OwnBodyHidden => "OwnBodyHidden",
         HMSync.Wire.WireKind.LobbyNameplate => "LobbyNameplate",
         HMSync.Wire.WireKind.FreezeUpdate => "FreezeUpdate",
+        HMSync.Wire.WireKind.LightsOut => "LightsOut",
         HMSync.Wire.WireKind.ZoneLoadExecute => "ZoneLoadExecute",
         HMSync.Wire.WireKind.SessionEnd => "SessionEnd",
         HMSync.Wire.WireKind.Ping => "Ping",

@@ -53,6 +53,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     private readonly HdmIpc hdm;   // FEAT-R2: HDM (mob-disguise) IPC consumer (optional; inert if HDM absent)
     private readonly HmsIpcProvider hmsProvider;   // HMS's first IPC PROVIDER surface (HMSync.* — accent + version gate)
     private readonly DisguiseSyncService disguiseSync;   // FEAT-R2: HDM ⇄ relay disguise-sync bridge
+    private readonly LightsOutService lightsOut;   // Q-0010: instanced-dungeon stage-light / flame-VFX suppression, synced to peers (0x56)
     private readonly LobbyNameplateSyncService lobbyNameplate;   // b195: Moniker nameplate sync in the lobby (out of map)
     private readonly NpcVisibilityService npcVisibility;   // S328aa: host-authoritative NPC scene-cleanup
     private readonly NetStatsService netStats;   // S328ag: relay bandwidth instrumentation
@@ -166,6 +167,18 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // bridges it to the relay wire (0x50/0x51/0x52), resolving identity via stateApply's roster. Inert if HDM absent.
         hdm = new HdmIpc(pluginInterface, log);
         disguiseSync = new DisguiseSyncService(hdm, relay, stateApply, framework, log, LocalContentId);
+        // Q-0010: lights-out. Self-contained local suppression (stage Lights + all VFX) that rides its own relay lane
+        // (0x56) so anyone in a co-located session can black out the map for everyone. Gated ONLY by "is an HMS map
+        // loaded" (works on ANY map — city/overworld/dungeon, not just instanced content); no host gate; inert (idle
+        // no-op) when no map is loaded.
+        // TT source is the EFFECTIVE/loaded territory, not the raw client TT: in a synthetic HMS session
+        // clientState.TerritoryType is the ORIGIN zone we physically stand in, while the rendered map layout
+        // (the lights/VFX we suppress) belongs to zoneLoad.CurrentLoadedZone. Deferred Func — zoneLoad is assigned
+        // later in this ctor but only read at command/tick time. Falls back to the real TT when no map is loaded.
+        lightsOut = new LightsOutService(relay, framework,
+            () => zoneLoad!.IsZoneLoaded ? zoneLoad!.CurrentLoadedZone : clientState.TerritoryType,
+            () => zoneLoad!.IsZoneLoaded,   // gate: works on ANY loaded HMS map (city/overworld/dungeon), not just instanced content
+            log, LocalContentId, s => chat.Print(s));
         // NOTE: puppet POSSESSION (drive an NPC from the DM's MoveController intent while the DM body stays static) is
         // owned by HDM, not HMS. HMS's role is peer sync only: when HDM drives a possessed puppet it fires PuppetMoved
         // each frame, which DisguiseSyncService.OnLocalPuppetMoved reads + broadcasts (transform + resolved timeline)
@@ -705,6 +718,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // b195: drive lobby nameplate sync (broadcast our Moniker name + apply peers' names while out of a map). Self-
         // gating: no-op unless config.SyncLobbyNameplates && connected && room-joined && NOT in a loaded map.
         lobbyNameplate.Tick();
+        lightsOut.Tick();   // Q-0010: hold the dungeon light/flame suppression against re-streaming; idle no-op unless active
 
         // b140 Path I: hold the donor-bank handle swap in EnvSpace+0x90 against any per-frame zone reassert (no-op unless
         // a wxcyclecram is active). Runs before the zone-change clear below so a real hop still tears it down cleanly.
@@ -1118,6 +1132,9 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 case "rosterdump": // b31 (D-16 measurement): read-only spawn/despawn struct dump - MUST run out of session (idle in a populated area, no filter)
                 case "firecut":    // P1 cutscene probe - arms capture; must run in an inn (out of session)
                 case "cutstop":    // P1 safety escape - must work anywhere
+                case "stagelights":// Q-0010: local dungeon light suppression (broadcasts only if connected; useful solo too)
+                case "vfxoff":     // Q-0010: local dungeon UNIVERSAL VFX suppression (broadcasts only if connected; useful solo too)
+                case "vfxlist":    // Q-0010: read-only VFX dry-run — full list to log, flame-token tagged (diagnostic; harmless solo)
                     break; // allowed outside a session
                 default:
                     chat.Print("[HMSync] Not in a session. Use /hms start or /hms join <code> first.");
@@ -1172,6 +1189,12 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         {
             case "start": DoStart(arg); break;
             case "starts": case "startsolo": DoStartSolo(); break;   // 'starts' primary; 'startsolo' kept as alias
+            // Q-0010: instanced-dungeon lights-out. Two independent map-global toggles (stage Lights vs flame VFX) +
+            // a read-only dry-run. Each runs the local suppression and broadcasts the intent bit (0x56) to peers; the
+            // service self-gates to instanced content and is a no-op elsewhere. See LightsOutService.
+            case "stagelights": lightsOut.ToggleStageLights(); break;
+            case "vfxoff": lightsOut.ToggleVfx(); break;
+            case "vfxlist": lightsOut.DryRunVfx(); break;
             case "memo": CaptureSpawn(0); break;   // record a spawn point for the current map (== the Set spawn button)
             case "join":
                 if (arg == null) { chat.Print("[HMSync] Usage: /hms join <code>"); return; }
@@ -2267,6 +2290,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         actorVisibility.Stop();
         disguiseSync.Reset();   // FEAT-R2: despawn every mirror puppet we spawned + clear the disguise caches on teardown
         lobbyNameplate.Reset();   // b195: revert any lobby-applied nameplates + forget cached peer names on session teardown
+        lightsOut.RestoreAll();   // Q-0010: restore any suppressed dungeon lights/flames + clear intent on session teardown
 
         bool announceMovement = noclip.IsActive;
 
@@ -4494,6 +4518,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             if (relay.IsHost) RequestZoneResend();
             disguiseSync.BroadcastFullState();   // FEAT-R2: re-offer our current disguise + puppets so the newcomer catches up
             lobbyNameplate.RequestRebroadcast();   // b195: re-offer our lobby nameplate so the newcomer sees our chosen name
+            lightsOut.BroadcastFullState();   // Q-0010: re-offer any active dungeon lights-out so the newcomer blacks out too
         });
     }
 
@@ -4956,6 +4981,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         try { hmsProvider.Dispose(); } catch { }   // HMSync.* provider: unregister the accent/version gates
         try { disguiseSync.Dispose(); } catch { }   // FEAT-R2: unsubscribe HDM ⇄ relay bridge (before hdm, which owns the IPC gates)
         try { lobbyNameplate.Dispose(); } catch { }   // b195: unsubscribe the lobby-nameplate lane + revert any applied names
+        try { lightsOut.Dispose(); } catch { }   // Q-0010: unsubscribe the lights-out lane + restore any suppressed lights/flames
         try { hdm.Dispose(); } catch { }            // FEAT-R2: unsubscribe HDM IPC event gates
         npcVisibility.Dispose();   // S328aa
         relay.Dispose();
