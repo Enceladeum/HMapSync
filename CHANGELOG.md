@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1.6] - 2026-09-04
+
 ### Added
 
 - **Lights-out**: darken a map's atmosphere for your whole session. `/hms stagelights` extinguishes the ambient map lights, and `/hms vfxoff` hides every visual effect on the map (flames, weather, effect props); `/hms vfxlist` previews what would be hidden without changing anything. Anyone in the session can toggle it with everyone seeing the same result. Turning a toggle back off, or ending the session, restores everything.

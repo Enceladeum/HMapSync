@@ -3,7 +3,7 @@
         <TargetFramework>net10.0-windows</TargetFramework>
         <LangVersion>latest</LangVersion>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-        <Version>1.0.1.5</Version>
+        <Version>1.0.1.6</Version>
         <AssemblyName>HMSync</AssemblyName>
         <RootNamespace>HMSync</RootNamespace>
         <Nullable>enable</Nullable>
