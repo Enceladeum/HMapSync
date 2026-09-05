@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1.7] - 2026-09-05
+
 ### Fixed
 
 - **Custom names now show in more chat channels**: custom Moniker names for session members now also appear in party, cross-world party, alliance, Free Company, linkshell, cross-world linkshell, novice network, and PvP team chat, matching how they already showed in say, yell, and shout. Only session members' names are restamped; everyone else's chat is left exactly as the game shows it.
