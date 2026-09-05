@@ -6,6 +6,9 @@
 
 Enter any in-game map and explore it with friends. HMS puts you behind a firewall and lets you load any location client-side, including otherwise unavailable cutscenes while the server sees you sitting afk in your room.
 
+HMS has companion plugins - HDM modules allows you to disguise yourself as any mob or NPC in game and spawn controllable actors 
+Moniker lets you adjust your nameplate, display chosen nameplate in-HMS session, with the auto-change option matching the NPC/mob name applied through HDM.
+
 <img width="486" height="612" alt="Screenshot_5" src="https://github.com/user-attachments/assets/47849b11-343a-451b-9418-eb24be90b6e8" />
 
 
@@ -132,7 +135,7 @@ While every effort was taken to make sessions as secure as possible, as a genera
 The plugin registers a single `/hms` command with subcommands:
 
 ```
-/hms start | join | load | reload | leave | stop | fly | carpet | emote <id|name> | minion <id|name> | maps | status
+/hms start | join | load | reload | leave | stop | fly | carpet | emote <id|name> | minion <id|name> | maps | status | stagelights | vfxoff
 ```
 
 Common subcommands:
