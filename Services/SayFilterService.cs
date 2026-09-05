@@ -95,40 +95,46 @@ public sealed class SayFilterService : IDisposable
                 log.Information("[HMSync] [SAY-DIAG] kind=" + message.LogKind + " (" + (int)message.LogKind + ") rendered='" + rendered + "' payload='" + (pn ?? "<none>") + "' text='" + m + "'");
             }
 
-            // Active only while a session runs. When active: hide non-session /say AND range-cull members' /say/yell.
+            // Active only while a session runs. When active: hide non-session /say AND range-cull members' /say/yell,
+            // and restamp session members' Moniker names across EVERY chat channel they can speak in.
             if (!Active) return;
 
-            // Spatial chat only. Say/Yell/Shout are the proximity modes; everything else (tells, party, FC, LS,
-            // system, etc.) is never filtered. Shout is whole-area - never range-culled, but still member-culled.
+            // Spatial chat = the proximity modes (say/yell/shout). These are the only channels we ever HIDE or
+            // range-cull; everything else is moniker-restamped but never suppressed.
             bool isSay = message.LogKind == XivChatType.Say;
             bool isYell = message.LogKind == XivChatType.Yell;
             bool isShout = message.LogKind == XivChatType.Shout;
-            // Emotes (/em custom + the standard emotes) render the actor's name in the message BODY, not the sender
-            // field, so they need a different rewrite than say/yell/shout. They're never culled (a member's emote
-            // always shows), so we only restamp the name and return. Same ReplaceChatNames gate (via the delegates).
+            bool isSpatial = isSay || isYell || isShout;
+            // Emotes (/em custom + the standard emotes) carry the actor's name in the SENDER field and/or prepended
+            // to the message BODY (it varies by emote type / game version). RewriteEmoteName restamps wherever it is.
+            // Never culled (a member's emote always shows), so restamp and return.
             if (message.LogKind == XivChatType.CustomEmote || message.LogKind == XivChatType.StandardEmote)
             {
                 RewriteEmoteName(message);
                 return;
             }
-            if (!isSay && !isYell && !isShout) return;
+            // Group channels (party, alliance, FC, linkshells, cross-world LS, novice network, PvP team) carry the
+            // same clickable PlayerPayload sender as say/yell, so the SAME sender rewrite applies — but they are NOT
+            // proximity chat, so they are NEVER hidden or range-culled, only moniker-restamped. monikerForRealName
+            // returns null for anyone without a synced Moniker, so this only ever touches session members; strangers'
+            // FC/party lines pass through untouched.
+            bool isGroup = IsGroupChannel(message.LogKind);
+            if (!isSpatial && !isGroup) return;
 
             // NB-17: COSMETIC-PROOF sender match. Match on the player's REAL identity from the SeString's PlayerPayload,
             // not the rendered TextValue. Nameplate/chat mods (Moniker, class-abbrev prefixers like "WAR Name",
             // Honorific-in-chat) rewrite the DISPLAYED sender, which broke the old TextValue match - a member whose chat
-            // name showed a prefix never matched the real-name set, so their /say was wrongly HIDDEN (while /em, which
-            // bypasses this filter entirely, still showed - the fingerprint of this bug). The PlayerPayload carries the
-            // true name under any cosmetic. Everything else in HMS binds by ContentId; this is the one name-keyed seam,
-            // and the payload is the closest stable identity available at the chat-display layer.
+            // name showed a prefix never matched the real-name set, so their /say was wrongly HIDDEN. The PlayerPayload
+            // carries the true name under any cosmetic. Everything else in HMS binds by ContentId; this is the one
+            // name-keyed seam, and the payload is the closest stable identity available at the chat-display layer.
             //
-            // Own-message handling: the local player's own flat-printed spatial chat carries NO PlayerPayload (only remote
-            // players' names are wrapped in a clickable PlayerPayload). So "Say/Yell/Shout with no payload" = your own
-            // message → never cull it (you always see your own chat, regardless of any local name-prefix mod).
+            // Own-message handling: the local player's own flat-printed chat carries NO PlayerPayload (only remote
+            // players' names are wrapped in a clickable PlayerPayload). So "spatial/group line with no payload" = your
+            // own message → never cull it, just restamp it with our OWN Moniker so our chat matches our plate.
             var senderName = RealNameFromPayload(message.Sender);
             if (senderName == null)
             {
                 if (Diag) log.Information("[HMSync] [SAYCULL] no PlayerPayload (own message) → SHOW");
-                // Own flat-printed spatial message → restamp with our OWN Moniker name so our chat matches our plate.
                 RewriteSender(message, monikerForRealName?.Invoke(localPlayerName?.Invoke() ?? ""));
                 return;
             }
@@ -136,30 +142,35 @@ public sealed class SayFilterService : IDisposable
 
             var isMember = sessionMemberNames().Contains(senderName.ToLowerInvariant());
 
-            // Non-session-member spatial chat → always hidden (you're isolated in a session).
-            if (!isMember)
+            // Hiding/culling is SPATIAL-ONLY. Group channels (party/FC/alliance/...) are never suppressed — a member
+            // may be far away or off-map and their FC/party chat should still arrive.
+            if (isSpatial)
             {
-                if (Diag) log.Information($"[HMSync] [SAYCULL] '{senderName}' NOT a member → HIDE");
-                message.PreventOriginal();
-                return;
-            }
-
-            // Session member: range-cull their /say and /yell by synthetic distance (/shout is whole-area).
-            if (!isShout)
-            {
-                float dist = senderDistance(senderName);   // -1 = unresolved (don't cull); 0 = local (in range)
-                float range = isYell ? YellRangeYalms : SayRangeYalms;
-                if (Diag) log.Information($"[HMSync] [SAYCULL] '{senderName}' member, kind={message.LogKind}, dist={dist:F1}, range={range} → {(dist >= 0 && dist > range ? "HIDE" : "SHOW")}");
-                if (dist >= 0 && dist > range)
+                // Non-session-member spatial chat → always hidden (you're isolated in a session).
+                if (!isMember)
                 {
+                    if (Diag) log.Information($"[HMSync] [SAYCULL] '{senderName}' NOT a member → HIDE");
                     message.PreventOriginal();
                     return;
                 }
+
+                // Session member: range-cull their /say and /yell by synthetic distance (/shout is whole-area).
+                if (!isShout)
+                {
+                    float dist = senderDistance(senderName);   // -1 = unresolved (don't cull); 0 = local (in range)
+                    float range = isYell ? YellRangeYalms : SayRangeYalms;
+                    if (Diag) log.Information($"[HMSync] [SAYCULL] '{senderName}' member, kind={message.LogKind}, dist={dist:F1}, range={range} → {(dist >= 0 && dist > range ? "HIDE" : "SHOW")}");
+                    if (dist >= 0 && dist > range)
+                    {
+                        message.PreventOriginal();
+                        return;
+                    }
+                }
             }
-            // Session member, shown (in-range say/yell, or any shout) → restamp the displayed sender with their synced
-            // Moniker name so chat matches the nameplate. No-op when they have no moniker or the feature is off.
+            // Shown line (in-range say/yell, any shout, or any group-channel message) → restamp the displayed sender
+            // with the speaker's synced Moniker name so chat matches the nameplate. No-op when they have no moniker or
+            // the feature is off (so non-members in group channels are left exactly as the game rendered them).
             RewriteSender(message, monikerForRealName?.Invoke(senderName));
-            // Otherwise → allow.
         }
         catch (Exception ex)
         {
@@ -181,24 +192,83 @@ public sealed class SayFilterService : IDisposable
         catch (Exception ex) { log.Debug("[HMSync] chat-name rewrite failed: " + ex.Message); }
     }
 
-    // Restamp the actor's name inside an EMOTE message body (custom /em + standard emotes) with their Moniker name.
-    // Emote lines read "<Name> <does something>" with the name at the FRONT of the MESSAGE (the sender field is empty),
-    // so we find the real name in the rendered text and swap the first occurrence. Remote actor: real name from a
-    // PlayerPayload in the message. Own emote: no PlayerPayload (own lines are flat), so we fall back to the local
-    // player's name. Degrades safely: if the name isn't present verbatim (e.g. a "You ..." standard-emote line) we
-    // leave the message untouched. Rebuilt as plain text (drops the clickable link) — same privacy stance as the
-    // sender rewrite. The FIRST occurrence is the leading actor name; a later mention (e.g. an emote targeting the
-    // actor) is left alone.
+    // Group chat channels that carry a session member's clickable PlayerPayload sender the same way say/yell do:
+    // party (incl. cross-world), alliance, free company, the eight linkshells, the eight cross-world linkshells, the
+    // novice network, and the PvP team channel. We moniker-restamp the sender on all of these but NEVER hide or
+    // range-cull them (they aren't proximity chat). Tells are deliberately excluded: an outgoing tell's sender is a
+    // ">> Target" glyph string rather than a plain player name, so a blind sender swap would mangle it. Anything not
+    // listed here (system, echo, error, gil-recv, etc.) is left completely alone.
+    private static bool IsGroupChannel(XivChatType kind)
+    {
+        switch (kind)
+        {
+            case XivChatType.Party:
+            case XivChatType.CrossParty:
+            case XivChatType.Alliance:
+            case XivChatType.FreeCompany:
+            case XivChatType.NoviceNetwork:
+            case XivChatType.PvPTeam:
+            case XivChatType.Ls1:
+            case XivChatType.Ls2:
+            case XivChatType.Ls3:
+            case XivChatType.Ls4:
+            case XivChatType.Ls5:
+            case XivChatType.Ls6:
+            case XivChatType.Ls7:
+            case XivChatType.Ls8:
+            case XivChatType.CrossLinkShell1:
+            case XivChatType.CrossLinkShell2:
+            case XivChatType.CrossLinkShell3:
+            case XivChatType.CrossLinkShell4:
+            case XivChatType.CrossLinkShell5:
+            case XivChatType.CrossLinkShell6:
+            case XivChatType.CrossLinkShell7:
+            case XivChatType.CrossLinkShell8:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    // Restamp the actor's Moniker name on an EMOTE line (custom /em + standard emotes). The actor's real name can
+    // appear in TWO places depending on emote type / game version: (a) the SENDER field (a clickable PlayerPayload for
+    // a remote actor; a flat name string for your own line), and/or (b) prepended to the MESSAGE body ("<Name> does
+    // something"). We restamp BOTH, since either may be the one the client renders — each branch is a no-op when the
+    // name isn't there, so covering both cannot double-fabricate a name.
+    //
+    // Safety on the sender branch: we only stamp an empty/flat sender with our OWN moniker when the local player's real
+    // name is actually PRESENT in that sender text. That prevents fabricating a bogus sender on emotes whose name lives
+    // in the body instead (which would otherwise brand every emote — including strangers' — with our own moniker).
+    // Rebuilt as plain text (drops the clickable link) — same privacy stance as the sender rewrite.
     private void RewriteEmoteName(IHandleableChatMessage message)
     {
-        string? real = RealNameFromPayload(message.Message) ?? localPlayerName?.Invoke();
-        if (string.IsNullOrEmpty(real)) return;
-        var moniker = monikerForRealName?.Invoke(real);
-        if (string.IsNullOrEmpty(moniker)) return;
+        // (a) Sender field.
+        var senderReal = RealNameFromPayload(message.Sender);
+        if (senderReal != null)
+        {
+            // Remote actor — PlayerPayload carries their true name; stamp their synced Moniker.
+            RewriteSender(message, monikerForRealName?.Invoke(senderReal));
+        }
+        else
+        {
+            // Flat/own line: stamp our own Moniker ONLY when our real name is genuinely in the sender text, so we
+            // never brand a body-name emote (empty sender) with a spurious sender.
+            var ownReal = localPlayerName?.Invoke();
+            if (!string.IsNullOrEmpty(ownReal) &&
+                message.Sender.TextValue.IndexOf(ownReal, StringComparison.Ordinal) >= 0)
+                RewriteSender(message, monikerForRealName?.Invoke(ownReal));
+        }
+
+        // (b) Message body: name from a body PlayerPayload (remote actor), else our own (own lines are flat). Swap the
+        // FIRST occurrence (the leading actor name); a later mention (e.g. an emote targeting the actor) is left alone.
+        string? bodyReal = RealNameFromPayload(message.Message) ?? localPlayerName?.Invoke();
+        if (string.IsNullOrEmpty(bodyReal)) return;
+        var bodyMoniker = monikerForRealName?.Invoke(bodyReal);
+        if (string.IsNullOrEmpty(bodyMoniker)) return;
         var text = message.Message.TextValue;
-        int i = text.IndexOf(real, StringComparison.Ordinal);
+        int i = text.IndexOf(bodyReal, StringComparison.Ordinal);
         if (i < 0) return;
-        var rewritten = string.Concat(text.AsSpan(0, i), moniker, text.AsSpan(i + real.Length));
+        var rewritten = string.Concat(text.AsSpan(0, i), bodyMoniker, text.AsSpan(i + bodyReal.Length));
         try { message.Message = new SeString(new TextPayload(rewritten)); }
         catch (Exception ex) { log.Debug("[HMSync] emote-name rewrite failed: " + ex.Message); }
     }
