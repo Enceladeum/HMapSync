@@ -236,7 +236,38 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         },
         // b200: our own REAL name, so own emote/flat lines (which never carry a PlayerPayload) can be resolved back
         // through the self-aware moniker lookup above.
-        () => objectTable.LocalPlayer?.Name.TextValue);
+        () => objectTable.LocalPlayer?.Name.TextValue,
+        // b209/b210: per-channel-group restamp gate. Classify the chat kind into one of four buckets and return that
+        // bucket's toggle. The master ReplaceChatNames is already enforced inside monikerForRealName (returns null when
+        // off), so this only carries the per-bucket preference. b210: /em (CustomEmote/StandardEmote) now rides the
+        // map-audibles bucket — from the presentation UX it's identical to /say (both are used in the same in-map RP
+        // sequence). Any unlisted player-sender channel (FC, alliance, LS1-8, novice, PvP team) falls to RestampOther.
+        kind =>
+        {
+            switch (kind)
+            {
+                case Dalamud.Game.Text.XivChatType.Say:
+                case Dalamud.Game.Text.XivChatType.Yell:
+                case Dalamud.Game.Text.XivChatType.Shout:
+                case Dalamud.Game.Text.XivChatType.CustomEmote:
+                case Dalamud.Game.Text.XivChatType.StandardEmote:
+                    return config.RestampMapAudibles;
+                case Dalamud.Game.Text.XivChatType.Party:
+                case Dalamud.Game.Text.XivChatType.CrossParty:
+                    return config.RestampParty;
+                case Dalamud.Game.Text.XivChatType.CrossLinkShell1:
+                case Dalamud.Game.Text.XivChatType.CrossLinkShell2:
+                case Dalamud.Game.Text.XivChatType.CrossLinkShell3:
+                case Dalamud.Game.Text.XivChatType.CrossLinkShell4:
+                case Dalamud.Game.Text.XivChatType.CrossLinkShell5:
+                case Dalamud.Game.Text.XivChatType.CrossLinkShell6:
+                case Dalamud.Game.Text.XivChatType.CrossLinkShell7:
+                case Dalamud.Game.Text.XivChatType.CrossLinkShell8:
+                    return config.RestampCwls;
+                default:
+                    return config.RestampOther;
+            }
+        });
         zoneLoad = new ZoneLoadService(objectTable, log, sigScanner, hooks, framework, dataManager);
         // b195: lobby nameplate sync — carries the local Moniker name to peers on the dedicated 0x54 lane while in the
         // lobby (out of map), where the Cold-lane courier isn't running. Constructed here (after zoneLoad) so its

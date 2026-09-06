@@ -60,9 +60,16 @@ public sealed class SayFilterService : IDisposable
     private readonly Func<string, string?>? monikerForRealName;
     private readonly Func<string?>? localPlayerName;
 
+    // b209: per-channel-group restamp gate. Given a chat kind, returns whether the Moniker restamp is enabled for THAT
+    // channel's bucket (map-audibles / party / CWLS / other-incl-emotes) — the classifier + config toggles live in the
+    // plugin. This ONLY gates the name rewrite; it never affects the spatial hide/range-cull (those are session-privacy,
+    // not a cosmetic preference). Null/unwired ⇒ always restamp (backward-compatible with the pre-b209 universal call).
+    private readonly Func<XivChatType, bool>? channelRestampEnabled;
+    private bool ShouldRestamp(XivChatType kind) => channelRestampEnabled?.Invoke(kind) ?? true;
+
     public SayFilterService(IChatGui chat, IPluginLog log, Func<HashSet<string>> sessionMemberNames,
         Func<string, float> senderDistance, Func<string, string?>? monikerForRealName = null,
-        Func<string?>? localPlayerName = null)
+        Func<string?>? localPlayerName = null, Func<XivChatType, bool>? channelRestampEnabled = null)
     {
         this.chat = chat;
         this.log = log;
@@ -70,6 +77,7 @@ public sealed class SayFilterService : IDisposable
         this.senderDistance = senderDistance;
         this.monikerForRealName = monikerForRealName;
         this.localPlayerName = localPlayerName;
+        this.channelRestampEnabled = channelRestampEnabled;
     }
 
     public void Initialize()
@@ -110,7 +118,9 @@ public sealed class SayFilterService : IDisposable
             // Never culled (a member's emote always shows), so restamp and return.
             if (message.LogKind == XivChatType.CustomEmote || message.LogKind == XivChatType.StandardEmote)
             {
-                RewriteEmoteName(message);
+                // b210: /em rides the map-audibles bucket. UX-wise /em is identical to /say — both are used in the same
+                // in-map RP presentation sequence — so they share one toggle (was the "Other" bucket in b209).
+                if (ShouldRestamp(message.LogKind)) RewriteEmoteName(message);
                 return;
             }
             // Group channels (party, alliance, FC, linkshells, cross-world LS, novice network, PvP team) carry the
@@ -135,7 +145,9 @@ public sealed class SayFilterService : IDisposable
             if (senderName == null)
             {
                 if (Diag) log.Information("[HMSync] [SAYCULL] no PlayerPayload (own message) → SHOW");
-                RewriteSender(message, monikerForRealName?.Invoke(localPlayerName?.Invoke() ?? ""));
+                // b209: our own line is never hidden; only restamp it when this channel's bucket is enabled.
+                if (ShouldRestamp(message.LogKind))
+                    RewriteSender(message, monikerForRealName?.Invoke(localPlayerName?.Invoke() ?? ""));
                 return;
             }
             if (string.IsNullOrEmpty(senderName)) return;
@@ -169,8 +181,10 @@ public sealed class SayFilterService : IDisposable
             }
             // Shown line (in-range say/yell, any shout, or any group-channel message) → restamp the displayed sender
             // with the speaker's synced Moniker name so chat matches the nameplate. No-op when they have no moniker or
-            // the feature is off (so non-members in group channels are left exactly as the game rendered them).
-            RewriteSender(message, monikerForRealName?.Invoke(senderName));
+            // the feature is off (so non-members in group channels are left exactly as the game rendered them). b209:
+            // gated per channel-bucket, so e.g. IC party/CWLS restamp while OOC map-audibles keep the real name.
+            if (ShouldRestamp(message.LogKind))
+                RewriteSender(message, monikerForRealName?.Invoke(senderName));
         }
         catch (Exception ex)
         {

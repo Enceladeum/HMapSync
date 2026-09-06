@@ -2191,6 +2191,27 @@ ImGui.Spacing();
             }
             if (!mk) ImGui.EndDisabled();
             if (ImGui.IsItemHovered()) ImGui.SetTooltip("Show Moniker names in the chat log too (say / yell / shout and /em emotes), not just on nameplates, for you and session members. Requires Moniker.");
+
+            // b209: per-channel-group granularity — untick a bucket to exclude those channels from the restamp (e.g.
+            // keep the disguise name in IC party/CWLS but show your real name in OOC /say). All gated under the master
+            // toggle above; disabled when Moniker is absent OR the master is off.
+            ImGui.Indent(18f);
+            bool subDisabled = !mk || !chatNames;
+            if (subDisabled) ImGui.BeginDisabled();
+            bool rSay = config.RestampMapAudibles;
+            if (ImGui.Checkbox("Map chat (say / yell / shout / emotes)", ref rSay)) { config.RestampMapAudibles = rSay; config.Save(); }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Restamp the custom name in the proximity channels — /say, /yell, /shout — and /em emotes (they're used in the same RP sequence as /say). Turn OFF if you use /say for OOC.");
+            bool rParty = config.RestampParty;
+            if (ImGui.Checkbox("Party", ref rParty)) { config.RestampParty = rParty; config.Save(); }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Restamp the custom name in party and cross-world party chat.");
+            bool rCwls = config.RestampCwls;
+            if (ImGui.Checkbox("Cross-world linkshells (CWLS)", ref rCwls)) { config.RestampCwls = rCwls; config.Save(); }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Restamp the custom name in the eight cross-world linkshells.");
+            bool rOther = config.RestampOther;
+            if (ImGui.Checkbox("Other channels", ref rOther)) { config.RestampOther = rOther; config.Save(); }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Restamp the custom name in FC, alliance, linkshells 1-8, novice network, and PvP team.");
+            if (subDisabled) ImGui.EndDisabled();
+            ImGui.Unindent(18f);
             ImGui.Unindent(18f);
 
             // HDM (mob disguise) - HMS integrates with it via IPC (the disguise-sync bridge), so prefer its own

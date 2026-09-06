@@ -241,6 +241,23 @@ public class HMSyncConfig : IPluginConfiguration
     // to match nameplate sync.
     public bool ReplaceChatNames { get; set; } = true;
 
+    // b209: per-channel-group granularity for the chat restamp — all four gated UNDER the ReplaceChatNames master above.
+    // RP users want their IC presentation channels to show the disguise Moniker but leave everything else on the real
+    // name. The classifier lives in HMSyncPlugin (channel→bucket→bool), consumed by SayFilterService.
+    //  - MapAudibles: /say /yell /shout AND /em emotes. b210: emotes moved here (from "Other") — UX-wise /em is used in
+    //    the SAME presentation sequence as /say ("Name says…" then "Name does…"), so they belong to the same toggle.
+    //  - Party:       party + cross-world party.
+    //  - Cwls:        the 8 cross-world linkshells.
+    //  - Other:       everything else that carries a player sender — FC, alliance, LS1-8, novice network, PvP team.
+    // b210 DEFAULTS: Map chat (the IC presentation channel) ON; Party/CWLS/Other OFF. RP presentation happens in
+    // /say + /em; party/LS/FC are typically OOC-or-mixed, so the disguise name there is usually unwanted. Persisted, so
+    // an existing user's saved choices win; only fresh configs (and everyone upgrading from ≤v1.0.1.6, which has no
+    // Restamp* keys) take these defaults.
+    public bool RestampMapAudibles { get; set; } = true;
+    public bool RestampParty { get; set; } = false;
+    public bool RestampCwls { get; set; } = false;
+    public bool RestampOther { get; set; } = false;
+
     // b185: drop section colliders (boss-arena fences, section gates, phase walls, NPC pens) automatically on every HMS
     // map load, so a loaded scene is freely traversable with no command. Local preference (never synced). Reversible and
     // persisted: /hms dropcolliders off restores them and clears this; on re-engages. Meshes remain (ghost-through);
