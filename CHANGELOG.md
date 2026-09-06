@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1.8] - 2026-09-06
+
+### Added
+
+- **Per-channel control for custom names in chat**: the "Use custom names in chat" option now has four sub-toggles so you can pick which channels show a session member's custom Moniker name: map chat (say, yell, shout, and /em emotes), party, cross-world linkshells, and other channels (Free Company, alliance, linkshells, novice network, PvP team). Untick a group to show real names there while keeping custom names elsewhere; for example, keep the disguise name in party and linkshell chat but show your real name in /say. All four sit under the master toggle and require Moniker.
+
+### Fixed
+
+- **Late joiners become visible right away**: a player who arrived in the session after you were already there could stay invisible to the rest of the room, particularly after a game update. New arrivals now appear for everyone as soon as they walk in.
+- **Disguises clear cleanly when a session ends (HDM)**: if other members were wearing an HDM disguise, ending or leaving the session now returns their characters to normal automatically, instead of sometimes leaving a stale disguise on a member that needed a manual revert. Requires HDM.
+
 ## [1.0.1.7] - 2026-09-05
 
 ### Fixed
