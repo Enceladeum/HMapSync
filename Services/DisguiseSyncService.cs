@@ -378,7 +378,57 @@ public sealed class DisguiseSyncService : IDisposable
         foreach (var key in staleFrozen) lastFrozenPuppet.Remove(key);
     }
 
-    // Session teardown / disconnect → drop every mirror we own and clear caches.
+    // b211 — SESSION-TEARDOWN own-body revert. The single-peer-left path (OnPeerLeft → OnPeerDeparted) reverts a
+    // departing peer's own-body disguise, but a WHOLE-session teardown (host SessionEnd, our own stop/leave, a hard
+    // disconnect) funnels through DoLeaveInternal → Reset(), which despawns our MIRROR PUPPETS and clears caches but
+    // NEVER reverts the own-body disguises we applied to peers. Those were applied via hdm.ApplyDisguise onto the peer's
+    // REAL, co-located character object (peers stay real characters in the lobby after the scene ends), so the applied
+    // disguise STRANDS on that object — self is cleared by hdm.SanitizeSelf but the peer keeps rendering the stale scene
+    // disguise until an explicit revert (the "re-disguise then revert" cycle the user found is exactly that explicit
+    // revert arriving late). This is the own-body half of OnPeerDeparted, looped over every source we disguised.
+    // ORDERING: MUST run BEFORE the roster is cleared (SanitizePeerStates) and BEFORE zoneLoad.Revert — ResolveObjectIndex
+    // needs the peer roster, and the target object must still be in the table. Called inline on the framework thread by
+    // DoLeaveInternal (same convention as OnPeerBound/OnPeerDeparted — no framework wrapper, so it completes before the
+    // roster clear on the next line). Idempotent; a no-op when nothing was disguised.
+    // b212: returns the object indices whose disguise was reverted, so the caller can RE-REVERT them after the teardown
+    // zone-reload settles (the reload rebuilds the peer's real body and HDM re-asserts the disguise on that rebuild —
+    // this pre-clear revert alone gets stomped, hence the manual-HDM-revert workaround). See ReRevertDisguises.
+    public System.Collections.Generic.List<int> RevertAllPeerDisguises()
+    {
+        var reverted = new System.Collections.Generic.List<int>();
+        foreach (var kv in lastOwnBody)
+        {
+            var idx = ResolveObjectIndex(kv.Key);
+            if (idx < 0) continue;                       // peer not in render range → nothing applied to revert
+            if (kv.Value.Kind != 0) { hdm.RevertDisguise(idx); reverted.Add(idx); }
+            hdm.SetFrozen(idx, false);                   // Freeze-anim: unpin any own-body freeze we drove
+        }
+        // Freeze edge that arrived without a cached disguise (rare) still gets unpinned on its bound body.
+        foreach (var cid in lastFrozenOwnBody.Keys)
+        {
+            var idx = ResolveObjectIndex(cid);
+            if (idx >= 0) hdm.SetFrozen(idx, false);
+        }
+        // Bug B: drop any own-body suppression (possession hide) we imposed on a disguised source.
+        foreach (var cid in lastOwnBody.Keys) stateApply.SetOwnBodyHidden(cid, false);
+        return reverted;
+    }
+
+    // b212: POST-SETTLE re-revert. RevertAllPeerDisguises runs BEFORE zoneLoad.Revert; when a zone was loaded the reload
+    // rebuilds each peer's real co-located body (Penumbra redraw) and HDM re-asserts the disguise on that rebuild from
+    // its per-actor intent — so the pre-clear revert is stomped and the peer strands until a manual HDM revert tap (which
+    // is just this same RevertDisguise, but AFTER the reload). Re-firing it once the return has settled reproduces the
+    // manual tap's timing, so the base model sticks with no user action. Object indices survive the reload (real peers
+    // are firewall-pinned, same invariant retPeerOrigins relies on). Idempotent: HDM re-asserts the disguise only on a
+    // redraw (not per frame), so a revert on an already-clean body is a no-op → no flicker even across the re-assert window.
+    public void ReRevertDisguises(System.Collections.Generic.IReadOnlyList<int> objectIndices)
+    {
+        foreach (var idx in objectIndices) hdm.RevertDisguise(idx);
+    }
+
+    // Session teardown / disconnect → drop every mirror we own and clear caches. NB: this runs AFTER the roster is
+    // cleared (Stop/SanitizePeerStates), so it CANNOT resolve peer object indices — own-body disguises applied to real
+    // peer bodies are reverted separately by RevertAllPeerDisguises() earlier in the teardown, while the roster is live.
     public void Reset()
     {
         _ = framework.RunOnFrameworkThread(() =>

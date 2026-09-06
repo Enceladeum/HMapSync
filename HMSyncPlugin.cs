@@ -511,6 +511,16 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 foreach (var (idx, pos, rot) in retPeerOrigins) stateApply.WritePeerPosition(idx, pos, rot);
                 retOriginFrames = 120;   // ~2s of re-assert
             }
+
+            // b212: NOW that the reload has settled, re-revert the peer disguises. The pre-clear revert in DoLeaveInternal
+            // fired BEFORE the reload; the reload rebuilt each peer's real body and HDM re-asserted the disguise on the
+            // rebuild — this is the disguise analogue of SanitisePeerPostures's post-settle pass above. Reproduces the
+            // manual-HDM-revert-tap timing so the base model sticks with no user action. Re-asserted over the window below.
+            if (retDisguisedIndices.Count > 0)
+            {
+                disguiseSync.ReRevertDisguises(retDisguisedIndices);
+                if (retOriginFrames <= 0) retOriginFrames = 120;   // arm the window even when no origins needed re-asserting
+            }
         };
         // Movement hooks stay inert during any zone load/revert (teardown window where zone
         // objects may be half-destroyed).
@@ -717,6 +727,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     private int teleportHoldFrames;
     private int retOriginFrames;   // v0.7.328: post-return re-assert window for restoring peer origin positions
     private System.Collections.Generic.List<(ushort idx, System.Numerics.Vector3 pos, float? rot)> retPeerOrigins = new();
+    private System.Collections.Generic.List<int> retDisguisedIndices = new();   // b212: peer bodies to re-revert after the return settles (the reload re-asserts HDM disguises)
 
     // v0.7.419 - origin posture state, captured at engage BEFORE SanitiseLocalPosture clears it.
     // Used in post-settle to execute a server-acknowledged standup if the server still thinks we're
@@ -830,7 +841,12 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         {
             retOriginFrames--;
             if (retOriginFrames % 15 == 0)
+            {
                 foreach (var (idx, pos, rot) in retPeerOrigins) stateApply.WritePeerPosition(idx, pos, rot);
+                // b212: re-revert peer disguises across the same window — HDM could re-assert on a redraw a few frames
+                // after settle. Idempotent (no-op on an already-clean body, no per-frame HDM re-assert → no flicker).
+                if (retDisguisedIndices.Count > 0) disguiseSync.ReRevertDisguises(retDisguisedIndices);
+            }
         }
 
         // v0.7.320: guarantee the furniture de-draw poll is running on EVERY client in a session on a virtual map -
@@ -2266,6 +2282,15 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // v0.7.328: snapshot peer origin positions before SanitizePeerStates clears the roster, so we can write them
         // back onto the frozen actors once the return settles (undoing the synthetic-coord freeze).
         retPeerOrigins = stateApply.SnapshotPeerOrigins();
+        // b211: revert every own-body HDM disguise we applied to a peer's REAL body BEFORE the roster is cleared below.
+        // Whole-session teardown (host SessionEnd / our stop-leave / disconnect) all land here rather than the per-peer
+        // OnPeerLeft path, and disguiseSync.Reset() (later, after the roster clear) only despawns MIRROR PUPPETS — the
+        // peer's real co-located body keeps the stale scene disguise until this explicit revert. Must precede
+        // SanitizePeerStates (which clears the roster ResolveObjectIndex needs) and zoneLoad.Revert (peer object still live).
+        // b212: capture the reverted indices so OnHomeRestoreComplete can RE-REVERT them after the reload settles — the
+        // reload rebuilds each peer's real body and HDM re-asserts the disguise on that rebuild, stomping this pre-clear
+        // revert (the "needs a manual HDM revert tap" residual). Indices survive the reload (firewall-pinned real peers).
+        retDisguisedIndices = disguiseSync.RevertAllPeerDisguises();
         stateApply.SanitizePeerStates();
         sayFilter.Active = false;            // S328v: chat returns fully to normal once the session ends (stop/leave/crash all route here)
         packetFilter.RoomTrackingEnabled = false; packetFilter.RoomPassthrough = false; packetFilter.ClearRoster();   // D-16: stop tracking + pass-through, drop the register on session end
