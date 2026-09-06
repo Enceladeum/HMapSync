@@ -848,12 +848,29 @@ public unsafe class PacketFilterService : IDisposable
                     }
                     // Stage 2 self-re-learn: this opcode is NOT a currently-known spawn/despawn. If the packet nonetheless
                     // carries the fixed-header spawn SIGNATURE, PlayerSpawn's opcode has rotated (patch) and the seeded set
-                    // is stale. Confirm across a few sightings (guards a one-off misparse), then re-seed so walk-ins
-                    // instantiate again. Read-only here (we do NOT pass this packet - it falls through to the suppress
-                    // below); the NEXT spawn on the re-seeded opcode flows through the validated pass-through above. Cheap:
-                    // 3 fixed reads, and only on opcodes we don't already recognise (known spawns/despawns short-circuit).
+                    // is stale. Confirm across a few sightings (guards a one-off misparse), then re-seed so the FAST-PATH
+                    // (known-opcode) recognises it going forward. Cheap: 3 fixed reads, and only on opcodes we don't already
+                    // recognise (known spawns/despawns short-circuit above).
                     else if (MatchesSpawnSignature(a3))
                     {
+                        // b208 — PASS ON THE FINGERPRINT, don't wait for the re-seed. The old backstop was READ-ONLY: it
+                        // tallied but suppressed the triggering packet, so a walk-in only instantiated once RelearnConfirm
+                        // (3) DISTINCT spawns had landed on the rotated opcode. A live session almost never sees 3 late
+                        // joiners on one opcode, so after a patch shifts PlayerSpawn EVERY late joiner stayed invisible to
+                        // the room until (if ever) the threshold was reached — the reported late-join regression, and the
+                        // gap between this code and its own doctrine (the signature, not the opcode number, is the source of
+                        // truth). MatchesSpawnSignature is the SAME 3-check fingerprint ValidateSpawnShape passes on a known
+                        // opcode (8-byte ContentId>0xFFFF + exact 32-bit magic 0x00400017 @+0x1C + 0xE0 @+0x33, all fixed
+                        // header offsets) — an overwhelming, over-read-safe signature. So instantiate NOW, gated by the same
+                        // trackable-actor-id check the validated fast-path uses (fail-closed on a misparsed id). The re-seed
+                        // tally still runs below to make the fast-path durable; this pass just covers the interim.
+                        if (IsTrackableActorId(a2))
+                        {
+                            receiveHook!.Original(a1, a2, a3);   // instantiate the real walk-in NOW (inbound only), fingerprint-gated
+                            log.Information("[HMSync] [ROSTER-PASS] spawn on UNSEEDED opcode=" + rop + " (0x" + rop.ToString("X3") +
+                                ") matched full spawn signature → passed on fingerprint (eid=0x" + a2.ToString("X8") +
+                                "). Late-join instantiation no longer waits for the re-seed; tally continues below.");
+                        }
                         int seen = spawnRelearnCandidates.TryGetValue(rop, out var n) ? n + 1 : 1;
                         spawnRelearnCandidates[rop] = seen;
                         if (seen >= RelearnConfirmThreshold)
