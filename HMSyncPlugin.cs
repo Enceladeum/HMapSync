@@ -530,6 +530,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // first staircase on arrival). Turn it OFF + notify on ANY zone change - HMS-driven (/hms load)
         // or external (normal teleport / zone line). /hms stop|leave is handled in DoLeaveInternal.
         zoneLoad.ZoneWillChange += carpet.Disable;
+        zoneLoad.ZoneWillChange += lightsOut.ClearForZoneChange;   // b213: lights-out/VFX toggles never carry across a map load/change/cutscene
 
         // S240: single consolidated window (Session + Zones tabs). Zone directory
         // wiring moves onto the unified UI; reuses the proven DoLoad path, greys out
@@ -664,6 +665,8 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             RestoreNpcHides = () => RunOnMainThread(() => RestoreHiddenNpcs()),
             HiddenNpcCount = () => config.MapHiddenNpcDataIds.Count,
             CanEditNpcHides = () => relay.HasMapAuthority && zoneLoad.IsZoneLoaded,
+            StageLightsActive = () => lightsOut.StageLightsSuppressed,   // b213: Map-control "Toggle ambient lights" checkbox mirror
+            VfxHidden = () => lightsOut.VfxSuppressed,                    // b213: Map-control "Hide VFX" checkbox mirror
         };
         // NB-33: the Cutscenes chip snapshots CutsceneEntries once (in the initializer above). The venue
         // auto-detection runs on a background thread and finishes seconds later, so rebuild that snapshot on

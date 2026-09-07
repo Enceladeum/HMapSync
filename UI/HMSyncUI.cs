@@ -285,6 +285,8 @@ public class HMSyncUI
     public System.Action? RestoreNpcHides;                     // host clears ALL granular hides for the current map
     public Func<int>? HiddenNpcCount;                          // count of granular hides on the current map (button enable/label)
     public Func<bool>? CanEditNpcHides;                        // host authority + a virtual map is loaded
+    public Func<bool>? StageLightsActive;                      // b213: current lights-out suppression state (checkbox mirror for /hms stagelights)
+    public Func<bool>? VfxHidden;                              // b213: current all-VFX suppression state (checkbox mirror for /hms vfxoff)
     private bool npcPickerActive;                              // the dot-lens overlay is engaged
 
     public bool TimeDragHold;   // S326u: true while the time slider is being actively dragged (previews live even if not frozen)
@@ -1638,6 +1640,16 @@ public class HMSyncUI
         if (!canEdit) ImGui.EndDisabled();
         if (npcPickerActive && canEdit)
             ImGui.TextDisabled("Picker on: click a dot in the world. Green = shown, red = hidden.");
+
+        // b213: atmosphere toggles, same row layout as Hide NPCs / Hide quest markers above. These mirror the
+        // /hms stagelights and /hms vfxoff runtime toggles (map-global, synced to the session, no host gate — they
+        // work solo too), so the checkbox reflects the live suppression state and a click flips it via the command.
+        ImGui.Spacing();
+        bool stageOut = StageLightsActive?.Invoke() ?? false;
+        if (ImGui.Checkbox("Toggle ambient lights", ref stageOut)) RunCommand?.Invoke("stagelights", null);
+        ImGui.SameLine();
+        bool vfxHidden = VfxHidden?.Invoke() ?? false;
+        if (ImGui.Checkbox("Hide VFX", ref vfxHidden)) RunCommand?.Invoke("vfxoff", null);
     }
 
     /// <summary>NB-20: the dot-lens NPC picker overlay (ported from Begone!). Registered as a standalone UiBuilder.Draw
@@ -2426,6 +2438,7 @@ ImGui.Spacing();
                 CmdRow("/hms doordump", "door / EventObject inventory");
                 CmdRow("/hms roaddump", "road / path instance dump");
                 CmdRow("/hms vfxdump [term]", "VFX .avfx paths + suppression match");
+                CmdRow("/hms vfxlist", "dry-run: list every map VFX (path + key) to the log, flame-tagged (what 'Hide VFX' will blank)");
 
                 ImGui.Spacing();
                 ImGui.TextDisabled("Weather");

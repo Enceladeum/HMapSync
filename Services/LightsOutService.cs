@@ -68,11 +68,17 @@ public sealed unsafe class LightsOutService : IDisposable
     private readonly Func<ulong> localContentId;
     private readonly Action<string> chatPrint;
 
-    // ── Suppression STATE (framework-thread only) ── map-global, keyed to activeTerritory. Persists across a
-    // leave/return so re-entering the same dungeon re-applies; a different map is a no-op until toggled there.
+    // ── Suppression STATE (framework-thread only) ── map-global, keyed to activeTerritory. Does NOT persist across
+    // a map boundary (b213): any map load / map change / cutscene clears it via ClearForZoneChange (wired to
+    // zoneLoad.ZoneWillChange), so every map starts lights-on. Session end additionally routes through RestoreAll.
     private bool stageSuppressed;
     private bool vfxSuppressed;
     private uint activeTerritory;   // the TT the current suppression belongs to (0 = none)
+
+    // b213: read-only mirrors for the Map-control checkboxes (Toggle ambient lights / Hide VFX). The UI reads these
+    // each frame so the checkbox tracks the live toggle state (incl. a peer-driven change arriving over 0x56).
+    public bool StageLightsSuppressed => stageSuppressed;
+    public bool VfxSuppressed => vfxSuppressed;
 
     // Per-instance rollback state, keyed by ILayoutInstance.Id.InstanceKey. Cleared on a real zone change (the
     // instances are torn down; their keys are dead), so it is only ever consulted against a LIVE layout.
@@ -142,22 +148,23 @@ public sealed unsafe class LightsOutService : IDisposable
 
     // ═══════════════════════════ PER-TICK RE-ASSERT (framework thread) ═══════════════════════════
     // Called from the plugin's OnFrameworkUpdate. Idle-guarded no-op unless something is (or was) suppressed. Holds
-    // the state against the game re-streaming a light/VFX (same reconcile discipline). On a real
-    // zone change the layout is gone: flush the per-instance caches (their keys are dead) but KEEP the intent bits,
-    // so returning to the same dungeon re-applies and a different map stays untouched.
+    // the state against the game re-streaming a light/VFX (same reconcile discipline). The primary map-change clear
+    // is ClearForZoneChange (zoneLoad.ZoneWillChange) — this per-tick territory-edge flush is a defensive backstop
+    // for any transition that doesn't route through that event.
     public void Tick()
     {
         uint tt = loadedTerritory();
         if (tt != lastTerritory)
         {
+            // b213: a map boundary clears everything — the toggles never persist across maps (see ClearForZoneChange).
+            stageSuppressed = false;
+            vfxSuppressed = false;
             savedLightColor.Clear();
             hiddenVfx.Clear();
+            activeTerritory = 0;
             lastTerritory = tt;
         }
-        // Nothing to do: no active intent AND no pending restore work.
-        if (!stageSuppressed && !vfxSuppressed && savedLightColor.Count == 0 && hiddenVfx.Count == 0) return;
-        // Suppression belongs to a different map (we left the dungeon it was set in) → hold, don't touch this layout.
-        if (activeTerritory != 0 && tt != activeTerritory) return;
+        if (!stageSuppressed && !vfxSuppressed) return;
         if (!mapLoaded()) return;
         ReassertLights();
         ReassertVfx();
@@ -389,6 +396,20 @@ public sealed unsafe class LightsOutService : IDisposable
         if (mapLoaded()) return true;
         chatPrint("[HMSync] Lights-out only works while a map is loaded.");
         return false;
+    }
+
+    /// <summary>b213: clear all suppression intent + caches on ANY map load / map change / cutscene. Wired to
+    /// zoneLoad.ZoneWillChange, which fires before an HMS map jump, a cutscene stage load, and external transitions.
+    /// Does NOT walk the layout — it's mid-teardown (old instances being freed, new ones not yet streamed), so a
+    /// restore pass is pointless and risks touching a half-torn-down layout. Each peer runs this on its own zone
+    /// boundary, so the map-by-map cleanup is local; no wire traffic. The toggles never carry across a map.</summary>
+    public void ClearForZoneChange()
+    {
+        stageSuppressed = false;
+        vfxSuppressed = false;
+        savedLightColor.Clear();
+        hiddenVfx.Clear();
+        activeTerritory = 0;
     }
 
     /// <summary>Restore everything and forget all state (session reset / plugin unload). Walks the LIVE layout so
