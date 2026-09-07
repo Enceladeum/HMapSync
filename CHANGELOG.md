@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1.9] - 2026-09-07
+
 ### Added
 
 - **Atmosphere toggles in Map Control**: the lights-out and hide-VFX controls now have checkboxes in the Map Control panel ("Toggle ambient lights" and "Hide VFX"), so you can flip them without typing `/hms stagelights` or `/hms vfxoff`. Each checkbox reflects the current state, including when another session member changes it.
