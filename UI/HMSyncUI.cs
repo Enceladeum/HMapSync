@@ -1884,14 +1884,21 @@ ImGui.Spacing();
                         false, ImGuiSelectableFlags.SpanAllColumns);
                     if (p.IsHost) ImGui.PopStyleColor();
                     // Right-click menu. "Teleport to" is a purely local self-move (no host authority, no relay), so
-                    // it's offered to every member - guests get lost on the big map too. It greys out until the peer's
-                    // live body is resolved this frame (no position to jump to otherwise). Host-only actions (transfer
+                    // it's offered to every member - guests get lost on the big map too. Host-only actions (transfer
                     // host / kick) sit below a separator, gated on relay.IsHost inside the same popup.
                     if (!p.IsSelf && ImGui.BeginPopupContextItem("##ctx" + p.PeerId))
                     {
-                        if (!p.Resolved) ImGui.BeginDisabled();
+                        // Gate on the SAME condition as fly/noclip/carpet (MovementResearchAllowed: a loaded HMS map/
+                        // cutscene, sandboxed behind the packet filter, OR research mode via /hms debug). On the bare
+                        // live server zone teleporting to a peer is a real-server teleport cheat, so it's blocked there
+                        // unless the debug magic is on. Still greys until the peer's live body is resolved this frame.
+                        bool tpAllowed = MovementResearchAllowed?.Invoke() ?? false;
+                        bool tpEnabled = p.Resolved && tpAllowed;
+                        if (!tpEnabled) ImGui.BeginDisabled();
                         if (ImGui.MenuItem("Teleport to")) TeleportToPeer?.Invoke(p.PeerId);
-                        if (!p.Resolved) ImGui.EndDisabled();
+                        if (!tpEnabled) ImGui.EndDisabled();
+                        if (!tpAllowed && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                            ImGui.SetTooltip("Load a map or cutscene first.");
                         if (relay.IsHost)
                         {
                             ImGui.Separator();

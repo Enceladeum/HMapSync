@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Fuller command reference in Debug mode**: the Debug-mode command panel now lists every `/hms` command with a one-line description and a tag noting when each one applies (for example whether it needs an active session or host authority). The weather commands are folded into a collapsible section to keep the list readable. This panel is only shown when Debug mode is enabled.
 
+### Fixed
+
+- **Teleport to a member requires a loaded map or cutscene**: the right-click "Teleport to" action for another session member now works only on a loaded HMS map or cutscene, matching flight and noclip. Otherwise the menu item is greyed out with a hint to load a map first.
+
 ## [1.0.1.9] - 2026-09-07
 
 ### Added

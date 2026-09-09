@@ -1291,15 +1291,15 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             case "leave": DoLeave(); break;
             case "stop": DoStop(); break;
             case "fly":
-                if (!noclip.FlightActive && !MovementResearchAllowed()) { chat.Print("[HMSync] Flight is only available on a loaded map or cutscene (or research mode)."); break; }
+                if (!noclip.FlightActive && !MovementResearchAllowed()) { chat.Print("[HMSync] Flight is only available on a loaded map or cutscene."); break; }
                 DoToggleFly(); break;
             case "facecamdump":
                 DoFaceCamDump(); break;
             case "noclip":
-                if (!noclip.NoclipActive && !MovementResearchAllowed()) { chat.Print("[HMSync] Noclip is only available on a loaded map or cutscene (or research mode)."); break; }
+                if (!noclip.NoclipActive && !MovementResearchAllowed()) { chat.Print("[HMSync] Noclip is only available on a loaded map or cutscene."); break; }
                 DoToggleNoclip(); break;
             case "carpet":
-                if (!carpet.On && !MovementResearchAllowed()) { chat.Print("[HMSync] Carpet is only available on a loaded map or cutscene (or research mode)."); break; }
+                if (!carpet.On && !MovementResearchAllowed()) { chat.Print("[HMSync] Carpet is only available on a loaded map or cutscene."); break; }
                 carpet.Toggle(); break;   // S315: ground-carpet - walk on unwired surfaces
             case "emote": DoEmote(arg); break;        // S322: play + sync an emote (locked ones gated to in-session)
             case "minion": DoMinion(arg); break;      // S322: summon + sync a minion (locked ones gated to in-session)
@@ -2475,7 +2475,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // toggle all agree.
         if (!MovementResearchAllowed())
         {
-            chat.Print("[HMSync] Flight is only available on a loaded map or cutscene (or research mode).");
+            chat.Print("[HMSync] Flight is only available on a loaded map or cutscene.");
             return;
         }
         noclip.ToggleFlight();
@@ -2487,7 +2487,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // v0.7.445: allowed on an HMS-loaded environment (map or cutscene) or under research mode.
         if (!MovementResearchAllowed())
         {
-            chat.Print("[HMSync] Noclip is only available on a loaded map or cutscene (or research mode).");
+            chat.Print("[HMSync] Noclip is only available on a loaded map or cutscene.");
             return;
         }
         noclip.ToggleNoclip();
@@ -4186,6 +4186,16 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     // actually is this frame. If the peer isn't bound to a live object yet, there's nothing to jump to - tell the user.
     private void DoTeleportToPeer(string peerId)
     {
+        // Gate identical to fly/noclip/carpet (MovementResearchAllowed = a loaded HMS map/cutscene OR research mode):
+        // teleporting to a peer is a legit convenience inside a loaded map (sandboxed behind the packet filter), but on
+        // the bare live server zone it's a real-server teleport cheat. Blocked there unless research mode is on - the
+        // /hms debug magic, itself reachable only with the Config debug checkbox. Authoritative re-check so the backend
+        // agrees with the UI gate even if a future caller bypasses the greyed menu item.
+        if (!MovementResearchAllowed())
+        {
+            chat.Print("[HMSync] Teleport to a member is only available on a loaded map or cutscene.");
+            return;
+        }
         if (!stateApply.Peers.TryGetValue(peerId, out var info) || info.ObjectIndex is not { } idx
             || objectTable[idx] is not Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter pc)
         {
