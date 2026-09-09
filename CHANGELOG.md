@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Fuller command reference in Debug mode**: the Debug-mode command panel now lists every `/hms` command with a one-line description and a tag noting when each one applies (for example whether it needs an active session or host authority). The weather commands are folded into a collapsible section to keep the list readable. This panel is only shown when Debug mode is enabled.
+
 ## [1.0.1.9] - 2026-09-07
 
 ### Added

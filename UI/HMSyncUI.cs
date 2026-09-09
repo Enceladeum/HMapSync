@@ -2401,7 +2401,7 @@ ImGui.Spacing();
         {
             BeginPanel("Debug commands");
             {
-                ImGui.TextWrapped("Reference only - type these in chat. Output goes to /xllog under the bracketed tags. Requires Debug mode (this panel).");
+                ImGui.TextWrapped("Full live command inventory - type these in chat. Diagnostic output goes to /xllog under the bracketed tags. This panel is shown only in Debug mode, but the tags below note each command's ACTUAL gate: (debug) needs this mode; (out-of-session) works with no session; (host) needs host authority; (testing) compiles only in the testing build. Untagged = needs an active session. The exhaustive machine-checkable list lives in WORKING-CHANGELOG.md (Appendix A) - keep the two in step whenever a command is added or removed.");
                 ImGui.Spacing();
 
                 void CmdRow(string cmd, string desc)
@@ -2418,49 +2418,173 @@ ImGui.Spacing();
                     ImGui.PopTextWrapPos();
                 }
 
+                ImGui.TextDisabled("Session & lifecycle");
+                CmdRow("/hms start [code]", "start/host a session (out-of-session); bare code omitted = new room");
+                CmdRow("/hms starts", "start a solo session (alias: startsolo) (out-of-session)");
+                CmdRow("/hms join <code>", "join a session by code (out-of-session)");
+                CmdRow("/hms load <tt|name|stage>", "quick-load a zone/cutscene (solo-if-idle) (out-of-session)");
+                CmdRow("/hms reload", "reload the current zone");
+                CmdRow("/hms leave", "leave the session (stay connected)");
+                CmdRow("/hms stop", "teardown: revert every research lever + unload");
+                CmdRow("/hms status", "print session / connection status (out-of-session)");
+                CmdRow("/hms maps", "open the HM-Sync window on the Zones tab (out-of-session)");
+                CmdRow("/hms memo", "record a spawn point for the current map");
+                CmdRow("/hms here", "print current position + zone");
+
+                ImGui.Spacing();
+                ImGui.TextDisabled("Host controls");
+                CmdRow("/hms mapweather <id>", "force weather for the room (broadcast + apply) (host)");
+                CmdRow("/hms maptime <H:M|off>", "hold / set Eorzea time (host)");
+                CmdRow("/hms mapbgm <id>", "set room BGM, 0 = none (host)");
+                CmdRow("/hms npc <on|off>", "despawn all event NPCs (host)");
+                CmdRow("/hms qbubble <on|off>", "hide over-head quest bubbles (host)");
+                CmdRow("/hms roompassword <pw>", "set a room password (host)");
+                CmdRow("/hms roomlock <on|off>", "lock the room to new joiners (host)");
+                CmdRow("/hms transferhost <peer>", "hand host authority to a peer (host)");
+
+                ImGui.Spacing();
+                ImGui.TextDisabled("Self / cosmetic");
+                CmdRow("/hms emote <id>", "play + sync an emote (locked ids need a session) (out-of-session)");
+                CmdRow("/hms minion <id>", "summon + sync a minion (locked ids need a session) (out-of-session)");
+                CmdRow("/hms accessory <id>", "equip + sync a fashion accessory / ornament (out-of-session)");
+                CmdRow("/hms mount [id]", "self-mount; bare = most-recent or dismount, 0 = dismount");
+                CmdRow("/hms visor", "toggle visor (out-of-session)");
+                CmdRow("/hms displayhead", "toggle head-gear display (out-of-session)");
+                CmdRow("/hms displayarms", "toggle weapon display (out-of-session)");
+
+                ImGui.Spacing();
+                ImGui.TextDisabled("Movement");
+                CmdRow("/hms fly", "toggle flight (needs a loaded map/cutscene or research mode)");
+                CmdRow("/hms noclip", "toggle noclip");
+                CmdRow("/hms carpet", "walk on unwired surfaces (ground carpet)");
+                CmdRow("/hms facecamdump", "dump face-cam / head-tracking state");
+
+                ImGui.Spacing();
                 ImGui.TextDisabled("Diagnostics");
-                CmdRow("/hms diag", "local state snapshot");
-                CmdRow("/hms diagpeer", "per-peer sync state");
-                CmdRow("/hms netdiag", "relay bandwidth (live rates + reset)");
-                CmdRow("/hms lanecensus", "wire-lane field mapping (HOT/WARM/COLD/HOST)");
-                CmdRow("/hms locodiag", "receiver locomotion resolver trace");
-                CmdRow("/hms gposediag", "gpose state diagnostic");
-                CmdRow("/hms housingdiag", "housing / furniture manager state");
-                CmdRow("/hms furndiag", "furniture de-draw detail");
-                CmdRow("/hms mapdiag", "map discovery (AgentMap + region bits)");
+                CmdRow("/hms diag", "local state snapshot (debug)");
+                CmdRow("/hms diagpeer", "per-peer sync state (debug)");
+                CmdRow("/hms netdiag", "relay bandwidth (live rates + reset) (debug)");
+                CmdRow("/hms lanecensus", "wire-lane field mapping HOT/WARM/COLD/HOST (debug)");
+                CmdRow("/hms locodiag", "receiver locomotion resolver trace (debug)");
+                CmdRow("/hms gposediag", "gpose state diagnostic (debug)");
+                CmdRow("/hms housingdiag", "housing / furniture manager state (debug)");
+                CmdRow("/hms furndiag", "furniture de-draw detail (debug)");
+                CmdRow("/hms mapdiag", "map discovery: AgentMap + region bits (debug)");
+                CmdRow("/hms mounthud", "mount-HUD attach probe (run while mounted)");
                 CmdRow("/hms pktcap", "packet inspector capture (out-of-session)");
-                CmdRow("/hms wiredump", "capture N binary wire frames (sent/recv)");
-                CmdRow("/hms dumpstructs", "dump CS struct offsets to log");
+                CmdRow("/hms senddiag", "outbound-packet observer, pass-through (out-of-session)");
+                CmdRow("/hms rosterdump", "read-only spawn/despawn struct dump (out-of-session)");
+                CmdRow("/hms wiredump [n]", "capture N binary wire frames, sent/recv (debug)");
+                CmdRow("/hms dumpstructs", "dump CS struct offsets to log (debug)");
 
                 ImGui.Spacing();
-                ImGui.TextDisabled("Scene dumps");
-                CmdRow("/hms lgbdump", "layout (LGB) instance dump for the zone");
+                ImGui.TextDisabled("Scene / layer dumps");
+                CmdRow("/hms lgbdump <tt>", "layout (LGB) instance dump for the zone (debug)");
+                CmdRow("/hms layerscan [path]", "runtime layer states (drawn/hidden/absent by LayerId)");
+                CmdRow("/hms layerhide <substr>", "hide streamed geometry by asset substring (e.g. dst)");
+                CmdRow("/hms layershow <substr>", "restore geometry hidden by layerhide (or /hms stop)");
+                CmdRow("/hms sgdump [substr]", "SharedGroup timeline/step states (reconstruction buildings)");
+                CmdRow("/hms idprobe <ids>", "probe file InstanceIds -> runtime (759 stage bridge, read-only)");
+                CmdRow("/hms idshowall", "restore everything hidden by research/battle levers (session-independent)");
+                CmdRow("/hms adv759drive", "CLEAN 759 advance: force-show the 8 facilities' children (no cycle/PlayTimeline) - auto-fires on 759 load");
+                CmdRow("/hms battlehide [on|off]", "hide battle-rubble to reveal the peaceful city (1185/1186 auto-arm)");
+                CmdRow("/hms dropcolliders [on|off]", "drop every CollisionBox for free traversal (persists across loads)");
                 CmdRow("/hms doordump", "door / EventObject inventory");
-                CmdRow("/hms roaddump", "road / path instance dump");
+                CmdRow("/hms roaddump [term]", "road / path (BgPart) instance dump");
                 CmdRow("/hms vfxdump [term]", "VFX .avfx paths + suppression match");
-                CmdRow("/hms vfxlist", "dry-run: list every map VFX (path + key) to the log, flame-tagged (what 'Hide VFX' will blank)");
-
-                ImGui.Spacing();
-                ImGui.TextDisabled("Weather");
-                // b134: setweather is an UNGATED prod verb (works with debug off), listed here purely for the
-                // record/reference. Applies any weather id on the current zone - native in-bank, or a crammed
-                // foreign sky/doodads via preset; when hosting it also broadcasts to peers.
-                CmdRow("/hms setweather <id>", "set any weather id (native or crammed); broadcasts to peers when hosting");
-
-                ImGui.Spacing();
-                ImGui.TextDisabled("Map reveal");
-                CmdRow("/hms mapreveal", "reveal current map HUD fog (snapshotted)");
-                CmdRow("/hms maprestore", "undo the reveal (restore snapshot)");
+                CmdRow("/hms vfxlist", "dry-run: list every map VFX to the log, flame-tagged (out-of-session)");
+                CmdRow("/hms stagelights", "instanced-dungeon lights-out toggle (broadcasts if hosting) (out-of-session)");
+                CmdRow("/hms vfxoff", "instanced-dungeon universal VFX suppression (broadcasts if hosting) (out-of-session)");
 
                 ImGui.Spacing();
                 ImGui.TextDisabled("Cutscene / stage");
-                CmdRow("/hms firecut", "arm cutscene capture (run in an inn)");
-                CmdRow("/hms cutstop", "cutscene safety escape (works anywhere)");
-                CmdRow("/hms stagestate [name|next]", "flip a cutscene stage's alternate composition");
+                CmdRow("/hms firecut <rowId>", "arm cutscene capture, run in an inn (out-of-session)");
+                CmdRow("/hms cutstop", "cutscene safety escape, works anywhere (out-of-session)");
+                CmdRow("/hms stagestate [name|next]", "flip a cutscene stage's coplanar A/B composition");
+                CmdRow("/hms casttest <tt> <key>", "COLD-load a zone under a forced layer-filter KEY: reveals key-gated geometry/preset (e.g. a hidden composition). Leave the zone first; measure here, then bake into ForcedCastKeys (debug)");
+                CmdRow("/hms questprobe", "toggle the quest-read diagnostic log (spoof is automatic per-zone) (debug)");
+                CmdRow("/hms debug", "toggle research mode: director setup + Duty-Info HUD on next load (debug)");
+
+                ImGui.Spacing();
+                ImGui.TextDisabled("Map reveal");
+                CmdRow("/hms mapreveal", "reveal current map HUD fog, snapshotted (debug)");
+                CmdRow("/hms maprestore", "undo the reveal, restore the snapshot (debug)");
+
+                ImGui.Spacing();
+                ImGui.TextDisabled("Weather");
+                // b134: setweather is an UNGATED prod verb (works with debug off), listed for reference. Applies any
+                // weather id on the current zone - native in-bank, or a crammed foreign sky/doodads via preset; when
+                // hosting it also broadcasts to peers. The wx* family below is the research pipeline behind it.
+                CmdRow("/hms setweather <id>", "set any weather id (native or crammed); broadcasts to peers when hosting");
+
+                ImGui.Spacing();
+                // Weather-cram research family (~40 levers). Folded so the common surface above stays readable; the
+                // exhaustive list + provenance lives in WORKING-CHANGELOG.md Appendix A.
+                if (InsetCollapsingHeader("Weather-cram research (wx*)##wxfamily"))
+                {
+                    ImGui.TextDisabled("Probes (read-only)");
+                    CmdRow("/hms weatherdiag", "dump the weather picker's inputs [WXDIAG]");
+                    CmdRow("/hms envbprobe", "runtime .envb / EnvScene.WeatherIds probe [ENVB-PROBE]");
+                    CmdRow("/hms envsetdump", "parsed per-set param storage hunt [ENVSET]");
+                    CmdRow("/hms wxresolve", "render-path resolve hook, per transition [WXRESOLVE] (testing)");
+                    CmdRow("/hms wxenvprobe", "donor-bank injection-surface map [WXENV]");
+                    CmdRow("/hms wxloadverify [path]", "prove GetResourceSync loads an .envb [WXLOAD]");
+                    CmdRow("/hms wxskydiag", "sky/ambient resource surface the +0x90 cram misses [WXSKY]");
+                    CmdRow("/hms wxstardiag", "Star/Cloud renderer live state [WXSTAR]");
+                    CmdRow("/hms wxstarsrc", "star-intensity input hunt [WXSRC]");
+                    CmdRow("/hms wxenvdump", "time-shaped EnvState float hunt [WXENVDUMP]");
+                    CmdRow("/hms wxsimdump", "EnvSimulator re-interpolate-gate hunt [WXSIMDUMP]");
+                    CmdRow("/hms wxfreezeprobe [sweep]", "decisive re-interpolate freeze test [WXFREEZE]");
+                    CmdRow("/hms wxtimescan", "map EnvState offsets that move with the clock [WXTIMESCAN]");
+
+                    ImGui.Spacing();
+                    ImGui.TextDisabled("Capture / bake");
+                    CmdRow("/hms wxcapture", "snapshot the live EnvState (pairs with wxreplay)");
+                    CmdRow("/hms wxbake [id]", "stage the live EnvState as a baked preset (local library)");
+                    CmdRow("/hms wxbakeall [force|stop]", "unattended batch-bake every weather this zone carries [WXBAKEALL]");
+                    CmdRow("/hms wxkfcap", "capture one day-night keyframe of EnvState at the current tod");
+                    CmdRow("/hms wxkfsweep [min|stop]", "auto-capture keyframes across a full donor day");
+                    CmdRow("/hms wxkfsave [name]", "bake the in-memory keyframe set to the local library");
+                    CmdRow("/hms wxkfload <id>", "restore a saved keyframe set into memory");
+                    CmdRow("/hms wxkflist", "list saved keyframe sets");
+                    CmdRow("/hms wxkfclear", "drop the captured keyframe set + stop the graft");
+                    CmdRow("/hms wxkfdecim <N|full>", "fidelity probe: replay a dense set at N keyframes");
+                    CmdRow("/hms wxkftour [N|force|stop]", "unattended whole-city day-night capture, per weather");
+
+                    ImGui.Spacing();
+                    ImGui.TextDisabled("Apply / replay");
+                    CmdRow("/hms wxpreset <id>|off", "render a baked foreign sky by weather id");
+                    CmdRow("/hms wxreplay [on|off]", "replay the captured EnvState per-frame in this zone");
+                    CmdRow("/hms wxkfreplay [on|off]", "day-night keyframe graft on this zone (needs >=2 keyframes)");
+                    CmdRow("/hms wxcyclecram <path> [id] [spd]|off", "handle swap: native samples a donor .envb -> full cycle + avfx [WXCYCLE]");
+                    CmdRow("/hms wxskyswap <tex>|off", "swap the leftover sky cubemap [WXSKY]");
+                    CmdRow("/hms wxambswap <amb>|off", "swap the leftover ambient set [WXSKY]");
+                    CmdRow("/hms wxstarforce [off]", "force Kugane-night StarRenderer intensity block [WXSTAR]");
+                    CmdRow("/hms wxcity [off]", "one-shot: arm the crammed Kugane clear-night sky stack");
+                    CmdRow("/hms wxcoldtest [strip]", "spawn doodads from a self-allocated descriptor [WXCOLD]");
+                    CmdRow("/hms wxtrans <id> [fade]", "drive the real WeatherManager transition (avfx path, NOT crash-free)");
+                    CmdRow("/hms wxnative <id>", "raw native weather write, no guard/cram (avfx-safe ids only)");
+
+                    ImGui.Spacing();
+                    ImGui.TextDisabled("Doodads / sweep");
+                    CmdRow("/hms wxdood [id|off <id>|clear]", "manage the avfx-safe native-doodad allow-list");
+                    CmdRow("/hms wxdoodall [on|off]", "kill switch: all preset doodads on/off (207/208 always refused)");
+                    CmdRow("/hms wxsweep [start [unguarded]|stop|status]", "crash-resumable auto-sweep of every doodad weather");
+                    CmdRow("/hms wxdooddiag [arm|off|status]", "VEH fault forensics for the 207/208 CTD [WXFAULT]");
+                    CmdRow("/hms linevfx [scan|near|gfx|off|destroy|on|auto]", "boss-barrier LINE (type 59) suppression [LINEVFX]");
+
+                    ImGui.Spacing();
+                    ImGui.TextDisabled("Harvest tours (testing build only)");
+                    CmdRow("/hms wxbaketour [force|stop]", "map-hopping set-cover bake sweep [WXTOUR] (testing)");
+                    CmdRow("/hms wxkftourall [force|stop]", "map-hopping city keyframe tour [CITYKF] (testing)");
+                    CmdRow("/hms wxkfcities [force|stop]", "all-cities donor-tagged spine graft tour [CITYGRAFT] (testing)");
+                    CmdRow("/hms wxdifftour [stop|report]", "cross-city spine-weather diff instrument [WXDIFF] (testing)");
+                    CmdRow("/hms wxmissing", "bake-coverage report: which ids still missing + donor maps (testing)");
+                }
 
                 ImGui.Spacing();
                 ImGui.TextDisabled("Maintenance");
-                CmdRow("/hms teardownhousing", "force-tear the indoor territory");
+                CmdRow("/hms teardownhousing", "force-tear the indoor territory (contingency only) (debug)");
             }
             EndPanel();
         }
