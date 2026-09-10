@@ -1,5 +1,5 @@
 {
-    "_comment":  "Derived venue(stagedir)-\u003equest map for cutscene-only venues. Source: Fable cutscene-territory-index.csv (quest-\u003eCutscenePaths) joined with dominant-venue-per-cutb from scene-parts. Regenerate per patch. Game 2026.08.05.0000.0000.",
+    "_comment":  "Derived venue(stagedir)-\u003equest map for cutscene-only venues. Source: cutscene-territory-index.csv (quest-\u003eCutscenePaths) joined with dominant-venue-per-cutb from scene-parts. Regenerate per patch. Game 2026.08.05.0000.0000.",
     "version":  "2026.08.05.0000.0000",
     "venues":  {
                    "bgcommon/hou/indoor/general/0006":  "What Blooms in the Night",
