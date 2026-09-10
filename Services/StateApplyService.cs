@@ -993,10 +993,18 @@ public class StateApplyService : IDisposable
                     var groundRef = objectTable.LocalPlayer;
                     if (groundRef != null) restore.Y = groundRef.Position.Y;
                     WritePeerPosition(info.ObjectIndex.Value, restore, info.OriginRotation);
-                    // Retain the grounded spot so the session-end restore (and its re-assert window) still covers this
-                    // actor - and re-asserts the GROUNDED position, not a stale airborne origin - if a late settle-write
-                    // disturbs it after we've dropped the roster entry.
-                    departedOrigins[info.ObjectIndex.Value] = restore;
+                    // b217 - LEAVE-THEN-LEAVE OOB FIX. The SESSION-END re-assert must store the TRUE captured origin, NOT
+                    // the virtual-map-grounded `restore` written above. `restore`'s Y is the LOCAL PLAYER'S floor height ON
+                    // THE VIRTUAL MAP at the moment of departure - correct for the immediate despawn write (don't leave the
+                    // departing body floating on the synthetic scene) but WRONG to replay on the real origin zone at
+                    // session end, where that synthetic height is meaningless: the peer is handed back at real X/Z but a
+                    // virtual-map Y, so it floats/sinks "out of bounds" until its first move makes the server repaint it.
+                    // The BOUND-peer path (SnapshotPeerOrigins via peerInfos) restores the true captured origin - real Y
+                    // and all - which is exactly why the simultaneous host-end order was always fine; a departed peer
+                    // regressed to the grounded Y here (the ground-snap that fixed the airborne-DESPAWN case leaked into
+                    // the session-end RE-ASSERT). Prefer the real origin so both exit orders match; fall back to the
+                    // grounded restore only when no true origin was ever captured (peer left before its first bind).
+                    departedOrigins[info.ObjectIndex.Value] = info.OriginPosition ?? restore;
                     log.Debug("[HMSync] Ground-snapped departing peer " + info.CharacterName + " before unload.");
 
                     // NB-28: NEUTRALISE POSTURE for EVERY departing peer, not just mounted ones. Companion to F2's
