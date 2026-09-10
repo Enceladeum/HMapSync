@@ -5939,13 +5939,22 @@ public unsafe class ZoneLoadService : IDisposable
         Vector3? restorePos = savedPosition;
         float? restoreRot = savedRotation;
 
-        // The reload - genuine zone load back home. Rebuilds the home territory + object set. Normally only if
-        // we're not already in the target zone - BUT a cutscene stage borrows the origin's territory id, so
-        // ttBefore == restoreZone even though the live SCENE is the stage. Force the reload in that case so the
-        // origin's CreateScene fires and the stage geometry is actually torn down.
-        if (ttBefore != restoreZone || cutsceneSceneActive)
+        // The reload - genuine zone load back home. Rebuilds the home territory + object set. This USED to be gated
+        // on `ttBefore != restoreZone` (skip a "redundant" reload when already in the target TT) - but by the time
+        // Revert reaches here IsZoneLoaded was true (it gated the early return at the top), so a virtual scene IS up
+        // and the origin MUST be rebuilt to tear it down. The skip-guard's "same TT ⇒ already home" assumption is
+        // unsafe because a loaded virtual scene can SHARE the origin's territory id and NOT be the origin scene:
+        //   • a cutscene stage borrows the origin's TT (the cutsceneSceneActive clause was the first patch for this);
+        //   • b218: an INSTANCED origin (sharded world map, e.g. Tertium 1) hits the same trap - the virtual load
+        //     reads back the origin's TT, so ttBefore == restoreZone, the reload was skipped, and the session was
+        //     left STUCK on the virtual map (the reported "instanced origin never returns home" bug).
+        // So force the reload on any real Revert. IsZoneLoaded is provably true here, so this always fires; the
+        // (session-impossible) genuinely-already-home case just reloads the same id, which is exactly what a clean
+        // teardown wants anyway. cutsceneSceneActive is now subsumed but kept for intent/readability.
+        if (ttBefore != restoreZone || cutsceneSceneActive || IsZoneLoaded)
         {
-            DiagLog("[HMSync] [RETURN] reloading home zone " + restoreZone + " (TT before = " + ttBefore + ")");
+            DiagLog("[HMSync] [RETURN] reloading home zone " + restoreZone + " (TT before = " + ttBefore +
+                (ttBefore == restoreZone ? ", same-TT force - instanced/cutscene origin borrowed the origin id" : "") + ")");
 
             // S311 CRASH A FIX - DisableDraw EVERY object immediately before the reload, exactly as
             // Hyperborea does in Utils.LoadZone. This is the counterpart to the S310 RenderFlags change,
@@ -6409,8 +6418,23 @@ public unsafe class ZoneLoadService : IDisposable
     {
         try
         {
+            // Primary: the ACTIVE CLIENT SCENE's territory id. This is the right source mid-session
+            // (a /hms hop loads a foreign scene and we want THAT scene's TT), so it stays primary.
             var layout = FFXIVClientStructs.FFXIV.Client.LayoutEngine.LayoutWorld.Instance()->ActiveLayout;
-            if (layout != null) return layout->TerritoryTypeId;
+            if (layout != null && layout->TerritoryTypeId != 0) return layout->TerritoryTypeId;
+
+            // b219: ActiveLayout->TerritoryTypeId reads 0 when we're standing in a scene that was built
+            // via the CreateScene cold-load path (solo instances / hidden event stages: the casttest
+            // "terr N->0" load explicitly zeroes the layout TT and nothing restores it on the way out).
+            // A departed/instanced origin then captured savedZoneId=0 → Revert reloaded zone 0 (a no-op)
+            // → the player was stranded on the last virtual map (the reported "Rising Stones 3 → TT 1300,
+            // never returns" bug; /hms here read 0 while HaselDebug/the game read the true TT 351).
+            // Fall back to GameMain's authoritative current-territory id — exactly what the game (and
+            // HaselDebug) read, and what the packet firewall keeps pinned to our REAL zone all session,
+            // so origin capture, /hms here, and the home-restore settle poll all see the true origin TT
+            // instead of 0. Guarded on !=0 so a genuine loading-screen (both sources 0) still returns 0.
+            var gm = GameMain.Instance();
+            if (gm != null && gm->CurrentTerritoryTypeId != 0) return gm->CurrentTerritoryTypeId;
         }
         catch (Exception ex) { log.Debug("[HMSync] GetCurrentTerritoryId failed: " + ex.Message); }
         return 0;

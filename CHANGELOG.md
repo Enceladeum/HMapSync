@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Teleport to a member requires a loaded map or cutscene**: the right-click "Teleport to" action for another session member now works only on a loaded HMS map or cutscene, matching flight and noclip. Otherwise the menu item is greyed out with a hint to load a map first.
 - **Departed members return to the right spot**: a session member who left while everyone was on an HMS map could be returned to their real location at the wrong height, floating above or sunk into the ground until they next moved. They are now returned to their true saved position.
+- **Returning home works from instanced and solo maps**: if your real location was an instance, a busy (sharded) area, or certain solo event scenes, ending an HMS session could strand you on the last map instead of returning you home. The plugin now reads your true location in these cases and reliably rebuilds your home zone on return.
 
 ## [1.0.1.9] - 2026-09-07
 
