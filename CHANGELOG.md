@@ -5,6 +5,14 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3.0] - 2026-09-16
+
+### Added
+
+- **Set weather, time, and music without loading a map**: with Debug mode on and no session running, the Map Control panel now applies a weather preset, time of day, background music, and the ambient-light and hide-VFX toggles to the zone you are standing in, as a local cinematic. Nothing is saved or shared with anyone else, and you no longer have to load an HMS map first.
+- **Weather in the server info bar**: an optional readout in Dalamud's server info bar (top-right) shows the name of the current weather, similar to the Weatherman plugin. It is off by default; a new "Server info bar" section in the Config tab turns it on. Clicking it opens the weather presets.
+- **Pop-out weather presets**: the weather-preset grid can now open in its own floating window, so you can browse and apply presets without keeping the main HMS window open.
+
 ## [1.0.2.0] - 2026-09-11
 
 ### Changed

@@ -141,11 +141,16 @@ public class HMSyncUI
     // S326d: the currently-loaded territory id (from ZoneLoadService.CurrentLoadedZone), so the Map Settings tab can
     // tell "editing the map I'm on" (live apply) from "preparing another map" (store only). 0 = none loaded.
     public Func<uint>? CurrentLoadedZone;
+    // The REAL territory the player physically stands in (clientState.TerritoryType), independent of any loaded
+    // synthetic map. Used only by the Debug-mode local-cinematic weather picker, which drives weather on the real
+    // zone when out of a session (no synthetic map loaded). 0 = not in a zone (login screen etc.).
+    public Func<uint>? CurrentRealTerritory;
     // v0.7.340: the active cutscene STAGE name (null when on a plain zone). Lets the Zone: header show the cutscene
     // name instead of the donor territory's name for a swap-loaded stage.
     public Func<string?>? CurrentStageName;
-    // NB-37: the active cutscene STAGE tag (e.g. "e3e4"; null on a plain zone). Lets the Zone: header parenthetical
-    // show the stage's own tag instead of the donor territory id.
+    // NB-37: the active cutscene stage's OWN tag (e.g. "e3e4"), null when on a plain zone. The Zone: header parenthetical
+    // uses this instead of the donor territory id for a swap-loaded stage, so a cutscene reads "Doma castle finale (e3e4)"
+    // — uniform with a TT's "Ul'dah (130)" — instead of showing the meaningless donor id.
     public Func<string?>? CurrentStageTag;
     // v0.7.262: the single movement capability gate (session-active || debug). UI movement buttons check THIS instead
     // of re-deriving their own condition, so no future button can slip through with a weaker gate.
@@ -172,6 +177,7 @@ public class HMSyncUI
     // Config tab (S328p): debug-mode toggle (now config-backed) + say-opcode management.
     public Func<bool>? DebugMode;
     public Action<bool>? SetDebugMode;
+    public System.Action? ReloadWeatherDtr;   // b225: called after flipping config.ShowWeatherDtr so the DTR entry is created/removed
     public Func<(uint outbound, uint inbound, bool verified, string version)>? SayOpcodeState;
     public Action<uint, uint>? SetSayOpcodes;      // manual key-in: (outbound, inbound)
     public System.Action? VerifySayOpcodes;               // stamp current opcodes verified on the current game version
@@ -298,7 +304,14 @@ public class HMSyncUI
     private List<(byte id, string name)>? mapWeatherChoices;   // the map's legal/accepted weathers
     private List<(uint id, string name)>? mapBgmChoices;
     private byte mapDefaultWeather;                      // the territory's native weather (for the "Default -" label)
+    // Out-of-session LOCAL-CINEMATIC accent trackers (Debug mode, no session, real zone). The weather grids accent the
+    // ACTIVE pick; in-session that reads config.MapWeatherId/Donor (the persisted host pick), but a local cinematic
+    // pick is never persisted, so it's tracked here instead. Reset when the acted-on zone changes. (The weather/BGM
+    // choice caches above are keyed on the acted-on zone `tt`, so live and local reuse them - they never render at once.)
+    private byte localPickWeather;
+    private uint localPickDonor;
     private bool showAllWeather;                        // S326s: reveal the full (experimental) weather list
+    private bool weatherPresetsPoppedOut;               // b226: render the Extra-presets grid in its own floating window (DrawWeatherPresetsWindow)
     private List<(byte id, string name, bool legal)>? mapAllWeather;   // lazy full flagged list for the loaded zone
     private string roomPasswordInput = "";              // S326f: room password entry (host) - shared by Host/Join segments
 
@@ -410,6 +423,13 @@ public class HMSyncUI
     {
         showMain = true;
         focusSessionTab = true;
+    }
+
+    // b226: DTR weather readout click-action - pop out the weather-presets window (DrawWeatherPresetsWindow). It's an
+    // independent tear-off, so this just raises the flag; the window appears whether or not the main HMS window is open.
+    public void OpenWeatherPresets()
+    {
+        weatherPresetsPoppedOut = true;
     }
 
     // Installer "Settings" button (UiBuilder.OpenConfigUi): show the window and jump to the Config tab.
@@ -937,9 +957,9 @@ public class HMSyncUI
         if (gz != 0)
         {
             string? stg = CurrentStageName?.Invoke();
+            string? stgTag = CurrentStageTag?.Invoke();
             string gzn = !string.IsNullOrEmpty(stg) ? stg : MapSettings.GetZoneName(gz);
-            string? stgTag = CurrentStageTag?.Invoke();   // NB-37: stage's own tag for the paren, not the donor id
-            string gzId = !string.IsNullOrEmpty(stgTag) ? stgTag! : gz.ToString();
+            string gzId = !string.IsNullOrEmpty(stgTag) ? stgTag! : gz.ToString();   // NB-37: cutscene's tag, not donor id
             ImGui.TextDisabled("Zone:"); ImGui.SameLine();
             ImGui.TextUnformatted((string.IsNullOrEmpty(gzn) ? "Unnamed" : gzn) + " (" + gzId + ")");
             ImGui.Spacing();
@@ -1193,6 +1213,18 @@ public class HMSyncUI
         return open;
     }
 
+    // b223: a horizontal divider that stops at the panel's right inset (PanelPad). ImGui.Separator() spans to the window
+    // WorkRect.Max.x and so bleeds PanelPad past the drawn panel border — the same overrun InsetCollapsingHeader clips. We
+    // draw the rule manually at the inset width and advance the cursor by 1px so layout still flows like a Separator.
+    private void InsetSeparator()
+    {
+        float w = ImGui.GetContentRegionAvail().X - PanelPad;
+        if (w < 1f) w = 1f;
+        Vector2 p = ImGui.GetCursorScreenPos();
+        ImGui.GetWindowDrawList().AddLine(p, new Vector2(p.X + w, p.Y), ImGui.GetColorU32(ImGuiCol.Separator), 1f);
+        ImGui.Dummy(new Vector2(0f, 1f));
+    }
+
     // Recent-5 quick-load. Tapping a row loads that map; from idle it silently starts a solo session first (see
     // DoQuickLoad). Names resolve via MapSettings; unknown ids fall back to the number.
     private void DrawRecentMaps()
@@ -1264,162 +1296,69 @@ public class HMSyncUI
             ImGui.TextDisabled("Tapping a map loads it in a solo session.");
     }
 
-    // Time & weather for the CURRENTLY LOADED map (the "load it, adjust, save" model - no territory selector). Time as
-    // HH:MM with Freeze on the same row; weather from the loaded map's legal set.
-    private void DrawTimeAndWeather()
+    // b226: rebuild the weather/BGM choice caches when the acted-on zone changes. Keyed on `tt` (the loaded synthetic
+    // zone when live, the real current zone when local), so the live-tab and the local-cinematic path share one
+    // invalidation. Idempotent: a no-op once cached for the current tt. Also resets the local-cinematic accent trackers
+    // so a stale pick can't accent a chip after a zone hop. Called by BOTH DrawTimeAndWeather and DrawWeatherPresetsWindow
+    // (the pop-out) so a torn-off window still tracks zone changes when the Map Control tab isn't the one being drawn.
+    private void RefreshWeatherCacheFor(uint tt)
     {
-        if (MapSettings == null) { ImGui.TextDisabled("Unavailable."); return; }
-        uint loadedZone = CurrentLoadedZone?.Invoke() ?? 0;
-        bool live = (CanLoad?.Invoke() ?? false) && loadedZone != 0;
-        if (!live)
+        if (MapSettings == null || tt == mapSettingsCachedTerritory) return;
+        mapSettingsCachedTerritory = tt;
+        mapWeatherChoices = MapSettings.GetLegalWeather(tt);
+        mapDefaultWeather = MapSettings.GetDefaultWeather(tt);
+        mapBgmChoices = MapSettings.GetBgmChoices(MapSettings.GetDefaultBgm(tt));
+        mapAllWeather = null;   // lazy-rebuilt if "Extra presets" is open
+        localPickWeather = 0; localPickDonor = 0;   // drop the local-cinematic accent pick on a zone change
+    }
+
+    // b226: apply an EXTRA-PRESET tap (the A-Z cram grid). Promoted from the old inline closure so the pop-out preset
+    // window can drive the SAME route. asterisked/`hasKf` = a day-night graft (SetWeatherOrGraft); else a static cram
+    // (SetWeatherUnified). LIVE persists to config + broadcasts via RunCommand("mapweather", …); LOCAL runs the same
+    // MapSettings route on this client only and records the pick for chip accenting (no persist, no broadcast).
+    private void ApplyWeatherPresetImpl(bool local, byte wid, bool hasKf)
+    {
+        if (MapSettings == null) return;
+        if (local)
         {
-            ImGui.TextDisabled("Load a map to adjust its time and weather.");
+            localPickWeather = wid; localPickDonor = 0;
+            if (hasKf) MapSettings.SetWeatherOrGraft(wid);
+            else MapSettings.SetWeatherUnified(wid);
             return;
         }
+        config.MapWeatherId = wid; config.MapWeatherDonor = 0; config.Save();
+        if (hasKf) MapSettings.SetWeatherOrGraft(wid);   // b183: engage the embedded day-night graft (donor 0 = first available)
+        else MapSettings.SetWeatherUnified(wid);
+        RunCommand?.Invoke("mapweather", wid.ToString());
+    }
 
-        // Rebuild the loaded map's weather list when the loaded zone changes. (Weather is settled to default on the
-        // load event itself in DoLoad, so a stale weather can't bleed across a map change - no sanitise needed here.)
-        if (loadedZone != mapSettingsCachedTerritory)
+    // b226: apply a CITY-VARIANT tap (weather × donor day-night graft). Promoted from the old inline closure so the
+    // pop-out preset window can drive the SAME route. LIVE persists (weather, donor) + broadcasts "mapweather <w> <d>";
+    // LOCAL runs the graft on this client only and records the pick for chip accenting.
+    private void ApplyCityGraftImpl(bool local, byte wid, uint donor)
+    {
+        if (MapSettings == null) return;
+        if (local)
         {
-            mapSettingsCachedTerritory = loadedZone;
-            mapWeatherChoices = MapSettings.GetLegalWeather(loadedZone);
-            mapDefaultWeather = MapSettings.GetDefaultWeather(loadedZone);
-            mapBgmChoices = MapSettings.GetBgmChoices(MapSettings.GetDefaultBgm(loadedZone));
-            mapAllWeather = null;   // lazy-rebuilt if "show more" is on
+            localPickWeather = wid; localPickDonor = donor;
+            MapSettings.SetWeatherOrGraft(wid, donor);
+            return;
         }
+        config.MapWeatherId = wid; config.MapWeatherDonor = donor; config.Save();
+        MapSettings.SetWeatherOrGraft(wid, donor);
+        RunCommand?.Invoke("mapweather", wid + " " + donor);
+    }
 
-        // Zone header - the map these controls act on. "Zone: <name> (ID)".
-        {
-            string? stg2 = CurrentStageName?.Invoke();
-            string zn = !string.IsNullOrEmpty(stg2) ? stg2 : MapSettings.GetZoneName(loadedZone);
-            string? stg2Tag = CurrentStageTag?.Invoke();   // NB-37: stage's own tag for the paren, not the donor id
-            string znId = !string.IsNullOrEmpty(stg2Tag) ? stg2Tag! : loadedZone.ToString();
-            ImGui.TextDisabled("Zone:");
-            ImGui.SameLine();
-            ImGui.TextUnformatted((string.IsNullOrEmpty(zn) ? "Unnamed" : zn) + " (" + znId + ")");
-        }
-        ImGui.Spacing();
-
-        // Time: HH:MM slider (0..1439) + Freeze + reset. Moving the slider AUTO-FREEZES (pins) the time - RP scenes need
-        // a static sky, and the Eorzea clock races (~20x real), so dragging to a time you want and having it hold is the
-        // desired default. Uncheck Freeze (or hit reset) to release the override and let the real clock resume.
-        // DISPLAY: always read the LIVE Eorzea clock (GetEorzeaTimeOfDay reads ClientTime.EorzeaTime). When frozen the
-        // clock IS the held value (the Brio hook pins it), when not it's the real marching time. Reading the live clock
-        // on BOTH host and peer means the displayed integers match exactly - they read the same underlying field, which
-        // the freeze holds identically on every client. (Reading config here instead diverged from the peer's live read
-        // and made the on-load integers briefly disagree even though the sky was synced.)
-        int totalMin;
-        {
-            var (lh, lm) = MapSettings.GetEorzeaTimeOfDay();
-            totalMin = (lh * 60 + lm) % 1440;
-        }
-        int sliderVal = totalMin;
-        string hhmm = (sliderVal / 60).ToString("D2") + ":" + (sliderVal % 60).ToString("D2");
-        // Reset button - release the freeze, real clock resumes.
-        if (ImGuiComponents.IconButton("##timereset", FontAwesomeIcon.UndoAlt))
-            SetHostTime?.Invoke(config.MapEorzeaHour, config.MapEorzeaMinute, false);   // forced=false → unfreeze
-        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Reset to the real, flowing Eorzea time.");
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(210);
-        bool sliderChanged = ImGui.SliderInt("##maptime", ref sliderVal, 0, 1439, hhmm);
-        if (sliderChanged)
-        {
-            // Dragging pins the time (auto-freeze). One silent path: SetHostTime updates config + applies locally +
-            // bumps the map-state epoch so peers get THIS value on the next transform - no chat spam, no separate
-            // mirror. Called every drag frame; each epoch bump carries the new value to peers.
-            SetHostTime?.Invoke((ushort)(sliderVal / 60), (byte)(sliderVal % 60), true);
-        }
-        TimeDragHold = ImGui.IsItemActive();
-        ImGui.SameLine();
-        bool timeForced = config.MapTimeForced;
-        if (ImGui.Checkbox("Freeze", ref timeForced))
-        {
-            if (timeForced)
-            {
-                // Freeze pins the time showing RIGHT NOW (capture the live clock, not a stale stored value).
-                var (nh, nm) = MapSettings.GetEorzeaTimeOfDay();
-                SetHostTime?.Invoke((ushort)nh, (byte)nm, true);
-            }
-            else SetHostTime?.Invoke(config.MapEorzeaHour, config.MapEorzeaMinute, false);
-        }
-        if (config.MapTimeForced)
-            ImGui.TextDisabled("Time frozen at " + hhmm + ". Uncheck Freeze or reset to resume the real clock.");
-        else
-            ImGui.Dummy(new Vector2(0f, ImGui.GetTextLineHeightWithSpacing()));   // a slider + time is self-explanatory; keep the space, no how-to text
-
-        // Weather. The dropdown's DISPLAYED value is the LIVE weather the engine is rendering (GetActiveWeather), so it
-        // always matches the sky - even the map's natural weather on load, which the host never explicitly picked.
-        // Picking applies LIVE (ApplyWeather writes EnvManager directly). "None - Atmospheric" (0) is a synthetic forced
-        // blank the host can choose; it only reads as the selected row when the live weather is actually 0.
-        byte liveW = MapSettings.GetActiveWeather();
-        byte curW = liveW;   // the dropdown mirrors reality, not a stored preference
-        string curWName = curW == 0 ? "None - Atmospheric"
-            : (curW == mapDefaultWeather ? MapSettings.WeatherName(curW) + " (native)" : MapSettings.WeatherName(curW));
-        ImGui.TextDisabled("Weather");
-        ImGui.SetNextItemWidth(-PanelPad);
-        // v0.7.474: HeightLarge. The default combo popup is ~8 rows; 958 has 9 legal weathers once CutScene is
-        // promoted, so the promoted entry - appended last by design - fell below the scroll fold and read as
-        // "the promotion didn't work". Promotions will always land last, so this must not clip.
-        if (ImGui.BeginCombo("##mapweather", curWName, ImGuiComboFlags.HeightLarge))
-        {
-            void Pick(byte wid)
-            {
-                config.MapWeatherId = wid; config.MapWeatherDonor = 0; config.Save();   // b183: a plain static pick has no day-night graft donor
-                MapSettings.SetWeatherOrGraft(wid, 0);              // LIVE — donor 0 falls to SetWeatherUnified AND stops any running graft
-                RunCommand?.Invoke("mapweather", wid.ToString());   // persist/broadcast on the host (donor omitted = 0)
-            }
-
-            if (ImGui.Selectable("None - Atmospheric", curW == 0)) Pick(0);
-            if (mapDefaultWeather != 0 && ImGui.Selectable(MapSettings.WeatherName(mapDefaultWeather) + " (native)", curW == mapDefaultWeather))
-                Pick(mapDefaultWeather);
-            ImGui.Separator();
-
-            if (mapWeatherChoices != null)
-                foreach (var (wid, wname) in mapWeatherChoices)
-                {
-                    if (wid == 0 || wid == mapDefaultWeather) continue;
-                    if (ImGui.Selectable(wname + "##w" + wid, wid == curW)) Pick(wid);
-                }
-
-            // v0.7.475 (2026-08-17): promote the LOADED ZONE'S NATIVE ENV-BANK states into the picker. WeatherRate
-            // lists only the weathers the game RANDOMLY rolls; a zone's env bank (EnvScene.WeatherIds[32], read live)
-            // carries MORE — trial/story "phase" weathers that render NATIVELY (in-bank → ApplyWeather is safe, no
-            // resource-loader fault) yet never appear in the rate table. Medias Res carries ~10 such states but
-            // WeatherRate shows only Fair Skies. These are NOT guessable exotics (that's the "extra presets" grid for
-            // FOREIGN weathers needing a cram) — they're native to THIS map, so they belong in the ordinary dropdown,
-            // shown for everyone. Deduped against everything already listed above; live-read so it tracks the loaded
-            // zone regardless of the sheet-derived mapWeatherChoices.
-            var wShown = new System.Collections.Generic.HashSet<byte> { 0 };
-            if (mapDefaultWeather != 0) wShown.Add(mapDefaultWeather);
-            if (mapWeatherChoices != null) foreach (var (wid, _) in mapWeatherChoices) wShown.Add(wid);
-            // Native-ONLY pick for promoted states: these render natively and must never fall through to the cram path.
-            // (Routing them through Pick/SetWeatherUnified caused the dark-map bug — see MapSettings.SetWeatherNativeOnly.)
-            void PickNative(byte wid)
-            {
-                config.MapWeatherId = wid; config.MapWeatherDonor = 0; config.Save();   // b183: promoted native state = static, no graft donor
-                MapSettings.StopKfGraft();               // a native-bank pick must not leave a city-variant graft running over it
-                MapSettings.SetWeatherNativeOnly(wid);
-                RunCommand?.Invoke("mapweather", wid.ToString());
-            }
-            bool bankHdr = false;
-            foreach (var bid in MapSettings.GetLoadedBankWeatherIds())
-            {
-                if (!wShown.Add(bid)) continue;   // already offered above
-                if (!bankHdr) { ImGui.Separator(); ImGui.TextDisabled("This map's states"); bankHdr = true; }
-                // Name (id): env-bank phases reuse generic names ("Fair Skies" ×N) — the id disambiguates distinct states.
-                if (ImGui.Selectable(MapSettings.WeatherName(bid) + " (" + bid + ")##wb" + bid, bid == curW)) PickNative(bid);
-            }
-            ImGui.EndCombo();
-        }
-        // b177: the extra-preset grid is now a SET-ONCE COLLAPSIBLE (was a right-aligned "Show more presets" link). It's a
-        // wall of ~70 momentary cram chips you configure once, so it collapses out of the way of the day-to-day controls
-        // below. showAllWeather tracks the header's open state (kept as the field so the zone-hop invalidation at ~line 1245
-        // and the lazy rebuild below still key off it). b168: no longer DEBUG-gated — the cram/day-set feature is proven.
-        ImGui.Spacing();
-        showAllWeather = InsetCollapsingHeader("Extra presets##extrapresets");
-        // Rebuild the full list if it's on but was invalidated by a zone change (so the grid persists across hops).
-        if (showAllWeather && mapAllWeather == null) mapAllWeather = MapSettings.GetZoneWeathers(loadedZone, true);
-        if (showAllWeather && mapAllWeather != null)
+    // b226: the shared "Extra presets" body - the ~70-chip crammable-weather A-Z grid plus the city-variant day-night
+    // donor sub-block. Extracted from DrawTimeAndWeather so BOTH the inline collapsible AND the torn-off window
+    // (DrawWeatherPresetsWindow) render the identical grid and drive the same apply path (ApplyWeatherPresetImpl /
+    // ApplyCityGraftImpl). `local` selects the local-cinematic apply route; pickW/pickD drive the chip accents.
+    private void DrawWeatherPresetBody(uint tt, uint loadedZone, bool local, byte pickW, uint pickD)
+    {
+        if (MapSettings == null) return;
+        // Rebuild the full flagged list if it's null (invalidated by a zone change) so the grid persists across hops.
+        if (mapAllWeather == null) mapAllWeather = MapSettings.GetZoneWeathers(loadedZone, true);
+        if (mapAllWeather != null)
         {
             var extras = new System.Collections.Generic.List<(byte wid, string name)>();
             foreach (var (ewid, ename, elegal) in mapAllWeather)
@@ -1480,23 +1419,13 @@ public class HMSyncUI
                 // Donor==0 guard keeps a city-variant pick (donor!=0, accented in its own grid below) from ALSO lighting
                 // the plain chip for the same weather.
                 bool hasPreset = MapSettings.HasPreset(e.wid);
-                bool isActive = config.MapWeatherId == e.wid && config.MapWeatherDonor == 0;
+                bool isActive = pickW == e.wid && pickD == 0;
                 PushChipColors(isActive, hasPreset);
+                // b183: asterisked (genuinely-cycling) → day-night graft; else a static cram. LIVE broadcasts; LOCAL
+                // applies the same route on this client only (see ApplyWeatherPresetImpl). Embedded keyframe library +
+                // shared Eorzea clock keep a grafted sky in lockstep across peers.
                 if (ImGui.Button(clabel + "##wc" + e.wid, new Vector2(cw, 0f)))
-                {
-                    config.MapWeatherId = e.wid; config.MapWeatherDonor = 0; config.Save();
-                    if (hasKf)
-                    {
-                        // b183: asterisked (genuinely-cycling) → engage the day-night graft locally AND broadcast it. The
-                        // keyframe library now ships EMBEDDED (b182), so donor 0 = "first available donor" resolves to the
-                        // SAME set on every peer, and the shared Eorzea clock drives an identical lerp → the crammed sky
-                        // travels the sun in lockstep. mapweather with no donor token broadcasts donor 0 (this general case).
-                        MapSettings.SetWeatherOrGraft(e.wid);
-                        RunCommand?.Invoke("mapweather", e.wid.ToString());
-                    }
-                    else
-                    { MapSettings.SetWeatherUnified(e.wid); RunCommand?.Invoke("mapweather", e.wid.ToString()); }
-                }
+                    ApplyWeatherPresetImpl(local, e.wid, hasKf);
                 if (ImGui.IsItemHovered())
                     ImGui.SetTooltip((MapSettingsService.AvfxSafeWeatherIds.Contains(e.wid)
                         ? "Weather " + e.wid + " — avfx-safe: taps spawn its native doodads" + (hasPreset ? " under the crammed sky." : " (bake a preset for a correct sky under them).")
@@ -1516,11 +1445,17 @@ public class HMSyncUI
         // engages that specific donor's day-night graft (travels the sun through that city's full day). Only appears once
         // wxkfcities has populated at least one cycling donor set — the section is invisible on a fresh install (no walls).
         var cityWeathers = MapSettings.WeathersWithDonorVariants;
-        // b177: city sky variants are their own SET-ONCE COLLAPSIBLE (was an always-open TextDisabled block). Like the extra
-        // presets above, a city sky is something you pick once and leave; the collapsible keeps it from crowding the music /
-        // time controls below. The header only appears once wxkfcities has populated at least one cycling donor set.
-        if (cityWeathers != null && cityWeathers.Count > 0 && InsetCollapsingHeader("City sky variants##cityvariants"))
+        // b223: FOLDED into the "Extra presets" collapsible (was its own "City sky variants##cityvariants" CollapsingHeader).
+        // The two set-once weather collapsibles were redundant, so the day-night donor skies now NEST under the same header
+        // as the static extra presets, as a grouped sub-block below the A–Z grid — one expandable weather section instead of
+        // two. Kept keyed off WeathersWithDonorVariants (NOT the extras' zone-legal filter): a donor'd spine weather can be
+        // native/legal in THIS zone and thus absent from the crammable grid above, yet its city donors must still be offered.
+        if (cityWeathers != null && cityWeathers.Count > 0)
         {
+            ImGui.Spacing();
+            InsetSeparator();
+            ImGui.TextDisabled("City sky variants — day-night donor skies");
+            ImGui.Spacing();
             float dvAvail = ImGui.GetContentRegionAvail().X;
             const float dvGap = 6f;
             foreach (var w in cityWeathers)
@@ -1544,17 +1479,13 @@ public class HMSyncUI
                     // zone hop, so the accent tracks the genuinely-running graft, not a stale last-tap. Every city chip
                     // has a captured donor set, so all are "available" → same accent-gradient language as the extra-preset
                     // grid (full accent = active, darkened accent = available), one consistent "this is on" look.
-                    bool dvActive = config.MapWeatherId == w && config.MapWeatherDonor == d;
+                    bool dvActive = pickW == w && pickD == d;
                     PushChipColors(dvActive, available: true);
+                    // b183: engage this city's day-night graft. LIVE broadcasts (weather, donor); LOCAL runs the same
+                    // graft on this client only (see ApplyCityGraftImpl). Embedded keyframe library + shared clock keep it
+                    // in lockstep across peers when synced.
                     if (ImGui.Button(dvLabel + "##dv" + w + "_" + d, new Vector2(dvw, 0f)))
-                    {
-                        config.MapWeatherId = w; config.MapWeatherDonor = d; config.Save();
-                        // b183: engage this city's day-night graft locally AND broadcast (weather, donor). The keyframe
-                        // library ships embedded, so every peer re-engages the SAME donor set against the shared Eorzea
-                        // clock — the city sky travels the sun identically on all clients. mapweather carries the donor token.
-                        MapSettings.SetWeatherOrGraft(w, d);
-                        RunCommand?.Invoke("mapweather", w + " " + d);
-                    }
+                        ApplyCityGraftImpl(local, w, d);
                     if (ImGui.IsItemHovered())
                         ImGui.SetTooltip(dvName + " — day-night graft: travels the sun through this city's full day.");
                     ImGui.PopStyleColor(4);
@@ -1562,6 +1493,236 @@ public class HMSyncUI
                     dvfirst = false;
                 }
                 ImGui.Spacing();
+            }
+        }
+    }
+
+    // b226: the torn-off "Extra presets" window. Registered as its own UiBuilder.Draw callback (like the Carpet / Face /
+    // Movement / Appearance tear-offs), so it survives tab switches and doesn't vanish when the Map Control tab isn't the
+    // active one. Renders only when weatherPresetsPoppedOut. It recomputes the same live/local context DrawTimeAndWeather
+    // does (so the grid tracks the loaded synthetic zone when live, the real zone when local) and drives the shared body.
+    public void DrawWeatherPresetsWindow()
+    {
+        if (!weatherPresetsPoppedOut || MapSettings == null) return;
+        uint loadedZone = CurrentLoadedZone?.Invoke() ?? 0;
+        bool live = (CanLoad?.Invoke() ?? false) && loadedZone != 0;
+        bool local = !live && (DebugMode?.Invoke() ?? false) && !relay.IsSessionActive && (CurrentRealTerritory?.Invoke() ?? 0) != 0;
+        uint tt = live ? loadedZone : (CurrentRealTerritory?.Invoke() ?? 0);
+
+        // Accent the title bar so the tear-off follows the accent config, like the other tear-offs.
+        var acc = Accent();
+        ImGui.PushStyleColor(ImGuiCol.TitleBg, Darken(acc, 0.32f));
+        ImGui.PushStyleColor(ImGuiCol.TitleBgActive, Darken(acc, 0.55f));
+        ImGui.SetNextWindowSize(new Vector2(360, 460), ImGuiCond.FirstUseEver);
+        if (!ImGui.Begin("Weather presets##hmswxpresets", ref weatherPresetsPoppedOut))
+        {
+            ImGui.End();
+            ImGui.PopStyleColor(2);
+            return;
+        }
+        if (!live && !local)
+            ImGui.TextDisabled("Load a map to adjust its weather presets.");
+        else
+        {
+            RefreshWeatherCacheFor(tt);
+            byte pickW = local ? localPickWeather : config.MapWeatherId;
+            uint pickD = local ? localPickDonor : config.MapWeatherDonor;
+            DrawWeatherPresetBody(tt, loadedZone, local, pickW, pickD);
+        }
+        ImGui.End();
+        ImGui.PopStyleColor(2);
+    }
+
+    // Time & weather for the CURRENTLY LOADED map (the "load it, adjust, save" model - no territory selector). Time as
+    // HH:MM with Freeze on the same row; weather from the loaded map's legal set.
+    private void DrawTimeAndWeather()
+    {
+        if (MapSettings == null) { ImGui.TextDisabled("Unavailable."); return; }
+        uint loadedZone = CurrentLoadedZone?.Invoke() ?? 0;
+        bool live = (CanLoad?.Invoke() ?? false) && loadedZone != 0;
+        // OUT-OF-SESSION LOCAL CINEMATIC (Debug mode, no session): time / weather / BGM / lights / VFX are ALL
+        // purely-local scene writes (EnvManager weather, the Brio time-freeze hook, scene-0 BGM playback, the layout
+        // light/VFX suppressor), so with no map loaded they can still drive the REAL zone the player stands in - the
+        // same cosmetic surface Weatherman / Orchestrion offer, mogging both. In this mode nothing is persisted as a
+        // map setting and nothing is broadcast (there are no peers); the NPC-hide and spawn/teleport controls stay
+        // loaded-map / session features and are omitted below. `local` selects that path; `tt` is the zone the
+        // controls act on either way (the loaded synthetic zone when live, the real current zone when local).
+        bool local = !live && (DebugMode?.Invoke() ?? false) && !relay.IsSessionActive && (CurrentRealTerritory?.Invoke() ?? 0) != 0;
+        if (!live && !local) { ImGui.TextDisabled("Load a map to adjust its time and weather."); return; }
+        uint tt = live ? loadedZone : (CurrentRealTerritory?.Invoke() ?? 0);
+
+        // Rebuild the loaded map's weather list when the loaded zone changes. (Weather is settled to default on the
+        // load event itself in DoLoad, so a stale weather can't bleed across a map change - no sanitise needed here.)
+        RefreshWeatherCacheFor(tt);   // b226: shared with the pop-out preset window so both invalidate the caches identically
+
+        // Weather apply helpers - the ONE difference between live and local. LIVE writes the pick to config + Save +
+        // broadcasts via RunCommand("mapweather", …) (host-authoritative, synced, applied by DoMapWeather). LOCAL runs
+        // the SAME crash-safe MapSettings route directly, records the pick for grid accenting only, and neither
+        // persists nor broadcasts (there are no peers). The combos/grids below call these, so their layout is single-sourced.
+        byte pickW = local ? localPickWeather : config.MapWeatherId;   // "active pick" for chip accents
+        uint pickD = local ? localPickDonor : config.MapWeatherDonor;
+        void ApplyWeatherStatic(byte wid)   // plain static pick (donor 0): SetWeatherOrGraft(wid,0) stops any graft too
+        {
+            if (local) { localPickWeather = wid; localPickDonor = 0; MapSettings.SetWeatherOrGraft(wid, 0); return; }
+            config.MapWeatherId = wid; config.MapWeatherDonor = 0; config.Save();
+            MapSettings.SetWeatherOrGraft(wid, 0);
+            RunCommand?.Invoke("mapweather", wid.ToString());
+        }
+        void ApplyWeatherNative(byte wid)   // promoted native-bank state: must NOT fall through the cram path (dark-map bug)
+        {
+            if (local) { localPickWeather = wid; localPickDonor = 0; MapSettings.StopKfGraft(); MapSettings.SetWeatherNativeOnly(wid); return; }
+            config.MapWeatherId = wid; config.MapWeatherDonor = 0; config.Save();
+            MapSettings.StopKfGraft();
+            MapSettings.SetWeatherNativeOnly(wid);
+            RunCommand?.Invoke("mapweather", wid.ToString());
+        }
+        // b226: the extra-preset + city-graft apply logic moved to ApplyWeatherPresetImpl / ApplyCityGraftImpl (private
+        // methods) so the pop-out preset window (DrawWeatherPresetsWindow) can drive the SAME apply path as the inline
+        // grid. ApplyWeatherStatic / ApplyWeatherNative stay local closures (only the native combo above uses them).
+
+        // Zone header - the map these controls act on. "Zone: <name> (ID)".
+        {
+            string? stg2 = local ? null : CurrentStageName?.Invoke();
+            string? stg2Tag = local ? null : CurrentStageTag?.Invoke();
+            string zn = !string.IsNullOrEmpty(stg2) ? stg2 : MapSettings.GetZoneName(tt);
+            string znId = !string.IsNullOrEmpty(stg2Tag) ? stg2Tag! : tt.ToString();   // NB-37: cutscene's tag, not donor id
+            ImGui.TextDisabled("Zone:");
+            ImGui.SameLine();
+            ImGui.TextUnformatted((string.IsNullOrEmpty(zn) ? "Unnamed" : zn) + " (" + znId + ")");
+        }
+        ImGui.Spacing();
+
+        // Time: HH:MM slider (0..1439) + Freeze + reset. Moving the slider AUTO-FREEZES (pins) the time - RP scenes need
+        // a static sky, and the Eorzea clock races (~20x real), so dragging to a time you want and having it hold is the
+        // desired default. Uncheck Freeze (or hit reset) to release the override and let the real clock resume.
+        // DISPLAY: always read the LIVE Eorzea clock (GetEorzeaTimeOfDay reads ClientTime.EorzeaTime). When frozen the
+        // clock IS the held value (the Brio hook pins it), when not it's the real marching time. Reading the live clock
+        // on BOTH host and peer means the displayed integers match exactly - they read the same underlying field, which
+        // the freeze holds identically on every client. (Reading config here instead diverged from the peer's live read
+        // and made the on-load integers briefly disagree even though the sky was synced.)
+        int totalMin;
+        {
+            var (lh, lm) = MapSettings.GetEorzeaTimeOfDay();
+            totalMin = (lh * 60 + lm) % 1440;
+        }
+        int sliderVal = totalMin;
+        string hhmm = (sliderVal / 60).ToString("D2") + ":" + (sliderVal % 60).ToString("D2");
+        // Reset button - release the freeze, real clock resumes.
+        if (ImGuiComponents.IconButton("##timereset", FontAwesomeIcon.UndoAlt))
+        {
+            if (local) MapSettings.DisableTimeOverride();   // release the local freeze - the real clock resumes
+            else SetHostTime?.Invoke(config.MapEorzeaHour, config.MapEorzeaMinute, false);   // forced=false → unfreeze
+        }
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Reset to the real, flowing Eorzea time.");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(210);
+        bool sliderChanged = ImGui.SliderInt("##maptime", ref sliderVal, 0, 1439, hhmm);
+        if (sliderChanged)
+        {
+            // Dragging pins the time (auto-freeze). One silent path: SetHostTime updates config + applies locally +
+            // bumps the map-state epoch so peers get THIS value on the next transform - no chat spam, no separate
+            // mirror. Called every drag frame; each epoch bump carries the new value to peers. LOCAL: no config / no
+            // epoch - just pin the Brio freeze at the dragged time on this client.
+            if (local) MapSettings.ApplyTime((ushort)(sliderVal / 60), (byte)(sliderVal % 60));
+            else SetHostTime?.Invoke((ushort)(sliderVal / 60), (byte)(sliderVal % 60), true);
+        }
+        TimeDragHold = ImGui.IsItemActive();
+        ImGui.SameLine();
+        bool timeForced = local ? MapSettings.IsTimeOverridden() : config.MapTimeForced;
+        if (ImGui.Checkbox("Freeze", ref timeForced))
+        {
+            if (timeForced)
+            {
+                // Freeze pins the time showing RIGHT NOW (capture the live clock, not a stale stored value).
+                if (local) MapSettings.FreezeAtCurrent();
+                else { var (nh, nm) = MapSettings.GetEorzeaTimeOfDay(); SetHostTime?.Invoke((ushort)nh, (byte)nm, true); }
+            }
+            else if (local) MapSettings.DisableTimeOverride();
+            else SetHostTime?.Invoke(config.MapEorzeaHour, config.MapEorzeaMinute, false);
+        }
+        bool timeFrozenNow = local ? MapSettings.IsTimeOverridden() : config.MapTimeForced;
+        if (timeFrozenNow)
+            ImGui.TextDisabled("Time frozen at " + hhmm + ". Uncheck Freeze or reset to resume the real clock.");
+        else
+            ImGui.Dummy(new Vector2(0f, ImGui.GetTextLineHeightWithSpacing()));   // a slider + time is self-explanatory; keep the space, no how-to text
+
+        // Weather. The dropdown's DISPLAYED value is the LIVE weather the engine is rendering (GetActiveWeather), so it
+        // always matches the sky - even the map's natural weather on load, which the host never explicitly picked.
+        // Picking applies LIVE (ApplyWeather writes EnvManager directly). "None - Atmospheric" (0) is a synthetic forced
+        // blank the host can choose; it only reads as the selected row when the live weather is actually 0.
+        byte liveW = MapSettings.GetActiveWeather();
+        byte curW = liveW;   // the dropdown mirrors reality, not a stored preference
+        string curWName = curW == 0 ? "None - Atmospheric"
+            : (curW == mapDefaultWeather ? MapSettings.WeatherName(curW) + " (native)" : MapSettings.WeatherName(curW));
+        ImGui.TextDisabled("Weather");
+        ImGui.SetNextItemWidth(-PanelPad);
+        // v0.7.474: HeightLarge. The default combo popup is ~8 rows; 958 has 9 legal weathers once CutScene is
+        // promoted, so the promoted entry - appended last by design - fell below the scroll fold and read as
+        // "the promotion didn't work". Promotions will always land last, so this must not clip.
+        if (ImGui.BeginCombo("##mapweather", curWName, ImGuiComboFlags.HeightLarge))
+        {
+            void Pick(byte wid) => ApplyWeatherStatic(wid);   // live: config+broadcast · local: direct EnvManager write (see ApplyWeatherStatic)
+
+            if (ImGui.Selectable("None - Atmospheric", curW == 0)) Pick(0);
+            if (mapDefaultWeather != 0 && ImGui.Selectable(MapSettings.WeatherName(mapDefaultWeather) + " (native)", curW == mapDefaultWeather))
+                Pick(mapDefaultWeather);
+            ImGui.Separator();
+
+            if (mapWeatherChoices != null)
+                foreach (var (wid, wname) in mapWeatherChoices)
+                {
+                    if (wid == 0 || wid == mapDefaultWeather) continue;
+                    if (ImGui.Selectable(wname + "##w" + wid, wid == curW)) Pick(wid);
+                }
+
+            // v0.7.475 (2026-08-17): promote the LOADED ZONE'S NATIVE ENV-BANK states into the picker. WeatherRate
+            // lists only the weathers the game RANDOMLY rolls; a zone's env bank (EnvScene.WeatherIds[32], read live)
+            // carries MORE — trial/story "phase" weathers that render NATIVELY (in-bank → ApplyWeather is safe, no
+            // resource-loader fault) yet never appear in the rate table. Medias Res carries ~10 such states but
+            // WeatherRate shows only Fair Skies. These are NOT guessable exotics (that's the "extra presets" grid for
+            // FOREIGN weathers needing a cram) — they're native to THIS map, so they belong in the ordinary dropdown,
+            // shown for everyone. Deduped against everything already listed above; live-read so it tracks the loaded
+            // zone regardless of the sheet-derived mapWeatherChoices.
+            var wShown = new System.Collections.Generic.HashSet<byte> { 0 };
+            if (mapDefaultWeather != 0) wShown.Add(mapDefaultWeather);
+            if (mapWeatherChoices != null) foreach (var (wid, _) in mapWeatherChoices) wShown.Add(wid);
+            // Native-ONLY pick for promoted states: these render natively and must never fall through to the cram path.
+            // (Routing them through Pick/SetWeatherUnified caused the dark-map bug — see MapSettings.SetWeatherNativeOnly.)
+            void PickNative(byte wid) => ApplyWeatherNative(wid);   // promoted native-bank state (see ApplyWeatherNative)
+            bool bankHdr = false;
+            foreach (var bid in MapSettings.GetLoadedBankWeatherIds())
+            {
+                if (!wShown.Add(bid)) continue;   // already offered above
+                if (!bankHdr) { ImGui.Separator(); ImGui.TextDisabled("This map's states"); bankHdr = true; }
+                // Name (id): env-bank phases reuse generic names ("Fair Skies" ×N) — the id disambiguates distinct states.
+                if (ImGui.Selectable(MapSettings.WeatherName(bid) + " (" + bid + ")##wb" + bid, bid == curW)) PickNative(bid);
+            }
+            ImGui.EndCombo();
+        }
+        // b177: the extra-preset grid is now a SET-ONCE COLLAPSIBLE (was a right-aligned "Show more presets" link). It's a
+        // wall of ~70 momentary cram chips you configure once, so it collapses out of the way of the day-to-day controls
+        // below. showAllWeather tracks the header's open state (kept as the field so the zone-hop invalidation at ~line 1245
+        // and the lazy rebuild below still key off it). b168: no longer DEBUG-gated — the cram/day-set feature is proven.
+        // b226: "Extra presets" (the ~70-chip cram grid + city-variant sub-block) can be TORN OFF into its own floating
+        // window (DrawWeatherPresetsWindow) so it stops crowding the day-to-day time / weather / BGM controls.
+        // weatherPresetsPoppedOut flips the two states: DOCKED → the set-once collapsible renders here, with a "Pop out"
+        // button; POPPED → a compact note + "Dock" button here, and the grid lives in the separate window instead. The
+        // grid/city body is shared (DrawWeatherPresetBody) so both hosts drive the identical apply path.
+        ImGui.Spacing();
+        if (weatherPresetsPoppedOut)
+        {
+            ImGui.TextDisabled("Extra presets are in their own window.");
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Dock##dockpresets")) weatherPresetsPoppedOut = false;
+        }
+        else
+        {
+            showAllWeather = InsetCollapsingHeader("Extra presets##extrapresets");
+            if (showAllWeather)
+            {
+                if (ImGui.SmallButton("Pop out##poppresets")) weatherPresetsPoppedOut = true;
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip("Move these presets into their own window so they don't crowd the map controls.");
+                DrawWeatherPresetBody(tt, loadedZone, local, pickW, pickD);
             }
         }
 
@@ -1574,37 +1735,51 @@ public class HMSyncUI
         // instanced zones correctly via CFC→InstanceContent). We do NOT use the live scene read for display: mid-load it
         // returns the previous zone's track (the stale-entry bug). The static default is reliable and refreshes with the
         // loaded zone. config.MapBgmId=0 after load (reset), so a fresh map shows its own default immediately.
-        uint shownTrack = config.MapBgmId != 0 ? config.MapBgmId : MapSettings.GetDefaultBgm(loadedZone);
         uint liveTrack = MapSettings.GetCurrentBgm();
-        bool bgmPlaying = liveTrack != 0;   // for the Stop/Play affordance only
+        // Track to NAME. LIVE: the host's explicit pick, else the zone STATIC default (not the live scene read - mid-load
+        // it returns the previous zone's track). LOCAL (no persisted pick): the currently-PLAYING track if it's real,
+        // else the zone default - so the row names what you'd hear.
+        uint shownTrack = local
+            ? (liveTrack != 0 && liveTrack != 1 ? liveTrack : MapSettings.GetDefaultBgm(tt))
+            : (config.MapBgmId != 0 ? config.MapBgmId : MapSettings.GetDefaultBgm(tt));
         string nowBgm = shownTrack != 0 ? MapSettings.BgmName(shownTrack) : "None";
         ImGui.AlignTextToFramePadding();
         ImGui.TextDisabled("Music:");
         ImGui.SameLine();
-        // Play (▶): resume the map's music. Play the PICKED track (config.MapBgmId) if it's a real track; if nothing is
-        // picked OR the pick is the SILENCE sentinel (1, set by Stop), fall through to the zone default - otherwise Play
-        // after Stop just replays silence and looks dead (the bug). So Play always produces audible music.
+        // Play (▶): resume the map's music. Play the PICKED track if it's a real track; if nothing is picked OR the pick
+        // is the SILENCE sentinel (1, set by Stop), fall through to the zone default - otherwise Play after Stop just
+        // replays silence and looks dead (the bug). LOCAL plays the track directly (scene-0 write); no persist/broadcast.
         if (ImGuiComponents.IconButton("##bgmplay", FontAwesomeIcon.Play))
         {
-            uint picked = config.MapBgmId;
-            uint toPlay = (picked != 0 && picked != 1) ? picked : MapSettings.GetDefaultBgm(loadedZone);
-            config.MapBgmId = toPlay; config.Save(); RunCommand?.Invoke("mapbgm", toPlay.ToString());
+            if (local)
+            {
+                uint toPlay = (liveTrack != 0 && liveTrack != 1) ? liveTrack : MapSettings.GetDefaultBgm(tt);
+                MapSettings.PlayBgm(toPlay);
+            }
+            else
+            {
+                uint picked = config.MapBgmId;
+                uint toPlay = (picked != 0 && picked != 1) ? picked : MapSettings.GetDefaultBgm(tt);
+                config.MapBgmId = toPlay; config.Save(); RunCommand?.Invoke("mapbgm", toPlay.ToString());
+            }
         }
         if (ImGui.IsItemHovered()) ImGui.SetTooltip("Play the selected track (or the zone default if none picked / after Stop).");
         ImGui.SameLine();
-        // Stop (■): actual SILENCE - broadcast the null track (BGM 1) so peers go quiet too. Distinct from Reset, which
-        // restores the zone's own default music. (Writing 0 would make the game re-resolve the default = not silence.)
+        // Stop (■): actual SILENCE. LIVE broadcasts the null track (BGM 1) so peers go quiet too; LOCAL silences here only.
+        // Distinct from Reset, which restores the zone's own default music. (Writing 0 would re-resolve the default = not silence.)
         if (ImGuiComponents.IconButton("##bgmstop", FontAwesomeIcon.Stop))
         {
-            config.MapBgmId = 1; config.Save(); RunCommand?.Invoke("mapbgm", "1");
+            if (local) MapSettings.StopBgm();
+            else { config.MapBgmId = 1; config.Save(); RunCommand?.Invoke("mapbgm", "1"); }
         }
         if (ImGui.IsItemHovered()) ImGui.SetTooltip("Stop: silence the map music (for everyone).");
         ImGui.SameLine();
         // Reset to the zone's default track.
         if (ImGuiComponents.IconButton("##bgmreset", FontAwesomeIcon.UndoAlt))
         {
-            var def = MapSettings.GetDefaultBgm(loadedZone);
-            config.MapBgmId = def; config.Save(); RunCommand?.Invoke("mapbgm", def.ToString());
+            var def = MapSettings.GetDefaultBgm(tt);
+            if (local) MapSettings.PlayBgm(def);
+            else { config.MapBgmId = def; config.Save(); RunCommand?.Invoke("mapbgm", def.ToString()); }
         }
         if (ImGui.IsItemHovered()) ImGui.SetTooltip("Reset to the zone's default music.");
         ImGui.SameLine();
@@ -1612,9 +1787,12 @@ public class HMSyncUI
         ImGui.TextUnformatted(nowBgm);
         // Browse BGM: a full-width button underneath the transport row (was crammed inline after the track name).
         if (ImGui.Button("Browse BGM##bgm", new Vector2(-PanelPad, 0f))) { bgmBrowseFilter = ""; ImGui.OpenPopup("##bgmbrowse"); }
-        DrawBgmBrowsePopup(loadedZone);
+        DrawBgmBrowsePopup(tt, local);
 
-        // NPC scene-cleanup (host-authoritative), folded in here so all scene-presentation controls live together.
+        // NPC scene-cleanup (host-authoritative), folded in here so all scene-presentation controls live together. LOCAL
+        // cinematic omits it - hiding NPCs on the REAL live zone is a session/loaded-map feature, not a cosmetic sky tweak.
+        if (!local)
+        {
         ImGui.Spacing();
         bool npcHide = config.MapRemoveNpcs;
         if (ImGui.Checkbox("Hide NPCs", ref npcHide))
@@ -1640,16 +1818,24 @@ public class HMSyncUI
         if (!canEdit) ImGui.EndDisabled();
         if (npcPickerActive && canEdit)
             ImGui.TextDisabled("Picker on: click a dot in the world. Green = shown, red = hidden.");
+        }   // end if (!local) - NPC-hide controls
 
         // b213: atmosphere toggles, same row layout as Hide NPCs / Hide quest markers above. These mirror the
-        // /hms stagelights and /hms vfxoff runtime toggles (map-global, synced to the session, no host gate — they
-        // work solo too), so the checkbox reflects the live suppression state and a click flips it via the command.
+        // /hms stagelights and /hms vfxoff runtime toggles (map-global, no host gate — they work solo out of session
+        // too, self-gating to instanced content), so the checkbox reflects the live suppression state and a click
+        // flips it via the command (which is allow-listed out of session). Kept in BOTH the live and local paths.
         ImGui.Spacing();
         bool stageOut = StageLightsActive?.Invoke() ?? false;
         if (ImGui.Checkbox("Toggle ambient lights", ref stageOut)) RunCommand?.Invoke("stagelights", null);
         ImGui.SameLine();
         bool vfxHidden = VfxHidden?.Invoke() ?? false;
         if (ImGui.Checkbox("Hide VFX", ref vfxHidden)) RunCommand?.Invoke("vfxoff", null);
+
+        if (local)
+        {
+            ImGui.Spacing();
+            ImGui.TextDisabled("Local only - a cinematic sky for the zone you're in. Not saved or synced.");
+        }
     }
 
     /// <summary>NB-20: the dot-lens NPC picker overlay (ported from Begone!). Registered as a standalone UiBuilder.Draw
@@ -1702,7 +1888,7 @@ public class HMSyncUI
 
     // Two-column searchable BGM picker in a popup - the smart alternative to a giant dropdown. Search by title, click
     // to play. Populated from the Orchestrion-named track list.
-    private void DrawBgmBrowsePopup(uint loadedZone)
+    private void DrawBgmBrowsePopup(uint tt, bool local)
     {
         // Anchor the popup to a STABLE position (just below the Browse button's left edge), not the mouse-click point -
         // ImGui popups otherwise open at the cursor, so the corner landed wherever in the button you happened to click.
@@ -1717,7 +1903,7 @@ public class HMSyncUI
         ImGui.InputTextWithHint("##bgmsearch", "Search by name\u2026", ref bgmBrowseFilter, 128);
         ImGui.Separator();
 
-        var choices = MapSettings!.GetBgmChoices(MapSettings.GetDefaultBgm(loadedZone));
+        var choices = MapSettings!.GetBgmChoices(MapSettings.GetDefaultBgm(tt));
         var q = bgmBrowseFilter.Trim();
 
         // ONE scroll region, ONE column. The two-column layout needed an inner child per column → nested scrollbars
@@ -1728,10 +1914,10 @@ public class HMSyncUI
             foreach (var (id, name) in choices)
             {
                 if (q.Length > 0 && !name.Contains(q, StringComparison.OrdinalIgnoreCase)) continue;
-                if (ImGui.Selectable(name + "##bgm" + id, config.MapBgmId == id))
+                if (ImGui.Selectable(name + "##bgm" + id, (local ? MapSettings.GetCurrentBgm() : config.MapBgmId) == id))
                 {
-                    config.MapBgmId = id; config.Save();
-                    RunCommand?.Invoke("mapbgm", id.ToString());
+                    if (local) MapSettings.PlayBgm(id);   // local cinematic: play on this client only, no persist/broadcast
+                    else { config.MapBgmId = id; config.Save(); RunCommand?.Invoke("mapbgm", id.ToString()); }
                     ImGui.CloseCurrentPopup();
                 }
             }
@@ -2173,6 +2359,22 @@ ImGui.Spacing();
                 ImGui.EndPopup();
             }
             ImGui.SameLine(); ImGui.AlignTextToFramePadding(); ImGui.TextDisabled("custom");
+        }
+        EndPanel();
+
+        // ── Server info bar ── b225: optional weather readout in the DTR bar (Dalamud's server-info strip), like the
+        // Weatherman plugin. Off by default. Flipping it calls ReloadWeatherDtr so the entry appears/disappears at once.
+        BeginPanel("Server info bar");
+        {
+            bool wxDtr = config.ShowWeatherDtr;
+            if (ImGui.Checkbox("Show weather", ref wxDtr))
+            {
+                config.ShowWeatherDtr = wxDtr;
+                config.Save();
+                ReloadWeatherDtr?.Invoke();
+            }
+            ImGui.SameLine(); ImGui.TextDisabled("current weather in the server-info bar");
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Adds the current weather name to Dalamud's server-info bar (top-right). Click it to pop out the weather presets.");
         }
         EndPanel();
 
@@ -2643,14 +2845,15 @@ ImGui.Spacing();
     };
 
     // v0.7.235: curated Seaships chip - ship-deck and voyage territories (thematic, RP-friendly, not something you'd
-    // want to hunt for by ID). Two ship cutscene stages (o1e1 Endless Ocean, s1e7 Limsa intro ship) are appended in
-    // the Seaships view like the All-tab cutscene fold-in.
+    // want to hunt for by ID). Ship cutscene stages (o1e1 Endless Ocean, s1e7 Limsa intro ship, o3e2 Seaship) are
+    // appended in the Seaships view like the All-tab cutscene fold-in - a stage can live in BOTH its region group and
+    // here, since the Seaships chip collects sailing venues regardless of their home region (NB-38).
     private static readonly HashSet<uint> SeashipTerritories = new() { 1142, 708, 680, 900, 1206 };
     private static readonly HashSet<string> SeashipCutsceneBgs = new()
     {
         "ffxiv/ocn_o1/evt/o1e1/level/o1e1",   // Endless Ocean (o1e1)
         "ffxiv/sea_s1/evt/s1e7/level/s1e7",   // Limsa Lominsa intro ship (s1e7)
-        "ex2/03_ocn_o3/evt/o3e2/level/o3e2",   // The Next Ship to Sail (o3e2)
+        "ex2/03_ocn_o3/evt/o3e2/level/o3e2",  // Seaship (o3e2) - NB-38
     };
     // Cutscene stages (populated by the plugin from CutsceneStageService). OnLoadCutscene loads by index.
     public struct CutsceneEntry { public string Name; public string Region; public string Quest; public string Code; public string Bg; public uint Id; public int Index; }

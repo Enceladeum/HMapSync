@@ -64,6 +64,11 @@ public sealed unsafe class LightsOutService : IDisposable
     // (city, overworld, dungeon), not just instanced content. No map ⇒ no layout to touch ⇒ refuse. Replaces the old
     // instanced-content (ContentFinderCondition) gate, which wrongly refused VFX-heavy cities.
     private readonly Func<bool> mapLoaded;
+    // b221: out-of-session local-cinematic exception. When there's no HMS map loaded but we're out of session in Debug
+    // mode, the game's OWN layout (LayoutWorld->ActiveLayout) IS the real zone the player stands in — walking it and
+    // blacking its lights/VFX is exactly the local cinematic the other cosmetic levers do. So GateLoaded/Tick treat
+    // this as "loaded" for the purpose of touching the layout. Wired as `!relay.IsSessionActive && config.ShowDebugCommands`.
+    private readonly Func<bool> localCinematicAllowed;
     private readonly IPluginLog log;
     private readonly Func<ulong> localContentId;
     private readonly Action<string> chatPrint;
@@ -88,12 +93,13 @@ public sealed unsafe class LightsOutService : IDisposable
     private uint lastTerritory;   // zone-change edge detector for the per-tick cache flush
 
     public LightsOutService(RelaySyncService relay, IFramework framework, Func<uint> loadedTerritory,
-        Func<bool> mapLoaded, IPluginLog log, Func<ulong> localContentId, Action<string> chatPrint)
+        Func<bool> mapLoaded, Func<bool> localCinematicAllowed, IPluginLog log, Func<ulong> localContentId, Action<string> chatPrint)
     {
         this.relay = relay;
         this.framework = framework;
         this.loadedTerritory = loadedTerritory;
         this.mapLoaded = mapLoaded;
+        this.localCinematicAllowed = localCinematicAllowed;
         this.log = log;
         this.localContentId = localContentId;
         this.chatPrint = chatPrint;
@@ -165,7 +171,7 @@ public sealed unsafe class LightsOutService : IDisposable
             lastTerritory = tt;
         }
         if (!stageSuppressed && !vfxSuppressed) return;
-        if (!mapLoaded()) return;
+        if (!mapLoaded() && !localCinematicAllowed()) return;   // b221: keep re-asserting on the real zone out of session
         ReassertLights();
         ReassertVfx();
     }
@@ -393,7 +399,7 @@ public sealed unsafe class LightsOutService : IDisposable
     // simply "is a map loaded", not a territory-type filter (a city full of VFX is as valid a target as a dungeon).
     private bool GateLoaded()
     {
-        if (mapLoaded()) return true;
+        if (mapLoaded() || localCinematicAllowed()) return true;   // b221: allow the out-of-session local cinematic (Debug mode)
         chatPrint("[HMSync] Lights-out only works while a map is loaded.");
         return false;
     }

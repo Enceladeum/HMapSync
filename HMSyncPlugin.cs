@@ -28,6 +28,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     private readonly IGameGui gameGui;   // S316: for carpet orientation-ring WorldToScreen overlay
     private readonly ITextureProvider textureProvider;   // S322e: emote-browser icons
     private readonly IAddonLifecycle addonLifecycle;   // v0.7.339: mount-HUD icon click-to-dismount
+    private readonly IDtrBar dtrBar;   // b225: server-info-bar (DTR) weather readout
 
     private readonly HMSyncConfig config;
     private readonly RelaySyncService relay;
@@ -55,6 +56,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     private readonly DisguiseSyncService disguiseSync;   // FEAT-R2: HDM ⇄ relay disguise-sync bridge
     private readonly LightsOutService lightsOut;   // Q-0010: instanced-dungeon stage-light / flame-VFX suppression, synced to peers (0x56)
     private readonly LobbyNameplateSyncService lobbyNameplate;   // b195: Moniker nameplate sync in the lobby (out of map)
+    private readonly WeatherDtrService weatherDtr;   // b225: optional server-info-bar readout of the displayed weather
     private readonly NpcVisibilityService npcVisibility;   // S328aa: host-authoritative NPC scene-cleanup
     private readonly NetStatsService netStats;   // S328ag: relay bandwidth instrumentation
     private readonly RelayHealthService relayHealth;   // background /health poll → relay traffic-light
@@ -98,7 +100,8 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         IClientState clientState,
         IGameGui gameGui,
         ITextureProvider textureProvider,
-        IAddonLifecycle addonLifecycle)
+        IAddonLifecycle addonLifecycle,
+        IDtrBar dtrBar)
     {
         this.pluginInterface = pluginInterface;
         this.commands = commands;
@@ -113,6 +116,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         this.gameGui = gameGui;
         this.textureProvider = textureProvider;
         this.addonLifecycle = addonLifecycle;
+        this.dtrBar = dtrBar;
 
         config = pluginInterface.GetPluginConfig() as HMSyncConfig ?? new HMSyncConfig();
         config.MigrateRecentZones();   // v0.7.231: forward-migrate legacy RecentZones → RecentPlaces (idempotent)
@@ -178,6 +182,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         lightsOut = new LightsOutService(relay, framework,
             () => zoneLoad!.IsZoneLoaded ? zoneLoad!.CurrentLoadedZone : clientState.TerritoryType,
             () => zoneLoad!.IsZoneLoaded,   // gate: works on ANY loaded HMS map (city/overworld/dungeon), not just instanced content
+            () => !relay.IsSessionActive && config.ShowDebugCommands,   // b221: out-of-session local-cinematic exception (walk the real zone's own layout in Debug)
             log, LocalContentId, s => chat.Print(s));
         // NOTE: puppet POSSESSION (drive an NPC from the DM's MoveController intent while the DM body stays static) is
         // owned by HDM, not HMS. HMS's role is peer sync only: when HDM drives a possessed puppet it fires PuppetMoved
@@ -576,6 +581,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             Carpet = carpet,   // S315: Carpet tab binds live to the service
             MapSettings = mapSettings,   // S326: Map Settings tab reads legal weather / BGM names per territory
             CurrentLoadedZone = () => zoneLoad.CurrentLoadedZone,   // S326d: live-vs-prep mode discrimination
+            CurrentRealTerritory = () => clientState.TerritoryType,   // b220: out-of-session weather presets act on the REAL zone we stand in
             CurrentStageName = () => zoneLoad.ActiveStageBg != null ? cutscene.GetStageName(zoneLoad.ActiveStageBg) : null,   // v0.7.340: cutscene name for the Zone: header
             CurrentStageTag = () => zoneLoad.ActiveStageBg != null ? StageTagFromBg(zoneLoad.ActiveStageBg) : null,   // NB-37: cutscene's OWN tag (e3e4) for the Zone: header paren, not the donor territory id
             MovementAllowed = () => MovementEnableAllowed(),        // v0.7.262: one gate for all movement buttons
@@ -687,8 +693,16 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         pluginInterface.UiBuilder.Draw += ui.DrawFaceControlBar;  // dynamic face control tear-off
         pluginInterface.UiBuilder.Draw += ui.DrawMovementBar;      // v0.7.465: movement strip tear-off
         pluginInterface.UiBuilder.Draw += ui.DrawAppearanceBar;    // v0.7.465: appearance strip tear-off
+        pluginInterface.UiBuilder.Draw += ui.DrawWeatherPresetsWindow;  // b226: torn-off "Extra presets" weather window
         pluginInterface.UiBuilder.OpenMainUi += ui.OpenMain;       // installer "Open" button → window on Session tab
         pluginInterface.UiBuilder.OpenConfigUi += ui.OpenConfig;   // installer "Settings" button → window on Config tab
+
+        // b225: optional server-info-bar (DTR) weather readout, like Weatherman's "clear skies" entry. Off by default;
+        // the Config tab toggle flips config.ShowWeatherDtr and calls Reload() to create/remove the entry. Text tracks
+        // the currently displayed weather (real zone out of session, authored/synced value in a session); clicking it
+        // opens HMS's Map Control tab. Driven by weatherDtr.Tick() from OnFrameworkUpdate (framework thread).
+        weatherDtr = new WeatherDtrService(dtrBar, mapSettings, () => config.ShowWeatherDtr, () => ui.OpenWeatherPresets(), log);
+        ui.ReloadWeatherDtr = () => weatherDtr.Reload();   // Config-tab toggle hook
 
         framework.Update += OnFrameworkUpdate;
 
@@ -764,6 +778,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // gating: no-op unless config.SyncLobbyNameplates && connected && room-joined && NOT in a loaded map.
         lobbyNameplate.Tick();
         lightsOut.Tick();   // Q-0010: hold the dungeon light/flame suppression against re-streaming; idle no-op unless active
+        weatherDtr.Tick();  // b225: refresh the server-info-bar weather readout (change-gated; idle no-op unless enabled)
 
         // b140 Path I: hold the donor-bank handle swap in EnvSpace+0x90 against any per-frame zone reassert (no-op unless
         // a wxcyclecram is active). Runs before the zone-change clear below so a real hop still tears it down cleanly.
@@ -1185,6 +1200,9 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 case "stagelights":// Q-0010: local dungeon light suppression (broadcasts only if connected; useful solo too)
                 case "vfxoff":     // Q-0010: local dungeon UNIVERSAL VFX suppression (broadcasts only if connected; useful solo too)
                 case "vfxlist":    // Q-0010: read-only VFX dry-run — full list to log, flame-token tagged (diagnostic; harmless solo)
+                case "mapweather": // b221: local cinematic sky on the REAL zone — purely-local EnvManager write, self-gated to Debug mode in DoMapWeather (no session/host needed)
+                case "maptime":    // b221: local cinematic time freeze — purely-local Brio hook, self-gated to Debug mode in DoMapTime
+                case "mapbgm":     // b221: local cinematic BGM — purely-local scene-0 write, self-gated to Debug mode in DoMapBgm
                     break; // allowed outside a session
                 default:
                     chat.Print("[HMSync] Not in a session. Use /hms start or /hms join <code> first.");
@@ -3903,7 +3921,11 @@ public sealed class HMSyncPlugin : IDalamudPlugin
 
     private void DoMapWeather(string? arg)
     {
-        if (!relay.HasMapAuthority) { chat.Print("[HMSync] Only the host can set map weather."); return; }
+        // Weather is a purely-local cinematic write (EnvManager for the zone you're standing in), so it needs neither a
+        // session nor a loaded synthetic map. OUT of a session with Debug mode on, treat it as a standalone local scene
+        // tweak: apply live but don't persist it as the saved map weather and don't broadcast (there are no peers).
+        bool localCinematic = !relay.IsSessionActive && config.ShowDebugCommands;
+        if (!relay.HasMapAuthority && !localCinematic) { chat.Print("[HMSync] Only the host can set map weather."); return; }
         // b183: optional second token = day/night sky-graft donor tt ("mapweather <id> <donor>"). Absent/0 = static weather
         // (the plain manual case). The UI's city sky-variant chip passes the donor so the graft engages + broadcasts.
         var toks = (arg ?? "").Trim().Split(new[] { ' ' }, System.StringSplitOptions.RemoveEmptyEntries);
@@ -3911,6 +3933,13 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         { chat.Print("[HMSync] Usage: /hms mapweather <id> [donor] (0 = None/atmospheric)."); return; }
         uint donor = 0;
         if (toks.Length > 1) uint.TryParse(toks[1], out donor);
+        if (localCinematic)
+        {
+            // Local-only: apply live via the crash-safe route, no config write, no PushMapState/ArmMapNudge (no peers).
+            mapSettings.SetWeatherOrGraft(wid, donor);
+            chat.Print("[HMSync] Weather set to " + mapSettings.WeatherName(wid) + " (local).");
+            return;
+        }
         config.MapWeatherId = wid;
         config.MapWeatherDonor = donor;
         config.MapWeatherForced = true;   // NB-44: this is an EXPLICIT host pick — peers must apply it (incl. an explicit None=0). Reset to false on the next zone load.
@@ -3926,10 +3955,14 @@ public sealed class HMSyncPlugin : IDalamudPlugin
 
     private void DoMapTime(string? arg)
     {
-        if (!relay.HasMapAuthority) { chat.Print("[HMSync] Only the host can set map time."); return; }
+        // Local cinematic (Debug mode, no session): the time freeze is a purely-local Brio hook, so drive it on the real
+        // zone directly - no config persist, no epoch push (no peers). Mirrors DoMapWeather's localCinematic branch.
+        bool localCinematic = !relay.IsSessionActive && config.ShowDebugCommands;
+        if (!relay.HasMapAuthority && !localCinematic) { chat.Print("[HMSync] Only the host can set map time."); return; }
         var a = arg?.Trim() ?? "";
         if (a.Equals("off", StringComparison.OrdinalIgnoreCase))
         {
+            if (localCinematic) { mapSettings.DisableTimeOverride(); chat.Print("[HMSync] Time hold off (local)."); return; }
             config.MapTimeForced = false;
             PushMapState();
             if (config.ShowDebugCommands) chat.Print("[HMSync] Map time hold off (time flows normally).");
@@ -3941,6 +3974,13 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         if (parts.Length == 0 || !int.TryParse(parts[0], out hour))
         { chat.Print("[HMSync] Usage: /hms maptime <hour 0-23>[:minute] | off"); return; }
         if (parts.Length > 1) int.TryParse(parts[1], out minute);
+        if (localCinematic)
+        {
+            ushort lh = (ushort)Math.Clamp(hour, 0, 23); byte lm = (byte)Math.Clamp(minute, 0, 59);
+            mapSettings.ApplyTime(lh, lm);
+            chat.Print("[HMSync] Time → " + lh + ":" + lm.ToString("D2") + " (local, held).");
+            return;
+        }
         config.MapTimeForced = true;
         config.MapEorzeaHour = (ushort)Math.Clamp(hour, 0, 23);
         config.MapEorzeaMinute = (byte)Math.Clamp(minute, 0, 59);
@@ -3952,11 +3992,20 @@ public sealed class HMSyncPlugin : IDalamudPlugin
 
     private void DoMapBgm(string? arg)
     {
-        if (!relay.HasMapAuthority) { chat.Print("[HMSync] Only the host can set map BGM."); return; }
+        // Local cinematic (Debug mode, no session): BGM playback is a purely-local scene-0 write, so play/silence on the
+        // real zone directly - no config persist, no epoch push (no peers). Mirrors DoMapWeather's localCinematic branch.
+        bool localCinematic = !relay.IsSessionActive && config.ShowDebugCommands;
+        if (!relay.HasMapAuthority && !localCinematic) { chat.Print("[HMSync] Only the host can set map BGM."); return; }
         var a = arg?.Trim() ?? "";
         // Support "stop" as an explicit silence + a numeric id.
         if (a.Equals("stop", StringComparison.OrdinalIgnoreCase)) a = "0";
         if (!uint.TryParse(a, out var bid)) { chat.Print("[HMSync] Usage: /hms mapbgm <id> | stop  (0/stop = none)."); return; }
+        if (localCinematic)
+        {
+            if (bid == 0) mapSettings.StopBgm(); else mapSettings.PlayBgm(bid);
+            chat.Print("[HMSync] BGM " + (bid == 0 ? "stopped" : "→ " + mapSettings.BgmName(bid)) + " (local).");
+            return;
+        }
         config.MapBgmId = bid;
         PushMapState();
         if (MapApplyLive) mapSettings.PlayBgm(bid);   // real playback (scene-0 write) - in-session only
@@ -4996,6 +5045,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         pluginInterface.UiBuilder.Draw -= ui.DrawFaceControlBar;   // v0.7.461 (P2, Codex QA): was added (480) but never removed - stale callback on reload
         pluginInterface.UiBuilder.Draw -= ui.DrawMovementBar;       // v0.7.465: paired with the += above
         pluginInterface.UiBuilder.Draw -= ui.DrawAppearanceBar;     // v0.7.465: paired with the += above
+        pluginInterface.UiBuilder.Draw -= ui.DrawWeatherPresetsWindow;  // b226: paired with the += above
         pluginInterface.UiBuilder.OpenMainUi -= ui.OpenMain;        // paired with the += above
         pluginInterface.UiBuilder.OpenConfigUi -= ui.OpenConfig;    // paired with the += above
 
@@ -5051,6 +5101,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         try { disguiseSync.Dispose(); } catch { }   // FEAT-R2: unsubscribe HDM ⇄ relay bridge (before hdm, which owns the IPC gates)
         try { lobbyNameplate.Dispose(); } catch { }   // b195: unsubscribe the lobby-nameplate lane + revert any applied names
         try { lightsOut.Dispose(); } catch { }   // Q-0010: unsubscribe the lights-out lane + restore any suppressed lights/flames
+        try { weatherDtr.Dispose(); } catch { }  // b225: remove the server-info-bar weather entry
         try { hdm.Dispose(); } catch { }            // FEAT-R2: unsubscribe HDM IPC event gates
         npcVisibility.Dispose();   // S328aa
         relay.Dispose();

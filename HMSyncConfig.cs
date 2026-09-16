@@ -222,6 +222,12 @@ public class HMSyncConfig : IPluginConfiguration
     public string SayOpcodesGameVersion { get; set; } = "";
     public bool ShowDebugCommands { get; set; }
 
+    // b225: show the current displayed weather in the server-info (DTR) bar, like the Weatherman plugin. Off by
+    // default (opt-in HUD clutter). Clicking the entry opens HMS's Map Control tab. The entry text tracks the
+    // real zone's displayed weather out of session and the synced/authored weather in a session (whatever
+    // MapSettingsService.GetActiveWeather reports). Managed by WeatherDtrService.
+    public bool ShowWeatherDtr { get; set; }
+
     // b195: sync Moniker nameplates in the LOBBY (connected + room-joined, no synthetic map loaded). The Moniker courier
     // normally rides the Cold transform lane, which only runs inside a synthetic session - so out-of-map, peers can't see
     // each other's custom names. This opts into a dedicated relay-opaque lane (WireKind.LobbyNameplate 0x54) that carries

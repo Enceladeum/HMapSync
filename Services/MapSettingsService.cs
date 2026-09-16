@@ -638,6 +638,26 @@ public unsafe class MapSettingsService
         catch { return 0; }
     }
 
+    // b226: the LAST weather id an explicit user apply pushed (SetWeatherUnified / SetWeatherOrGraft(×2) /
+    // SetWeatherNativeOnly all funnel through here). It exists because a keyframe GRAFT or a foreign-cram RESTAMP
+    // drives the sky by rewriting EnvState per frame and NEVER calls ApplyWeather — so the engine's displayed-weather
+    // byte (EnvManager+0x26, what GetActiveWeather reads) stays pinned at the zone's NATIVE weather (e.g. Clear Skies)
+    // even though the user picked "Blizzards". Native/in-bank picks DO move that byte, so this is only consulted while
+    // a graft/cram is actually live (see GetDisplayWeather). 0 = nothing applied this session.
+    private byte lastAppliedWeather;
+
+    // b226: the weather the SCENE is effectively presenting, for a readout that must match the user's pick (the DTR
+    // bar). While HMS is actively grafting/cramming the sky the engine byte lies (see lastAppliedWeather), so prefer
+    // the applied id; otherwise the engine byte is the truth (real sky / native pick / after a reset or zone change,
+    // where KfActive+ReplayActive are both false). Named distinctly from GetActiveWeather so the picker's "displayed"
+    // combo (which wants the raw engine sky) is unaffected.
+    public byte GetDisplayWeather()
+    {
+        if (lastAppliedWeather != 0 && (weatherCram.KfActive || weatherCram.ReplayActive))
+            return lastAppliedWeather;
+        return GetActiveWeather();
+    }
+
     // ── WEATHER-CRAM (Fable weather-cram-755): read-only probe of the LIVE env pipeline ──────────────
     // The runtime counterpart to Fable's STATIC ENVB crack. Fable's binary hunt found NO static ENVB string
     // refs in the exe (magics reached via computed offsets) - but CS exposes the whole thing at RUNTIME:
@@ -1286,6 +1306,7 @@ public unsafe class MapSettingsService
     // it just works if it possibly can.
     public string SetWeatherUnified(byte id)
     {
+        lastAppliedWeather = id;   // b226: record the user's pick for GetDisplayWeather (the DTR readout)
         // b172: ALWAYS drop a running day-night graft before applying ANY explicit weather pick. b170 only stopped the
         // graft on the native branch below, so tapping a non-time-marching FOREIGN chip (which routes through the foreign
         // preset branches further down) armed the static cram but left kfActive running — and the Detour runs the graft's
@@ -1353,6 +1374,7 @@ public unsafe class MapSettingsService
     // library now ships EMBEDDED so every client has it; the graft itself still applies client-side and isn't broadcast.)
     public string SetWeatherOrGraft(byte id)
     {
+        lastAppliedWeather = id;   // b226: record the user's pick for GetDisplayWeather (grafts don't move the engine byte)
         pendingVerifyFrames = 0;   // b173: a chip tap supersedes any in-flight native black-verify (don't let it clobber the graft)
         if (id != 0 && keyframeSets.IsTimeMarching(id))
         {
@@ -1373,6 +1395,7 @@ public unsafe class MapSettingsService
     public string SetWeatherOrGraft(byte id, uint donor)
     {
         if (donor == 0) return SetWeatherOrGraft(id);
+        lastAppliedWeather = id;   // b226: record the user's pick for GetDisplayWeather (city grafts don't move the engine byte)
         pendingVerifyFrames = 0;   // a chip tap supersedes any in-flight native black-verify
         if (id != 0 && keyframeSets.IsTimeMarching(id, donor))
         {
@@ -1395,6 +1418,7 @@ public unsafe class MapSettingsService
     // QUIETLY (no cram fallback) rather than arming a stuck override.
     public string SetWeatherNativeOnly(byte id)
     {
+        lastAppliedWeather = id;   // b226: record the user's pick for GetDisplayWeather (native picks also move the engine byte, but keep it consistent)
         if (weatherCram.ReplayActive) weatherCram.SetReplay(false);   // never let a promoted state ride on a restamp
         weatherCram.StopKfGraft();   // b170: and never let it ride under a running day-night graft either
         pendingVerifyFrames = 0;     // b173: supersede any in-flight native black-verify from a prior pick
