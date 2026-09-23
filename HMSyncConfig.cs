@@ -228,6 +228,11 @@ public class HMSyncConfig : IPluginConfiguration
     // MapSettingsService.GetActiveWeather reports). Managed by WeatherDtrService.
     public bool ShowWeatherDtr { get; set; }
 
+    // b240: show the current BGM track in the server-info (DTR) bar, mirroring ShowWeatherDtr. Off by default. Clicking
+    // the entry opens HMS's pop-out BGM picker. Text tracks MapSettingsService.GetCurrentBgm() named via BgmName. Managed
+    // by TrackDtrService.
+    public bool ShowTrackDtr { get; set; }
+
     // b195: sync Moniker nameplates in the LOBBY (connected + room-joined, no synthetic map loaded). The Moniker courier
     // normally rides the Cold transform lane, which only runs inside a synthetic session - so out-of-map, peers can't see
     // each other's custom names. This opts into a dedicated relay-opaque lane (WireKind.LobbyNameplate 0x54) that carries

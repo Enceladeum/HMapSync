@@ -5,6 +5,18 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.4.0] - 2026-09-23
+
+### Added
+
+- **Browse music window**: a new pop-out picker lets you preview and set a zone's background music, organised into category chips (World, City, Dungeon, Trial, Raid, Orchestrion, and more). Tracks are indexed in the background as you open each category, so the picker never affects your framerate. Alliance-raid music is grouped by series (for example *YoRHa: Dark Apocalypse* and *Myths of the Realm*).
+- **Orchestrion rolls in the picker**: the picker's Orchestrion section plays any orchestrion roll on your current zone, grouped by the game's own categories.
+- **Music in the server info bar**: an optional readout in Dalamud's server info bar (top-right) shows the name of the current track, similar to the weather readout. It is off by default; the "Server info bar" section in the Config tab turns it on. Clicking it opens the music picker.
+
+### Changed
+
+- **The local cinematic no longer needs Debug mode**: with no map loaded and no session running, the Map Control panel's time, weather, music, and the ambient-light and hide-VFX toggles now drive the real zone you are standing in — for everyone, not just in Debug mode. Nothing is saved or shared; it stays a purely local preview.
+
 ## [1.0.3.0] - 2026-09-16
 
 ### Added

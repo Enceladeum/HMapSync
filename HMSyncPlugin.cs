@@ -57,6 +57,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     private readonly LightsOutService lightsOut;   // Q-0010: instanced-dungeon stage-light / flame-VFX suppression, synced to peers (0x56)
     private readonly LobbyNameplateSyncService lobbyNameplate;   // b195: Moniker nameplate sync in the lobby (out of map)
     private readonly WeatherDtrService weatherDtr;   // b225: optional server-info-bar readout of the displayed weather
+    private readonly TrackDtrService trackDtr;       // b240: optional server-info-bar music readout (click → BGM picker)
     private readonly NpcVisibilityService npcVisibility;   // S328aa: host-authoritative NPC scene-cleanup
     private readonly NetStatsService netStats;   // S328ag: relay bandwidth instrumentation
     private readonly RelayHealthService relayHealth;   // background /health poll → relay traffic-light
@@ -182,7 +183,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         lightsOut = new LightsOutService(relay, framework,
             () => zoneLoad!.IsZoneLoaded ? zoneLoad!.CurrentLoadedZone : clientState.TerritoryType,
             () => zoneLoad!.IsZoneLoaded,   // gate: works on ANY loaded HMS map (city/overworld/dungeon), not just instanced content
-            () => !relay.IsSessionActive && config.ShowDebugCommands,   // b221: out-of-session local-cinematic exception (walk the real zone's own layout in Debug)
+            () => !relay.IsSessionActive,   // b221/b241: out-of-session local-cinematic exception (real zone's own layout; b241 dropped the Debug-mode gate)
             log, LocalContentId, s => chat.Print(s));
         // NOTE: puppet POSSESSION (drive an NPC from the DM's MoveController intent while the DM body stays static) is
         // owned by HDM, not HMS. HMS's role is peer sync only: when HDM drives a possessed puppet it fires PuppetMoved
@@ -294,6 +295,8 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         weatherPresets = new WeatherPresetStore(pluginInterface, log);   // WEATHER-CRAM Tier-1 b98: baked EnvState preset library
         keyframeSets = new KeyframeSetStore(pluginInterface, log);       // PATH I b163: durable day-night sky-graft keyframe library
         mapSettings = new MapSettingsService(dataManager, log, timeFreeze, weatherCram, weatherPresets, keyframeSets, sigScanner);   // S326
+        // b237: disk cache for the lazy per-category LGB track→name parse, so the one-time indexing runs once per build (not per launch).
+        mapSettings.InitBgmCache(System.IO.Path.Combine(pluginInterface.ConfigDirectory.FullName, "bgm-track-names.cache"));
         glamourer = new GlamourerIpc(pluginInterface);   // S246: optional Glamourer routing for visibility toggles
         // S248: when Glamourer reports ANY actor's state changed, mark badges dirty. The refresh
         // (main thread) reads the LOCAL player's state - we don't need to match the address here;
@@ -694,6 +697,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         pluginInterface.UiBuilder.Draw += ui.DrawMovementBar;      // v0.7.465: movement strip tear-off
         pluginInterface.UiBuilder.Draw += ui.DrawAppearanceBar;    // v0.7.465: appearance strip tear-off
         pluginInterface.UiBuilder.Draw += ui.DrawWeatherPresetsWindow;  // b226: torn-off "Extra presets" weather window
+        pluginInterface.UiBuilder.Draw += ui.DrawBgmPickerWindow;       // b238: pop-out BGM picker with category chips
         pluginInterface.UiBuilder.OpenMainUi += ui.OpenMain;       // installer "Open" button → window on Session tab
         pluginInterface.UiBuilder.OpenConfigUi += ui.OpenConfig;   // installer "Settings" button → window on Config tab
 
@@ -703,6 +707,10 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // opens HMS's Map Control tab. Driven by weatherDtr.Tick() from OnFrameworkUpdate (framework thread).
         weatherDtr = new WeatherDtrService(dtrBar, mapSettings, () => config.ShowWeatherDtr, () => ui.OpenWeatherPresets(), log);
         ui.ReloadWeatherDtr = () => weatherDtr.Reload();   // Config-tab toggle hook
+
+        // b240: the music twin - the current BGM track in the DTR bar; clicking it opens the pop-out BGM picker.
+        trackDtr = new TrackDtrService(dtrBar, mapSettings, () => config.ShowTrackDtr, () => ui.OpenBgmPickerAuto(), log);
+        ui.ReloadTrackDtr = () => trackDtr.Reload();   // Config-tab toggle hook
 
         framework.Update += OnFrameworkUpdate;
 
@@ -779,6 +787,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         lobbyNameplate.Tick();
         lightsOut.Tick();   // Q-0010: hold the dungeon light/flame suppression against re-streaming; idle no-op unless active
         weatherDtr.Tick();  // b225: refresh the server-info-bar weather readout (change-gated; idle no-op unless enabled)
+        trackDtr.Tick();    // b240: refresh the server-info-bar music readout (change-gated; idle no-op unless enabled)
 
         // b140 Path I: hold the donor-bank handle swap in EnvSpace+0x90 against any per-frame zone reassert (no-op unless
         // a wxcyclecram is active). Runs before the zone-change clear below so a real hop still tears it down cleanly.
@@ -5046,6 +5055,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         pluginInterface.UiBuilder.Draw -= ui.DrawMovementBar;       // v0.7.465: paired with the += above
         pluginInterface.UiBuilder.Draw -= ui.DrawAppearanceBar;     // v0.7.465: paired with the += above
         pluginInterface.UiBuilder.Draw -= ui.DrawWeatherPresetsWindow;  // b226: paired with the += above
+        pluginInterface.UiBuilder.Draw -= ui.DrawBgmPickerWindow;       // b238: paired with the += above
         pluginInterface.UiBuilder.OpenMainUi -= ui.OpenMain;        // paired with the += above
         pluginInterface.UiBuilder.OpenConfigUi -= ui.OpenConfig;    // paired with the += above
 
@@ -5102,6 +5112,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         try { lobbyNameplate.Dispose(); } catch { }   // b195: unsubscribe the lobby-nameplate lane + revert any applied names
         try { lightsOut.Dispose(); } catch { }   // Q-0010: unsubscribe the lights-out lane + restore any suppressed lights/flames
         try { weatherDtr.Dispose(); } catch { }  // b225: remove the server-info-bar weather entry
+        try { trackDtr.Dispose(); } catch { }    // b240: remove the server-info-bar music entry
         try { hdm.Dispose(); } catch { }            // FEAT-R2: unsubscribe HDM IPC event gates
         npcVisibility.Dispose();   // S328aa
         relay.Dispose();

@@ -262,6 +262,9 @@ public unsafe class MapSettingsService
     {
         try
         {
+            // An active orchestrion override plays off the BGM director (the scene holds silence), so report the
+            // namespaced roll selection instead of the scene read - keeps the Music row + picker highlight honest.
+            if (currentOrchestrionSel != 0) return currentOrchestrionSel;
             var bgm = FFXIVClientStructs.FFXIV.Client.Game.BGMSystem.Instance();
             if (bgm == null || bgm->Scenes.LongCount <= 0) return 0;
             ushort playing = bgm->Scenes.First->PlayingBgmId;   // 0x0E - what's actually audible
@@ -309,10 +312,21 @@ public unsafe class MapSettingsService
                 // the live scene read (it returns whatever's playing mid-transition = the PREVIOUS zone's track, which
                 // is what produced the "Kugane"/"880 Cartos" MISMATCHES). If the content has no BGM either, return the
                 // placeholder so it resolves to SILENCE - a correct silence beats a wrong track.
+                // NB (b229): the polymorphic concrete-file resolver introduced in b228 REGRESSED the picker - it dropped
+                // instanced duties whose live BGM chain the shipped datamining sheets don't fully mirror (the NieR
+                // alliance raids: Copied Factory / Puppets' Bunker vanished, having worked on b227). Reverted to feeding
+                // the game's own BGM SCENE id, which the native BGM director resolves (incl. positional sub-area music).
                 if (tb == SilencePlaceholderBgm)
                 {
                     uint ic = ResolveInstanceContentBgm(territoryId);
-                    return ic != 0 ? ic : tb;   // static content BGM, else the placeholder (→ silence)
+                    // b232 TOWER FIX (diagnosed live 2026-09-21): IC.BGM == SilenceTrackBgm (1 = BGM_Null) is an
+                    // EXPLICIT-silence marker (The Tower at Paradigm's Breach, IC 30105). Returning it makes the caller
+                    // PlayBgm(1), which PINS the scene to BGM_Null and SUPPRESSES the zone's native positional (LGB)
+                    // music - which is exactly why the Tower was silent while the other two NieR raids played: they
+                    // carry IC.BGM == 0 and fall through to the placeholder 1001, which the native director resolves
+                    // POSITIONALLY into their real track (Factory→737, Bunker→783 "Fortress of Lies"). Treat IC-silence
+                    // the same as "no static override" so the Tower falls through to 1001 too and its theme plays.
+                    return (ic != 0 && ic != SilenceTrackBgm) ? ic : tb;   // real content BGM, else placeholder (→ native director)
                 }
                 return tb;
             }
@@ -341,6 +355,232 @@ public unsafe class MapSettingsService
         catch { return 0; }
     }
 
+    // DEBUG-ONLY diagnostic: describe how a territory's BGM resolves in the LIVE sheets (which differ from the shipped
+    // datamining CSVs for some instanced content). Prints TerritoryType.BGM + InstanceContent.BGM, classifies each as a
+    // concrete track / BGMSituation / BGMSwitch, and expands situation slots to their concrete .scd files. Used to nail
+    // down instanced-music chains (e.g. why one NieR raid is silent while the others play). Not surfaced in normal help.
+    public List<string> DescribeBgmChain(uint territoryId)
+    {
+        var lines = new List<string>();
+        try
+        {
+            var terr = dataManager.GetExcelSheet<TerritoryType>();
+            if (terr == null || !terr.HasRow(territoryId)) { lines.Add("TT " + territoryId + ": not in TerritoryType"); return lines; }
+            var row = terr.GetRow(territoryId);
+            string place = row.PlaceName.ValueNullable?.Name.ToString() ?? "";
+            uint tb = row.BGM.RowId;
+            lines.Add("TT " + territoryId + " (" + place + "): TT.BGM=" + tb + " " + ClassifyBgm(tb));
+            AppendSituation(lines, tb);
+            uint ic = ResolveInstanceContentBgm(territoryId);
+            lines.Add("  IC.BGM=" + ic + " " + ClassifyBgm(ic));
+            AppendSituation(lines, ic);
+            lines.Add("  live-playing=" + GetCurrentBgm());
+        }
+        catch (Exception ex) { lines.Add("diag error: " + ex.Message); }
+        return lines;
+    }
+
+    private string ClassifyBgm(uint v)
+    {
+        if (v == 0) return "(none)";
+        if (v == SilenceTrackBgm) return "(silence)";
+        if (v >= 50000) return "(BGMSwitch)";
+        if (IsBgmSituation(v)) return "(BGMSituation)";
+        return "(concrete: " + BgmFilePath(v) + ")";
+    }
+
+    private void AppendSituation(List<string> lines, uint v)
+    {
+        if (!IsBgmSituation(v)) return;
+        var slots = GetSituationSlots(v);
+        if (slots.Count == 0) { lines.Add("    situation " + v + ": all-silence (no audible slots)"); return; }
+        foreach (var (bgmId, label) in slots)
+            lines.Add("    situation " + v + " [" + label + "] -> BGM " + bgmId + "  " + BgmFilePath(bgmId));
+    }
+
+    private string BgmFilePath(uint id)
+    {
+        try
+        {
+            var b = dataManager.GetExcelSheet<BGM>();
+            if (b != null && b.HasRow(id)) return b.GetRow(id).File.ToString();
+        }
+        catch { }
+        return "?";
+    }
+
+    // b236: LAST-RESORT name derived from the track's own .scd file (BGM sheet File column), for concrete ids that no
+    // sheet place-name and no LGB trigger reaches. This is the user's thesis made concrete - "the files live in the
+    // client": the game ships a file path for every track, even the NieR alliance-raid pack (music/ex3/BGM_EX3_Ytc_NN.scd)
+    // and the director-resolved field variants (music/ex4/BGM_EX4_Field_Gar_Day.scd) that surface as bare ids at play time.
+    //   Prettify: drop the dir + ".scd", strip the leading "BGM_" and the "EX#_"/"ORCH_" section token, spaces for
+    //   underscores. So 855 -> "Field Gar Day", 737 -> "Ytc 06". Cryptic-ish but strictly more informative than "Track N"
+    //   and, crucially, it names raid/field tracks WITHOUT entering the zone. Only consulted AFTER the sheet + LGB lookups
+    //   miss, so it never overrides a good name. BGM_Null (silence) is excluded. Cached (misses included) - sheet reads
+    //   aren't free and BgmName is called per-frame.
+    private readonly Dictionary<uint, string?> bgmFileDerivedNameCache = new();
+    private string? BgmFileDerivedName(uint id)
+    {
+        if (bgmFileDerivedNameCache.TryGetValue(id, out var cached)) return cached;
+        string? result = null;
+        try
+        {
+            var b = dataManager.GetExcelSheet<BGM>();
+            if (b != null && b.HasRow(id))
+            {
+                var path = b.GetRow(id).File.ToString();   // e.g. music/ex4/BGM_EX4_Field_Gar_Day.scd
+                if (!string.IsNullOrEmpty(path) && path.EndsWith(".scd", StringComparison.OrdinalIgnoreCase)
+                    && path.IndexOf("BGM_Null", StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    var slash = path.LastIndexOf('/');
+                    var basename = slash >= 0 ? path.Substring(slash + 1) : path;
+                    basename = basename.Substring(0, basename.Length - 4);            // drop ".scd"
+                    if (basename.StartsWith("BGM_", StringComparison.OrdinalIgnoreCase)) basename = basename.Substring(4);
+                    var us = basename.IndexOf('_');
+                    if (us > 0)
+                    {
+                        var head = basename.Substring(0, us);
+                        if ((head.StartsWith("EX", StringComparison.OrdinalIgnoreCase) && head.Length <= 4)
+                            || head.Equals("ORCH", StringComparison.OrdinalIgnoreCase))
+                            basename = basename.Substring(us + 1);
+                    }
+                    var pretty = basename.Replace('_', ' ').Trim();
+                    if (pretty.Length > 0) result = pretty;
+                }
+            }
+        }
+        catch { }
+        bgmFileDerivedNameCache[id] = result;   // cache misses too, to avoid repeat sheet reads
+        return result;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+    // LGB BGM SCAN (b233). The territory→track link for POSITIONAL music. The NieR alliance raids (Copied Factory /
+    // Puppets' Bunker / Tower) carry TerritoryType.BGM = the silence placeholder (1001) and InstanceContent.BGM =
+    // 0/silence, so no territory-keyed sheet reaches their music - the native BGM director resolves it from MapRange
+    // trigger boxes in the zone's LGB (LayerCommon.MapRangeInstanceObject.BGM, gated by BGMEnabled). We parse those
+    // triggers directly. Lumina reads the LGB straight from sqpack, so this works from ANYWHERE (no need to be in the
+    // zone) - which is exactly what the runtime-observation approach (b232 NoteLiveTrack) could not do. The MapRange.BGM
+    // value is POLYMORPHIC (concrete track / BGMSituation 1001-1407 / BGMSwitch >=50000); DescribeZoneLgbBgm classifies
+    // + expands each so we can see what the raids actually bind before wiring the picker.
+    // ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+    // LGB names that can carry MapRange BGM triggers, in probe order. (bg = geometry+ranges, planmap = dungeon/instance
+    // ranges, planevent = event-instance ranges; the rest are scanned defensively.) All are unioned + deduped by BGM id.
+    private static readonly string[] BgmLgbNames = { "bg", "planmap", "planevent", "planlive", "sound", "planner" };
+
+    // Every distinct MapRange BGM trigger in a territory's LGBs. First-seen order across the probe list, deduped by BGM
+    // id. `layer` is the LGB layer name; `enabled`/`weather`/`inOnly` are the raw trigger gates for diagnostics.
+    // b244: `throttleRatio` > 0 enables ADAPTIVE DUTY-CYCLE throttling of the sqpack reads. After each LGB read we sleep
+    // (readTime × throttleRatio), capped, so the parser holds the lock for at most 1/(1+ratio) of wall time - the render
+    // thread is guaranteed the rest. This is what makes a big World/City LGB read stop hitching FPS: the cost of one read
+    // is followed by a proportional pause, spacing contention out instead of bursting. 0 = no throttle (the diagnostic path).
+    private List<(uint bgm, byte enabled, uint weather, byte inOnly, string layer)> ScanZoneMapRangeBgm(uint territoryId, int throttleRatio = 0)
+    {
+        var outp = new List<(uint, byte, uint, byte, string)>();
+        try
+        {
+            var terr = dataManager.GetExcelSheet<TerritoryType>();
+            if (terr == null || !terr.HasRow(territoryId)) return outp;
+            var bg = terr.GetRow(territoryId).Bg.ToString();
+            if (string.IsNullOrEmpty(bg)) return outp;
+            var lastSlash = bg.LastIndexOf('/');
+            var levelPath = lastSlash >= 0 ? bg[..lastSlash] : bg;   // e.g. ffxiv/wsx/dun/w1d1/level
+            var seen = new HashSet<uint>();
+            foreach (var name in BgmLgbNames)
+            {
+                var path = "bg/" + levelPath + "/" + name + ".lgb";
+                Lumina.Data.Files.LgbFile? f;
+                long t0 = throttleRatio > 0 ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+                try { f = dataManager.GetFile<Lumina.Data.Files.LgbFile>(path); } catch { continue; }
+                // b244: adaptive duty-cycle back-off - sleep proportional to how long THIS read actually took, so an
+                // expensive read is followed by a proportional pause (the render thread gets the lock back), while cheap
+                // reads barely pause. Capped so a pathological read can't stall the parse forever.
+                if (throttleRatio > 0)
+                {
+                    double readMs = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                    int sleepMs = (int)Math.Min(50.0, Math.Max(1.0, readMs * throttleRatio));
+                    System.Threading.Thread.Sleep(sleepMs);
+                }
+                if (f == null) continue;
+                foreach (var layer in f.Layers)
+                {
+                    if (layer.InstanceObjects == null) continue;
+                    foreach (var o in layer.InstanceObjects)
+                    {
+                        if (o.AssetType != Lumina.Data.Parsing.Layer.LayerEntryType.MapRange) continue;
+                        if (o.Object is not Lumina.Data.Parsing.Layer.LayerCommon.MapRangeInstanceObject mr) continue;
+                        if (mr.BGM == 0) continue;
+                        if (!seen.Add(mr.BGM)) continue;
+                        outp.Add((mr.BGM, mr.BGMEnabled, mr.Weather, mr.BGMPlayZoneInOnly, layer.Name ?? ""));
+                    }
+                }
+            }
+        }
+        catch (Exception ex) { log.Warning("[HMSync] ScanZoneMapRangeBgm(" + territoryId + ") failed: " + ex.Message); }
+        return outp;
+    }
+
+    // Expand a BGMSwitch (id >= 50000) into the distinct, non-silence concrete BGM ids its subrows reference. A BGMSwitch
+    // is a subrow sheet: each subrow is a Quest-gated candidate track (Bunker's switch 50035 fans out to 780/781/783/
+    // 824/825/732 across story progression). For the picker we want EVERY track it can ever select, so we union all
+    // subrows' BGM refs. Silence (1) and empty (0) dropped. (API: GetSubrowExcelSheet<T>().TryGetRow → iterate subrows.)
+    private List<uint> ExpandBgmSwitch(uint switchId)
+    {
+        var outp = new List<uint>();
+        var seen = new HashSet<uint>();
+        try
+        {
+            var s = dataManager.GetSubrowExcelSheet<BGMSwitch>();
+            if (s != null && s.TryGetRow(switchId, out var subs))
+            {
+                foreach (var sub in subs)
+                {
+                    uint id = sub.BGM.RowId;
+                    if (id == 0 || id == SilenceTrackBgm) continue;
+                    if (seen.Add(id)) outp.Add(id);
+                }
+            }
+        }
+        catch (Exception ex) { log.Warning("[HMSync] ExpandBgmSwitch(" + switchId + ") failed: " + ex.Message); }
+        return outp;
+    }
+
+    // DEBUG-ONLY diagnostic (Stage 1 of the LGB-BGM work): dump every MapRange BGM trigger a territory's LGBs carry,
+    // each classified (concrete/situation/switch) and fully expanded to its concrete .scd tracks, so we can see exactly
+    // what the NieR raids bind positionally. Reveals whether MapRange.BGM is a concrete id (name it directly), a
+    // BGMSituation (expand slots), or a BGMSwitch (expand subrows) - which decides how the picker integration is built.
+    public List<string> DescribeZoneLgbBgm(uint territoryId)
+    {
+        var lines = new List<string>();
+        try
+        {
+            var terr = dataManager.GetExcelSheet<TerritoryType>();
+            if (terr == null || !terr.HasRow(territoryId)) { lines.Add("TT " + territoryId + ": not in TerritoryType"); return lines; }
+            var row = terr.GetRow(territoryId);
+            string place = row.PlaceName.ValueNullable?.Name.ToString() ?? "";
+            string bg = row.Bg.ToString();
+            lines.Add("TT " + territoryId + " (" + place + "): bg=" + bg);
+            var triggers = ScanZoneMapRangeBgm(territoryId);
+            if (triggers.Count == 0) { lines.Add("  no MapRange BGM triggers found in any LGB"); return lines; }
+            foreach (var (bgm, enabled, weather, inOnly, layer) in triggers)
+            {
+                lines.Add("  MapRange BGM=" + bgm + " " + ClassifyBgm(bgm)
+                    + "  [enabled=" + enabled + " inZoneOnly=" + inOnly + " weather=" + weather + " layer='" + layer + "']");
+                AppendSituation(lines, bgm);                            // if it's a situation, list its slots
+                if (bgm >= 50000)                                       // if it's a switch, list its candidate tracks
+                {
+                    var cands = ExpandBgmSwitch(bgm);
+                    if (cands.Count == 0) lines.Add("    switch " + bgm + ": no candidate tracks");
+                    foreach (var c in cands)
+                        lines.Add("    switch " + bgm + " -> BGM " + c + "  " + BgmFilePath(c));
+                }
+            }
+        }
+        catch (Exception ex) { lines.Add("lgb diag error: " + ex.Message); }
+        return lines;
+    }
+
     // S327l/m/o: LOCATION-BASED BGM NAMING. The game has no readable BGM-id → song-title map (Orchestrion's sheet is
     // keyed by Orchestrion RowId ≠ BGM RowId; titles live only in Orchestrion's community CSV). We name each BGM by the
     // PLACE/DUTY that plays it - "Terncliff", "Clyteum" - which is what an RP host actually wants ("play THIS location's
@@ -350,17 +590,82 @@ public unsafe class MapSettingsService
     //    track is on the content - ContentFinderCondition → InstanceContent.BGM - named by the DUTY name (CFC.Name).
     //    (Verified: 1345 → CFC 1011 → InstanceContent 104 → BGM 20264. ~558 placeholder territories resolve this way.)
     // The silence placeholder (1001) itself is excluded from naming. Distinct BGMs sharing a name get "#N" suffixes.
+    // NB (b229): the b228 concrete-file "situation slot" resolver was reverted here - see EnsureBgmNames / GetDefaultBgm.
     private const uint SilencePlaceholderBgm = 1001;
+    // Orchestrion rolls play through a SEPARATE system (not BGM ids), so selections carrying a roll are namespaced into
+    // a high id range: a value >= OrchestrionIdBase encodes an Orchestrion roll (rollId = value - OrchestrionIdBase).
+    // This keeps the single-uint BGM selection + wire format intact (real BGM ids max ~20312, far below the base).
+    internal const uint OrchestrionIdBase = 0x40000000;   // 1,073,741,824
     private Dictionary<uint, string>? bgmZoneName;
+    // b231: situation ids kept NAMED (for the "Zone default (...)" label + playback) but HIDDEN from the browse list,
+    // because we surface their concrete slot tracks instead (see EnsureBgmNames Pass 3). Clicking a hidden situation id
+    // still resolves via the director; we just don't list the indirection alongside its expanded slots.
+    private HashSet<uint>? bgmHideFromList;
 
+    // A BGM field value in [1001,1407] is a BGMSituation id, NOT a concrete BGM (the BGM sheet has NO rows in that range
+    // - verified: BGM 1000 is the last real row, 1001+ are situation-only). The native director resolves a situation to
+    // one of its slot tracks by time-of-day / battle state. So TerritoryType.BGM = a situation id is how instanced music
+    // (incl. the NieR alliance raids) is bound: the picker entry plays the situation, the director picks the concrete slot.
+    private bool IsBgmSituation(uint v)
+    {
+        if (v < 1001 || v > 1407) return false;
+        try { var s = dataManager.GetExcelSheet<BGMSituation>(); return s != null && s.HasRow(v); }
+        catch { return false; }
+    }
+
+    // The distinct, non-silence concrete slot tracks of a BGMSituation, each tagged with a time-of-day/state label.
+    // Order = Day, Night, Battle, Dawn, Dusk (native slot order); first occurrence of a given bgm id keeps its label.
+    // Silence (BGM 1 = BGM_Null) and empty (0) slots are dropped - they contribute no audible track.
+    private List<(uint bgmId, string label)> GetSituationSlots(uint situationId)
+    {
+        var outp = new List<(uint, string)>();
+        var seen = new HashSet<uint>();
+        try
+        {
+            var s = dataManager.GetExcelSheet<BGMSituation>();
+            if (s == null || !s.HasRow(situationId)) return outp;
+            var r = s.GetRow(situationId);
+            void Add(uint id, string label)
+            {
+                if (id == 0 || id == SilenceTrackBgm) return;
+                if (seen.Add(id)) outp.Add((id, label));
+            }
+            Add(r.DaytimeID.RowId, "Day");
+            Add(r.NightID.RowId, "Night");
+            Add(r.BattleID.RowId, "Battle");
+            Add(r.DaybreakID.RowId, "Dawn");
+            Add(r.TwilightID.RowId, "Dusk");
+        }
+        catch { /* leave what we have */ }
+        return outp;
+    }
+
+    // b242: kick the sheet-name catalog build ONCE, on a BACKGROUND thread. Previously this ran synchronously on whatever
+    // thread first touched a BGM name - and the render thread hit it when the HMS window reopened on the Map Control tab
+    // at login, or when the music DTR named the current track - so the ~thousands-of-rows sheet build (plus the old
+    // 20k-row raid scan) stuttered the client on game launch. Now NOTHING BGM-related does heavy work on the main thread:
+    // the build runs off-thread and publishes by reference swap; until it lands, readers null-guard bgmZoneName (BgmName
+    // falls back to the .scd-derived name, the picker shows a category "Loading…" hint). Idempotent via the started guard.
+    private int bgmNamesStarted;
     private void EnsureBgmNames()
     {
-        if (bgmZoneName != null) return;
-        bgmZoneName = new Dictionary<uint, string>();
+        if (bgmZoneName != null) return;                                                      // already published
+        if (System.Threading.Interlocked.Exchange(ref bgmNamesStarted, 1) != 0) return;       // build already running
+        var t = new System.Threading.Thread(BuildBgmNames)
+        { IsBackground = true, Priority = System.Threading.ThreadPriority.BelowNormal, Name = "HMSync-BgmNames" };
+        t.Start();
+    }
+
+    // b242: the actual sheet-name catalog build, OFF the main thread. Builds into locals and publishes bgmHideFromList
+    // then bgmZoneName by reference swap - bgmZoneName LAST, since it's the readiness signal every reader gates on.
+    private void BuildBgmNames()
+    {
+        var zone = new Dictionary<uint, string>();
+        var hide = new HashSet<uint>();
         try
         {
             var terr = dataManager.GetExcelSheet<TerritoryType>();
-            if (terr == null) return;
+            if (terr == null) { bgmZoneName = zone; return; }
 
             // Pass 1: open-world/zone tracks - FIRST place name per distinct bgm id (skip 0 + silence placeholder).
             var rawByBgm = new Dictionary<uint, string>();
@@ -406,18 +711,52 @@ public unsafe class MapSettingsService
                 {
                     int n = seqByPlace.GetValueOrDefault(name) + 1;
                     seqByPlace[name] = n;
-                    bgmZoneName[kv.Key] = name + " #" + n;
+                    zone[kv.Key] = name + " #" + n;
                 }
                 else
                 {
-                    bgmZoneName[kv.Key] = name;
+                    zone[kv.Key] = name;
                 }
             }
+
+            // Pass 3 (b231): SITUATION SLOT EXPANSION. A named entry whose id is a BGMSituation is an INDIRECTION - the
+            // director resolves it to a concrete slot track by time-of-day/battle. We surface those concrete tracks so
+            // (a) the Music row names what's actually audible (was "Track 783" - the resolved id had no name), and
+            // (b) multi-track instances (the NieR alliance raids etc.) list each of their tracks. The situation id stays
+            // NAMED (for "Zone default (...)" + playback) but is HIDDEN from the browse list in favour of its slots.
+            // Runs AFTER Pass 2 so a situation and its slots (same location) aren't mistaken for rival names and #N'd apart.
+            foreach (var sid in zone.Keys.Where(IsBgmSituation).ToList())
+            {
+                var slots = GetSituationSlots(sid);
+                if (slots.Count == 0) continue;                  // silent situation (e.g. Tower - LGB-only music): keep as-is
+                string baseName = zone[sid];
+                bool multi = slots.Count > 1;
+                foreach (var (bgmId, label) in slots)
+                {
+                    if (zone.ContainsKey(bgmId)) continue;       // a real zone/duty already names this track: it wins
+                    zone[bgmId] = multi ? baseName + " - " + label : baseName;
+                }
+                hide.Add(sid);                                   // list the slots, not the indirection
+            }
+
         }
         catch (Exception ex)
         {
-            log.Warning("[HMSync] EnsureBgmNames failed: " + ex.Message);
+            log.Warning("[HMSync] BuildBgmNames failed: " + ex.Message);
         }
+        bgmHideFromList = hide;   // publish (before the readiness signal)
+        bgmZoneName = zone;       // publish the readiness signal - readers gate on this being non-null
+        // b242: fold in the alliance-raid series packs (bounded id ranges, NOT a full-sheet scan) AFTER publish, so
+        // AddRaidSeriesPacks' "sheet wins" skip reads the now-published bgmZoneName; merged via the locked MergeIntoLearned
+        // so it can't race a chip parse's own merge.
+        try
+        {
+            var raid = new Dictionary<uint, string>();
+            var taken = new HashSet<string>(zone.Values, StringComparer.OrdinalIgnoreCase);
+            AddRaidSeriesPacks(raid, taken);
+            MergeIntoLearned(raid);
+        }
+        catch (Exception ex) { log.Warning("[HMSync] raid-pack fold failed: " + ex.Message); }
     }
 
     /// <summary>
@@ -434,34 +773,447 @@ public unsafe class MapSettingsService
         return char.ToUpperInvariant(s[0]) + s.Substring(1);
     }
 
+    // ── ORCHESTRION ROLLS ─────────────────────────────────────────────────────────────────────────────────────────
+    // A second, separate music source for the picker: the player's orchestrion rolls (dungeon/quest/event soundtracks).
+    // They do NOT resolve to BGM ids - their .scd lives under music/ffxiv/Orchestrion/ and plays through the raw sound
+    // path (see PlayOrchestrion), so we never touch OrchestrionManager (which is unlock/packet-gated). Titles come from
+    // the Orchestrion sheet (Name); the .scd path from OrchestrionPath (File); grouping from OrchestrionUiparam
+    // (Category + Order), matching the in-game orchestrion list. No unlock filter - HMS plays any roll for everyone.
+    private List<(uint sel, string title, string category, int catOrder, int order)>? orchChoices;
+    private Dictionary<uint, (string title, string path)>? orchByRoll;   // rollId → (title, scd path)
+
+    private void EnsureOrchestrion()
+    {
+        if (orchChoices != null) return;
+        orchChoices = new List<(uint, string, string, int, int)>();
+        orchByRoll = new Dictionary<uint, (string, string)>();
+        try
+        {
+            var orch = dataManager.GetExcelSheet<Orchestrion>();
+            var pathSheet = dataManager.GetExcelSheet<OrchestrionPath>();
+            var ui = dataManager.GetExcelSheet<OrchestrionUiparam>();
+            if (orch == null) return;
+            foreach (var row in orch)
+            {
+                uint rollId = row.RowId;
+                if (rollId == 0) continue;
+                var title = row.Name.ToString();
+                if (string.IsNullOrWhiteSpace(title)) continue;
+                string path = pathSheet != null && pathSheet.HasRow(rollId) ? pathSheet.GetRow(rollId).File.ToString() : "";
+                if (string.IsNullOrWhiteSpace(path)) continue;               // no .scd → not playable, skip
+                int order = 0, catOrder = 0; string catName = "";
+                if (ui != null && ui.HasRow(rollId))
+                {
+                    var up = ui.GetRow(rollId);
+                    order = up.Order;
+                    var c = up.OrchestrionCategory.ValueNullable;
+                    if (c != null) { catName = c.Value.Name.ToString(); catOrder = c.Value.Order; }
+                }
+                orchByRoll[rollId] = (title, path);
+                orchChoices.Add((OrchestrionIdBase + rollId, title, catName, catOrder, order));
+            }
+            // Group by category (the game's own genre order), alphabetical within - "Expansion & alphabetical" intent.
+            orchChoices.Sort((a, b) =>
+            {
+                int c = a.catOrder.CompareTo(b.catOrder);
+                if (c != 0) return c;
+                return string.Compare(a.title, b.title, StringComparison.OrdinalIgnoreCase);
+            });
+        }
+        catch (Exception ex) { log.Warning("[HMSync] EnsureOrchestrion failed: " + ex.Message); }
+    }
+
+    // The orchestrion section of the catalog: (selectionId, title, category, categoryOrder, order), pre-sorted by
+    // category then title. selectionId is already namespaced (OrchestrionIdBase + rollId) for storage/wire/playback.
+    public List<(uint sel, string title, string category, int catOrder, int order)> GetOrchestrionChoices()
+    {
+        EnsureOrchestrion();
+        return orchChoices ?? new List<(uint, string, string, int, int)>();
+    }
+
+    // Resolve a namespaced orchestrion selection back to its .scd path for raw playback. Returns false if unknown.
+    internal bool TryGetOrchestrionPath(uint selection, out string path)
+    {
+        path = "";
+        if (selection < OrchestrionIdBase) return false;
+        EnsureOrchestrion();
+        if (orchByRoll != null && orchByRoll.TryGetValue(selection - OrchestrionIdBase, out var e)
+            && !string.IsNullOrEmpty(e.path)) { path = e.path; return true; }
+        return false;
+    }
+
+    // LGB-DERIVED TRACK NAMES (b234/b235). Many zones bind MORE music than TerritoryType.BGM exposes: the native director
+    // reads MapRange trigger boxes in the zone's LGB, each pointing at a BGMSwitch / BGMSituation / concrete track (e.g.
+    // Garlemald's LGB carries switches 50051/50052 → situations 1320/1323/1338 → five distinct field/battle tracks, none
+    // of which TerritoryType.BGM reaches). The picker is a GLOBAL catalog - you pick ANY zone's track from ANYWHERE - so
+    // b234's lazy "scan only the zone you're standing in" was the wrong shape: Garlemald read "1 entry" from Ul'dah, and
+    // reaching a zone's extra music meant physically entering it. b235 instead sweeps EVERY territory's LGB ONCE, on a
+    // background thread, and publishes the whole track→name map with a single ATOMIC REFERENCE SWAP. GetBgmChoices lists
+    // all of it regardless of current zone; DrawBgmBrowsePopup rebuilds every frame, so tracks appear the instant the
+    // sweep lands - no zone change, no entry required.
+    //   Populated from the LGB, NOT from live playback: b232's runtime-observation NoteLiveTrack was REMOVED because it
+    //   named a track by where the player physically STOOD (mislabelled a previewed raid theme "Company Workshop -
+    //   Empyreum 2"). The LGB is the true territory→track link and Lumina reads it from sqpack off-thread, so it works
+    //   from anywhere without entering the zone. Zones with NO MapRange BGM (the NieR raids, whose music is resolved by
+    //   the instanced content director) add nothing here - that remains a separate problem.
+    // b238: the flat merged track→name map, used by BgmName + the "All" catalog. Grows as category chips are parsed: each
+    // parse rebuilds a NEW dict and swaps the reference in (never mutated in place), so UI-thread readers need no lock.
+    private Dictionary<uint, string> learnedTrackName = new();
+    // b238: per-category track buckets (chip key → id→name), parsed LAZILY when a chip is first opened. Concurrent because
+    // the parse runs on a background thread while the UI reads; a whole bucket is published at once (no torn reads).
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Dictionary<uint, string>> categoryTracks = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> categoryParseStarted = new();
+
+    // b236 FPS fix: DrawBgmBrowsePopup calls GetBgmChoices EVERY FRAME while the popup is open, and that method rebuilt +
+    // sorted the whole global catalog each time. Cache the built list and only rebuild when the inputs actually change:
+    // the sweep publishing a new learnedTrackName (detected by reference identity) or a different zone default. bgmZoneName
+    // is built once and never mutated, so it needn't be part of the key.
+    private List<(uint id, string name)>? bgmChoicesCache;
+    private Dictionary<uint, string>? bgmChoicesCacheLearnedRef;
+    private uint bgmChoicesCacheDefault = uint.MaxValue;
+
+    // b237: DISK CACHE for the swept track→name map. The all-zones LGB indexing costs ~seconds; without a cache it ran on
+    // EVERY launch and froze the client the first time the BGM page opened. Now the sweep result is written to disk and
+    // reloaded instantly on subsequent launches - the indexing happens ONCE per build, not once per session. Keyed on the
+    // build stamp (assembly version + InternalBuild): a new build (naming logic may have changed) or a prod release
+    // invalidates the cache; a game patch is covered too, since it forces a rebuild. Path injected post-construction via
+    // InitBgmCache (mirrors InitWeatherSweep). Format: line 1 = build key, then "<id>\t<name>" per line.
+    private string? bgmCachePath;
+    private static readonly string BgmCacheBuildKey =
+        (typeof(MapSettingsService).Assembly.GetName().Version?.ToString() ?? "0")
+        + "-b" + (typeof(MapSettingsService).Assembly
+            .GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute), false)
+            .OfType<System.Reflection.AssemblyMetadataAttribute>()
+            .FirstOrDefault(a => a.Key == "InternalBuild")?.Value ?? "0");
+
+    // b237: hand the sweep its disk-cache path (called once at startup, like InitWeatherSweep). Null path = no caching.
+    public void InitBgmCache(string path) { bgmCachePath = path; }
+
+
+    // b238: LAZY, PER-CATEGORY LGB parse. The b235-b237 eager all-zones sweep froze the client on the first BGM-page open
+    // (~700 zones × 6 GetFile back-to-back). Instead, when the picker's chip for a category is first opened, we parse ONLY
+    // that category's territories' LGBs - a small batch that finishes fast and is cached per category to disk. Most chips
+    // (Raid/Dungeon/Trial) barely touch the LGB (their music is sheet/pack-derived), so they're near-instant; only the
+    // World/City field zones do real scanning, and even then only their own slice. Idempotent per category key.
+    //   `cat` is the chip key (also the disk-cache section + the categoryTracks bucket key). `ttIds` are the territories the
+    //   UI classified into that chip (from its Zones clusters). Runs on a BelowNormal background thread with a per-dir yield.
+    public void EnsureCategoryParsed(string cat, IReadOnlyList<uint> ttIds)
+    {
+        if (string.IsNullOrEmpty(cat)) return;
+        if (!categoryParseStarted.TryAdd(cat, 1)) return;   // already parsing / parsed this session
+        var idsCopy = ttIds.ToArray();                       // snapshot: the UI list may change; the thread owns this copy
+        var t = new System.Threading.Thread(() =>
+        {
+            try
+            {
+                // b242: the sheet-name catalog now builds on its own background thread; wait briefly for it so a fresh
+                // parse names sheet-known tracks by their real place/duty name (and caches THAT), not a zone-derived fallback.
+                EnsureBgmNames();
+                for (int spins = 0; bgmZoneName == null && spins < 500; spins++) System.Threading.Thread.Sleep(10);
+                var cached = LoadCategoryCache(cat);
+                var bucket = cached ?? ParseTerritoryTracks(idsCopy);
+                // b238: the alliance-raid series packs have empty LGBs + placeholder primaries, so ParseTerritoryTracks can't
+                // reach them - fold them into the Raid chip explicitly (they're already in the flat "All" catalog too).
+                if (cached == null && string.Equals(cat, "Raid", StringComparison.Ordinal))
+                {
+                    var taken = new HashSet<string>(bucket.Values, StringComparer.OrdinalIgnoreCase);
+                    AddRaidSeriesPacks(bucket, taken);
+                }
+                categoryTracks[cat] = bucket;                // publish the whole bucket at once
+                MergeIntoLearned(bucket);                    // so BgmName + "All" see these ids too
+                if (cached == null) SaveCategoryCache(cat, bucket);
+                log.Information("[HMSync] BGM category '" + cat + "': " + bucket.Count + " tracks "
+                    + (cached != null ? "from cache." : "parsed from " + idsCopy.Length + " territories."));
+            }
+            catch (Exception ex)
+            {
+                categoryParseStarted.TryRemove(cat, out _);   // allow a retry after a failure
+                log.Warning("[HMSync] BGM category parse '" + cat + "' failed: " + ex.Message);
+            }
+        })
+        {
+            IsBackground = true,
+            Priority = System.Threading.ThreadPriority.BelowNormal,
+            Name = "HMSync-BgmCat",
+        };
+        t.Start();
+    }
+
+    // b238: the parsed tracks for a chip (empty until its background parse lands; the UI rebuilds each frame so they fill in).
+    private static readonly Dictionary<uint, string> EmptyTracks = new();
+    public IReadOnlyDictionary<uint, string> GetCategoryTracks(string cat)
+        => categoryTracks.TryGetValue(cat, out var m) ? m : EmptyTracks;
+
+    // b238: has a chip's parse landed yet? (UI shows a "loading…" hint until then.)
+    public bool IsCategoryReady(string cat) => categoryTracks.ContainsKey(cat);
+
+    // b238: merge a freshly-parsed bucket into the flat learnedTrackName via a NEW dict + reference swap (UI-thread safe).
+    private readonly object learnedMergeLock = new();
+    private void MergeIntoLearned(Dictionary<uint, string> bucket)
+    {
+        if (bucket.Count == 0) return;
+        lock (learnedMergeLock)
+        {
+            var merged = new Dictionary<uint, string>(learnedTrackName);
+            foreach (var kv in bucket) merged[kv.Key] = kv.Value;
+            learnedTrackName = merged;   // atomic reference swap
+        }
+    }
+
+    // b238: parse a SPECIFIC set of territories' tracks - each territory's primary/instanced BGM (resolved through
+    // switch/situation) PLUS its LGB MapRange extras - so a chip lists the COMPLETE track set for its category (sheet-named
+    // primaries keep their sheet name; LGB-only extras are named "<Zone> - <condition>"). This is the per-category slice of
+    // what the old all-zones sweep did. Dedups scans by LGB directory and yields the sqpack lock after each dir.
+    private Dictionary<uint, string> ParseTerritoryTracks(IReadOnlyList<uint> ttIds)
+    {
+        var map = new Dictionary<uint, string>();
+        var taken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (bgmZoneName != null) foreach (var v in bgmZoneName.Values) taken.Add(v);   // sheet display names are reserved
+        var scannedDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var terr = dataManager.GetExcelSheet<TerritoryType>();
+        if (terr == null) return map;
+        foreach (var tt in ttIds)
+        {
+            if (tt == 0 || !terr.HasRow(tt)) continue;
+            string zone = GetZoneName(tt);
+            if (string.IsNullOrEmpty(zone)) continue;
+            var row = terr.GetRow(tt);
+            var seen = new HashSet<uint>();
+
+            // (a) primary / instanced BGM, expanded through switch/situation to concrete slots.
+            uint raw = GetDefaultBgm(tt);
+            foreach (var (trackId, label) in ResolveMapRangeTracks(raw, 0))
+                ClaimTrack(map, taken, seen, trackId, zone, label);
+
+            // (b) LGB MapRange extras (the positional field/battle variants). Dedup by dir + yield the lock after each.
+            var bg = row.Bg.ToString();
+            if (string.IsNullOrEmpty(bg)) continue;
+            var lastSlash = bg.LastIndexOf('/');
+            var levelPath = lastSlash >= 0 ? bg[..lastSlash] : bg;
+            if (!scannedDirs.Add(levelPath)) continue;
+            List<(uint bgm, byte enabled, uint weather, byte inOnly, string layer)> triggers;
+            // b244: adaptive duty-cycle throttle (ratio 3 ⇒ parser holds the lock ≤~25% of wall time) so even a big
+            // World/City LGB read doesn't crash FPS; the parse crawls but the render thread always wins the lock.
+            try { triggers = ScanZoneMapRangeBgm(tt, 3); } catch { triggers = new(); }
+            System.Threading.Thread.Sleep(1);   // extra breather between directories
+            foreach (var (bgm, _, _, _, _) in triggers)
+                foreach (var (trackId, label) in ResolveMapRangeTracks(bgm, 0))
+                    ClaimTrack(map, taken, seen, trackId, zone, label);
+        }
+        return map;
+    }
+
+    // b238: add one resolved track to a category bucket. Skips silence/placeholder + already-claimed ids. A track a sheet
+    // names keeps the SHEET name (so the chip lists it under its real place/duty name); an LGB-only extra is named
+    // "<Zone>" / "<Zone> - <label>" with a " #N" collision suffix.
+    private void ClaimTrack(Dictionary<uint, string> map, HashSet<string> taken, HashSet<uint> seen, uint trackId, string zone, string label)
+    {
+        if (trackId == 0 || trackId == SilenceTrackBgm || trackId == SilencePlaceholderBgm) return;
+        if (!seen.Add(trackId)) return;
+        if (map.ContainsKey(trackId)) return;
+        if (bgmHideFromList != null && bgmHideFromList.Contains(trackId)) return;   // a situation indirection: its slots are listed instead
+        string name;
+        if (bgmZoneName != null && bgmZoneName.TryGetValue(trackId, out var sheetName) && !string.IsNullOrWhiteSpace(sheetName))
+        {
+            name = sheetName;   // sheet wins the NAME, but the track is still listed under this category
+        }
+        else
+        {
+            string baseName = string.IsNullOrEmpty(label) ? zone : zone + " - " + label;
+            name = baseName;
+            for (int n = 2; taken.Contains(name); n++) name = baseName + " #" + n;
+        }
+        taken.Add(name);
+        map[trackId] = name;
+    }
+
+    // b238: per-category disk cache. One file (bgmCachePath), format: line 0 = build key, then "<cat>\t<id>\t<name>" per
+    // line. A parsed-but-empty category writes a sentinel "<cat>\t0\t" so it isn't re-parsed. A stale build key discards
+    // the whole file. All access is serialised on bgmCacheFileLock (categories parse on separate threads).
+    private readonly object bgmCacheFileLock = new();
+    private Dictionary<uint, string>? LoadCategoryCache(string cat)
+    {
+        lock (bgmCacheFileLock)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(bgmCachePath) || !System.IO.File.Exists(bgmCachePath)) return null;
+                var lines = System.IO.File.ReadAllLines(bgmCachePath);
+                if (lines.Length == 0 || lines[0] != BgmCacheBuildKey) { try { System.IO.File.Delete(bgmCachePath); } catch { } return null; }
+                var map = new Dictionary<uint, string>();
+                bool found = false;
+                for (int i = 1; i < lines.Length; i++)
+                {
+                    var parts = lines[i].Split('\t');
+                    if (parts.Length < 3 || !string.Equals(parts[0], cat, StringComparison.Ordinal)) continue;
+                    found = true;
+                    if (uint.TryParse(parts[1], out var id) && id != 0) map[id] = parts[2];
+                }
+                return found ? map : null;   // not cached yet → caller parses
+            }
+            catch (Exception ex) { log.Warning("[HMSync] BGM category cache load failed: " + ex.Message); return null; }
+        }
+    }
+    private void SaveCategoryCache(string cat, Dictionary<uint, string> bucket)
+    {
+        lock (bgmCacheFileLock)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(bgmCachePath)) return;
+                var keep = new System.Text.StringBuilder();
+                if (System.IO.File.Exists(bgmCachePath))
+                {
+                    var lines = System.IO.File.ReadAllLines(bgmCachePath);
+                    if (lines.Length > 0 && lines[0] == BgmCacheBuildKey)
+                        for (int i = 1; i < lines.Length; i++)
+                        {
+                            if (string.IsNullOrEmpty(lines[i])) continue;
+                            var parts = lines[i].Split('\t');
+                            if (parts.Length >= 1 && !string.Equals(parts[0], cat, StringComparison.Ordinal))
+                                keep.Append(lines[i]).Append('\n');   // preserve other categories' lines
+                        }
+                }
+                var sb = new System.Text.StringBuilder();
+                sb.Append(BgmCacheBuildKey).Append('\n').Append(keep);
+                if (bucket.Count == 0) sb.Append(cat).Append("\t0\t\n");   // parsed-but-empty sentinel
+                else foreach (var kv in bucket) sb.Append(cat).Append('\t').Append(kv.Key).Append('\t').Append(kv.Value).Append('\n');
+                System.IO.File.WriteAllText(bgmCachePath, sb.ToString());
+            }
+            catch (Exception ex) { log.Warning("[HMSync] BGM category cache save failed: " + ex.Message); }
+        }
+    }
+
+    // b237: expose the alliance-raid music packs that have NO static territory→track link. Their LGBs carry no MapRange BGM
+    // trigger (proved for the 3 NieR raids in b233) - the instanced content director resolves their music at runtime - so
+    // the all-zones sweep above never reaches them and they showed a single entry each. The game stores each expansion's
+    // alliance-raid music as ONE undifferentiated numbered series in the BGM sheet's File column (NieR = ex3 Ytc_NN, Myths
+    // of the Realm = ex4 Raid_NN) with NO per-raid attribution, so the best available (user-sanctioned "suboptimal but
+    // better than missing music") is to list the whole series numbered under a series label. The NN is taken from the .scd
+    // filename for a stable number. Ids a sheet/LGB already named are left alone.
+    //   Each pack is a KNOWN, CONTIGUOUS BGM-id band (the whole NieR / Myths series lives in one run of ids), so we scan
+    //   only that ~100-id band and confirm each row's .scd path against the series prefix - NOT the whole ~20k-row BGM
+    //   sheet (b242: that full-sheet "harvest" was needless work; the bands are fixed data we can just serve).
+    private static readonly (string prefix, string series, uint lo, uint hi)[] RaidSeriesPacks =
+    {
+        ("music/ex3/BGM_EX3_Ytc_",  "YoRHa: Dark Apocalypse", 732, 827),
+        ("music/ex4/BGM_EX4_Raid_", "Myths of the Realm",     884, 978),
+    };
+    private void AddRaidSeriesPacks(Dictionary<uint, string> map, HashSet<string> taken)
+    {
+        try
+        {
+            var b = dataManager.GetExcelSheet<BGM>();
+            if (b == null) return;
+            foreach (var (prefix, series, lo, hi) in RaidSeriesPacks)
+            {
+                for (uint id = lo; id <= hi; id++)
+                {
+                    if (id == SilenceTrackBgm || map.ContainsKey(id)) continue;
+                    if (bgmZoneName != null && bgmZoneName.ContainsKey(id)) continue;
+                    if (!b.HasRow(id)) continue;
+                    var path = b.GetRow(id).File.ToString();
+                    if (string.IsNullOrEmpty(path) || !path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+                    var tail = path.Substring(prefix.Length);   // "06.scd"
+                    var dot = tail.IndexOf('.');
+                    var num = dot > 0 ? tail.Substring(0, dot) : tail;
+                    string baseName = series + " " + num;
+                    string name = baseName;
+                    for (int n = 2; taken.Contains(name); n++) name = baseName + " #" + n;
+                    taken.Add(name);
+                    map[id] = name;
+                }
+            }
+        }
+        catch (Exception ex) { log.Warning("[HMSync] AddRaidSeriesPacks failed: " + ex.Message); }
+    }
+
+    // Resolve a (polymorphic) MapRange BGM value to its concrete tracks, each tagged with a condition label. Concrete →
+    // (id, ""); BGMSituation → its Day/Night/Battle/Dawn/Dusk slots (silence dropped); BGMSwitch → recurse each candidate
+    // (a switch candidate is itself concrete or a situation). Depth-guarded (switch→situation is the deepest real chain).
+    private IEnumerable<(uint id, string label)> ResolveMapRangeTracks(uint bgm, int depth)
+    {
+        if (bgm == 0 || bgm == SilenceTrackBgm || depth > 3) yield break;
+        if (bgm >= 50000)                                   // BGMSwitch: union its candidates
+        {
+            foreach (var cand in ExpandBgmSwitch(bgm))
+                foreach (var t in ResolveMapRangeTracks(cand, depth + 1))
+                    yield return t;
+            yield break;
+        }
+        if (IsBgmSituation(bgm))                             // BGMSituation: its time-of-day slots
+        {
+            foreach (var slot in GetSituationSlots(bgm))
+                yield return (slot.bgmId, slot.label);
+            yield break;
+        }
+        yield return (bgm, "");                              // concrete track
+    }
+
     public string BgmName(uint id)
     {
         if (id == 0) return "None";
         if (id == SilenceTrackBgm) return "Silence";   // BGM 1 = BGM_Null.scd (our explicit Stop target)
+        if (id >= OrchestrionIdBase)                    // namespaced orchestrion roll
+        {
+            EnsureOrchestrion();
+            if (orchByRoll != null && orchByRoll.TryGetValue(id - OrchestrionIdBase, out var oe)
+                && !string.IsNullOrWhiteSpace(oe.title)) return oe.title;
+            return "Orchestrion " + (id - OrchestrionIdBase);
+        }
         EnsureBgmNames();
         if (bgmZoneName != null && bgmZoneName.TryGetValue(id, out var place) && !string.IsNullOrWhiteSpace(place))
             return place;
+        if (learnedTrackName.TryGetValue(id, out var learned)) return learned;   // b234: LGB-derived positional track
+        var fileName = BgmFileDerivedName(id);                                    // b236: name from the track's own .scd file
+        if (!string.IsNullOrEmpty(fileName)) return fileName;
         return "Track " + id;
     }
 
     /// <summary>
     /// The full list of selectable BGMs for the picker: (defaultId, "Zone default (...)"), then (0, "None"), then every
-    /// zone-named track sorted by place name. The territory default is passed so the caller can preload it first.
+    /// named track sorted by name - the sheet-named zone/duty tracks PLUS every LGB-derived positional track from the
+    /// b235 all-zones background sweep (Garlemald's day/night/battle variants etc.). The catalog is GLOBAL and complete
+    /// regardless of which zone the player is in. `territoryId` is retained only for signature stability (the per-zone
+    /// default arrives separately as `territoryDefaultBgm`); population no longer depends on it. EnsureBgmNames kicks the
+    /// sweep, so the LGB tracks land a moment after the UI first opens and surface on the next frame's rebuild.
     /// </summary>
-    public List<(uint id, string name)> GetBgmChoices(uint territoryDefaultBgm)
+    public List<(uint id, string name)> GetBgmChoices(uint territoryId, uint territoryDefaultBgm)
     {
+        _ = territoryId;   // b235: population is global (background sweep) - no longer keyed to the current zone
+        // b236 FPS: serve the cached list if neither the sweep result nor the zone default has changed since it was built.
+        // ReferenceEquals on learnedTrackName catches the sweep's atomic swap; equal default catches a zone change.
+        if (bgmChoicesCache != null && ReferenceEquals(bgmChoicesCacheLearnedRef, learnedTrackName)
+            && bgmChoicesCacheDefault == territoryDefaultBgm)
+            return bgmChoicesCache;
         var result = new List<(uint, string)>();
         result.Add((territoryDefaultBgm, "Zone default (" + BgmName(territoryDefaultBgm) + ")"));
         result.Add((0, "None"));
         EnsureBgmNames();
+        var named = new List<(uint id, string name)>();
         if (bgmZoneName != null)
         {
-            foreach (var kv in bgmZoneName.OrderBy(k => k.Value, StringComparer.OrdinalIgnoreCase))
+            foreach (var kv in bgmZoneName)
             {
                 if (kv.Key == territoryDefaultBgm) continue; // already the default entry
-                result.Add((kv.Key, kv.Value));
+                if (bgmHideFromList != null && bgmHideFromList.Contains(kv.Key)) continue; // situation indirection - its slots are listed instead
+                named.Add((kv.Key, kv.Value));
             }
         }
+        // b234: LGB-derived positional tracks (Garlemald's field/battle variants etc.) the sheets can't name - listed so
+        // multi-track zones expose every track. Skip any id a sheet already names / the default already covers.
+        foreach (var kv in learnedTrackName)
+        {
+            if (kv.Key == territoryDefaultBgm) continue;
+            if (bgmZoneName != null && bgmZoneName.ContainsKey(kv.Key)) continue;
+            named.Add((kv.Key, kv.Value));
+        }
+        foreach (var e in named.OrderBy(k => k.name, StringComparer.OrdinalIgnoreCase))
+            result.Add(e);
+        // b236 FPS: publish to the per-frame cache keyed on the current sweep result + zone default.
+        bgmChoicesCache = result;
+        bgmChoicesCacheLearnedRef = learnedTrackName;
+        bgmChoicesCacheDefault = territoryDefaultBgm;
         return result;
     }
 
@@ -2247,10 +2999,20 @@ public unsafe class MapSettingsService
     // S327q resolved to nothing - sig miss - and played silence, WORSE than this). CS Scene layout: BgmId@0x0C (target),
     // PlayingBgmId@0x0E, PreviousBgmId@0x10. Writing BgmId is what forces the track; the game propagates it. For STOP
     // (id 0) we also poke the flags byte @0x04 (Resume) as Orchestrion does. A diagnostic confirms the write lands.
+    // Handle to a manually-started orchestrion stream so we can Stop it when switching tracks / leaving. Orchestrion
+    // rolls do NOT go through the BGM director (their .scd isn't a BGM id) - we play the raw path on the Music bus.
+    private unsafe FFXIVClientStructs.FFXIV.Client.Sound.SoundData* orchestrionSound;
+    private uint currentOrchestrionSel;   // namespaced selection of the roll currently overriding, 0 = none
+
     public bool PlayBgm(uint bgmId)
     {
         try
         {
+            // Orchestrion selections are namespaced above OrchestrionIdBase - they play through the raw sound path, not
+            // the BGM director. Route them there; everything else is a concrete BGM file id for the director scene.
+            if (bgmId >= OrchestrionIdBase) return PlayOrchestrion(bgmId);
+            StopOrchestrionStream();                     // switching to a real BGM - kill any orchestrion override first
+
             var bgm = FFXIVClientStructs.FFXIV.Client.Game.BGMSystem.Instance();
             if (bgm == null) { log.Warning("[HMSync] [BGM-PLAY] BGMSystem null"); return false; }
             if (bgm->Scenes.LongCount <= 0) { log.Warning("[HMSync] [BGM-PLAY] no scenes"); return false; }
@@ -2269,6 +3031,57 @@ public unsafe class MapSettingsService
         }
     }
 
+    // Play an orchestrion roll by its .scd path on the Orchestrion bus (SoundManager.PlayOrchestrionSound - the same
+    // low-level call the game uses for a housing jukebox, which is why an estate visitor hears it). We first pin the BGM
+    // director scene to silence (BGM_Null) so the zone track doesn't play underneath, then start the stream and keep the
+    // handle to Stop it later. No unlock or packet involvement - unlike OrchestrionManager - so it plays for everyone in
+    // the session regardless of ownership.
+    private unsafe bool PlayOrchestrion(uint selection)
+    {
+        if (!TryGetOrchestrionPath(selection, out var path))
+        {
+            log.Warning("[HMSync] [BGM-PLAY] orchestrion selection " + selection + " has no path");
+            return false;
+        }
+        var sm = FFXIVClientStructs.FFXIV.Client.Sound.SoundManager.Instance();
+        if (sm == null) { log.Warning("[HMSync] [BGM-PLAY] SoundManager null"); return false; }
+
+        // Silence the BGM director so its zone track doesn't sound under the orchestrion roll.
+        var bgm = FFXIVClientStructs.FFXIV.Client.Game.BGMSystem.Instance();
+        if (bgm != null && bgm->Scenes.LongCount > 0)
+        {
+            var s0 = bgm->Scenes.First;
+            s0->BgmId = (ushort)SilenceTrackBgm;
+            s0->PlayingBgmId = (ushort)SilenceTrackBgm;
+            s0->PreviousBgmId = (ushort)SilenceTrackBgm;
+        }
+
+        StopOrchestrionStream();                         // stop any previous roll before starting the next
+        // Orchestrion .scd files play through the DEDICATED PlayOrchestrionSound (SoundBus.Orchestrion), NOT PlayBGMSound
+        // (SoundBus.Music, the BGM-director loader). PlayBGMSound returned a non-null handle but produced no audio for
+        // orchestrion-format .scd - wrong bus/loader - which was the "roll names show but silence plays" bug.
+        // PlayOrchestrionSound is 3D positional (this is exactly how a visited estate's orchestrion sounds), so anchor it
+        // at the LOCAL player for full volume; each client positions at its own player, so everyone in the session hears
+        // it. (Caveat: as a 3D source it fades if the listener walks far from the spawn point - acceptable for the fix.)
+        float px = 0f, py = 0f, pz = 0f;
+        var lp = FFXIVClientStructs.FFXIV.Client.Game.Control.Control.GetLocalPlayer();
+        if (lp != null) { px = lp->Position.X; py = lp->Position.Y; pz = lp->Position.Z; }
+        orchestrionSound = sm->PlayOrchestrionSound(path, px, py, pz, true);
+        if (orchestrionSound == null) { log.Warning("[HMSync] [BGM-PLAY] PlayOrchestrionSound returned null for " + path); return false; }
+        currentOrchestrionSel = selection;
+        return true;
+    }
+
+    private unsafe void StopOrchestrionStream()
+    {
+        currentOrchestrionSel = 0;
+        if (orchestrionSound != null)
+        {
+            try { orchestrionSound->Stop(0); } catch { /* pool may have recycled it already */ }
+            orchestrionSound = null;
+        }
+    }
+
     // STOP = actual SILENCE, not "revert to default". Writing 0 makes the game re-resolve the zone's own track (that's
     // what Reset does). To truly silence, play the null track (BGM 1 = BGM_Null.scd) - an empty scd, so nothing sounds.
     private const uint SilenceTrackBgm = 1;   // BGM_Null.scd
@@ -2281,6 +3094,7 @@ public unsafe class MapSettingsService
     {
         try
         {
+            StopOrchestrionStream();                     // release any orchestrion override so the game's own music returns
             var bgm = FFXIVClientStructs.FFXIV.Client.Game.BGMSystem.Instance();
             if (bgm == null || bgm->Scenes.LongCount <= 0) return;
             var s0 = bgm->Scenes.First;

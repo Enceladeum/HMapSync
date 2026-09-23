@@ -178,6 +178,7 @@ public class HMSyncUI
     public Func<bool>? DebugMode;
     public Action<bool>? SetDebugMode;
     public System.Action? ReloadWeatherDtr;   // b225: called after flipping config.ShowWeatherDtr so the DTR entry is created/removed
+    public System.Action? ReloadTrackDtr;     // b240: called after flipping config.ShowTrackDtr so the music DTR entry is created/removed
     public Func<(uint outbound, uint inbound, bool verified, string version)>? SayOpcodeState;
     public Action<uint, uint>? SetSayOpcodes;      // manual key-in: (outbound, inbound)
     public System.Action? VerifySayOpcodes;               // stamp current opcodes verified on the current game version
@@ -299,6 +300,29 @@ public class HMSyncUI
     public Func<string>? BgmNowPlaying;   // S326w: title of the currently-selected BGM track (for host + guest display)
     public Action<ushort, byte, bool>? SetHostTime;   // S327g: (hour, minute, forced) - silent host time-set: apply + push epoch, no chat spam
     private string bgmBrowseFilter = "";  // S326w: filter in the BGM browse popup
+    // b236 verbatim-label: remember the EXACT label the user picked from the Browse picker so the Music row shows it
+    // verbatim, instead of re-deriving a name from the live scene id. When a situation/switch track is played the native
+    // director resolves it to a DIFFERENT concrete id than the one the picker offered, and that resolved id has no catalog
+    // entry -> the row showed "Track 855" for what the picker called "Garlemald - Day". Keyed by (territory, id) so it
+    // self-invalidates on zone change and is dropped by Stop/Reset. Separate slots for the local-cinematic vs host panels.
+    private (uint tt, uint id, string label)? bgmPickLocal;
+    private (uint tt, uint id, string label)? bgmPickHost;
+    // b238: pop-out BGM picker window (like the Zones/maps window) with category chips. `bgmPickerOpen` toggles the
+    // floating window; `bgmPickerCat` is the active chip; the per-chip track list is parsed lazily by the service when its
+    // chip is first opened (no eager sweep -> no lag). Territory-ids-per-chip come from the Zones `clusters` classification.
+    private bool bgmPickerOpen;
+    private bool bgmPickerLocal = true;   // selection routing: true = local preview (PlayBgm), false = host (config + broadcast)
+    private string bgmPickerCat = "World";   // b242: default chip (no more "All" flat-catalog view)
+    private Dictionary<string, List<uint>>? bgmChipZones;   // chip category -> its territory ids (built once from clusters)
+    public void OpenBgmPicker(bool local) { bgmPickerOpen = true; bgmPickerLocal = local; }
+    // b240: open the picker in the right context automatically (used by the server-info-bar entry, which has no local/host
+    // context of its own): host path when this client is hosting a loaded session, else local preview.
+    public void OpenBgmPickerAuto()
+    {
+        uint loadedZone = CurrentLoadedZone?.Invoke() ?? 0;
+        bool live = (CanLoad?.Invoke() ?? false) && loadedZone != 0;
+        OpenBgmPicker(!live);
+    }
     // Cached lists for the loaded map's Time & weather (rebuilt when the loaded zone changes).
     private uint mapSettingsCachedTerritory = uint.MaxValue;
     private List<(byte id, string name)>? mapWeatherChoices;   // the map's legal/accepted weathers
@@ -1307,7 +1331,7 @@ public class HMSyncUI
         mapSettingsCachedTerritory = tt;
         mapWeatherChoices = MapSettings.GetLegalWeather(tt);
         mapDefaultWeather = MapSettings.GetDefaultWeather(tt);
-        mapBgmChoices = MapSettings.GetBgmChoices(MapSettings.GetDefaultBgm(tt));
+        mapBgmChoices = MapSettings.GetBgmChoices(tt, MapSettings.GetDefaultBgm(tt));
         mapAllWeather = null;   // lazy-rebuilt if "Extra presets" is open
         localPickWeather = 0; localPickDonor = 0;   // drop the local-cinematic accent pick on a zone change
     }
@@ -1506,7 +1530,7 @@ public class HMSyncUI
         if (!weatherPresetsPoppedOut || MapSettings == null) return;
         uint loadedZone = CurrentLoadedZone?.Invoke() ?? 0;
         bool live = (CanLoad?.Invoke() ?? false) && loadedZone != 0;
-        bool local = !live && (DebugMode?.Invoke() ?? false) && !relay.IsSessionActive && (CurrentRealTerritory?.Invoke() ?? 0) != 0;
+        bool local = !live && !relay.IsSessionActive && (CurrentRealTerritory?.Invoke() ?? 0) != 0;   // b241: local-cinematic music/weather no longer requires Debug mode
         uint tt = live ? loadedZone : (CurrentRealTerritory?.Invoke() ?? 0);
 
         // Accent the title bar so the tear-off follows the accent config, like the other tear-offs.
@@ -1540,14 +1564,14 @@ public class HMSyncUI
         if (MapSettings == null) { ImGui.TextDisabled("Unavailable."); return; }
         uint loadedZone = CurrentLoadedZone?.Invoke() ?? 0;
         bool live = (CanLoad?.Invoke() ?? false) && loadedZone != 0;
-        // OUT-OF-SESSION LOCAL CINEMATIC (Debug mode, no session): time / weather / BGM / lights / VFX are ALL
+        // OUT-OF-SESSION LOCAL CINEMATIC (no session; b241: no longer Debug-gated): time / weather / BGM / lights / VFX are ALL
         // purely-local scene writes (EnvManager weather, the Brio time-freeze hook, scene-0 BGM playback, the layout
         // light/VFX suppressor), so with no map loaded they can still drive the REAL zone the player stands in - the
         // same cosmetic surface Weatherman / Orchestrion offer, mogging both. In this mode nothing is persisted as a
         // map setting and nothing is broadcast (there are no peers); the NPC-hide and spawn/teleport controls stay
         // loaded-map / session features and are omitted below. `local` selects that path; `tt` is the zone the
         // controls act on either way (the loaded synthetic zone when live, the real current zone when local).
-        bool local = !live && (DebugMode?.Invoke() ?? false) && !relay.IsSessionActive && (CurrentRealTerritory?.Invoke() ?? 0) != 0;
+        bool local = !live && !relay.IsSessionActive && (CurrentRealTerritory?.Invoke() ?? 0) != 0;   // b241: local-cinematic music/weather no longer requires Debug mode
         if (!live && !local) { ImGui.TextDisabled("Load a map to adjust its time and weather."); return; }
         uint tt = live ? loadedZone : (CurrentRealTerritory?.Invoke() ?? 0);
 
@@ -1742,7 +1766,14 @@ public class HMSyncUI
         uint shownTrack = local
             ? (liveTrack != 0 && liveTrack != 1 ? liveTrack : MapSettings.GetDefaultBgm(tt))
             : (config.MapBgmId != 0 ? config.MapBgmId : MapSettings.GetDefaultBgm(tt));
-        string nowBgm = shownTrack != 0 ? MapSettings.BgmName(shownTrack) : "None";
+        // b236 verbatim-label: if the user picked a track from the Browse picker for THIS panel + zone, echo that exact
+        // label. The picker's id may resolve (via BGMSituation/BGMSwitch) to a different concrete scene id at play time,
+        // so re-deriving from the live id showed "Track N"; the remembered label is what they actually chose. Stop/Reset
+        // clear the pick, and the zone-scope check drops it on a zone change - both then fall back to the derived name.
+        var pick = local ? bgmPickLocal : bgmPickHost;
+        string nowBgm = pick.HasValue && pick.Value.tt == tt
+            ? pick.Value.label
+            : (shownTrack != 0 ? MapSettings.BgmName(shownTrack) : "None");
         ImGui.AlignTextToFramePadding();
         ImGui.TextDisabled("Music:");
         ImGui.SameLine();
@@ -1769,8 +1800,8 @@ public class HMSyncUI
         // Distinct from Reset, which restores the zone's own default music. (Writing 0 would re-resolve the default = not silence.)
         if (ImGuiComponents.IconButton("##bgmstop", FontAwesomeIcon.Stop))
         {
-            if (local) MapSettings.StopBgm();
-            else { config.MapBgmId = 1; config.Save(); RunCommand?.Invoke("mapbgm", "1"); }
+            if (local) { MapSettings.StopBgm(); bgmPickLocal = null; }
+            else { config.MapBgmId = 1; config.Save(); RunCommand?.Invoke("mapbgm", "1"); bgmPickHost = null; }   // b236: drop the remembered pick -> row shows "Silence"
         }
         if (ImGui.IsItemHovered()) ImGui.SetTooltip("Stop: silence the map music (for everyone).");
         ImGui.SameLine();
@@ -1778,16 +1809,15 @@ public class HMSyncUI
         if (ImGuiComponents.IconButton("##bgmreset", FontAwesomeIcon.UndoAlt))
         {
             var def = MapSettings.GetDefaultBgm(tt);
-            if (local) MapSettings.PlayBgm(def);
-            else { config.MapBgmId = def; config.Save(); RunCommand?.Invoke("mapbgm", def.ToString()); }
+            if (local) { MapSettings.PlayBgm(def); bgmPickLocal = null; }
+            else { config.MapBgmId = def; config.Save(); RunCommand?.Invoke("mapbgm", def.ToString()); bgmPickHost = null; }   // b236: drop the pick -> row shows the zone-default name
         }
         if (ImGui.IsItemHovered()) ImGui.SetTooltip("Reset to the zone's default music.");
         ImGui.SameLine();
         ImGui.AlignTextToFramePadding();
         ImGui.TextUnformatted(nowBgm);
-        // Browse BGM: a full-width button underneath the transport row (was crammed inline after the track name).
-        if (ImGui.Button("Browse BGM##bgm", new Vector2(-PanelPad, 0f))) { bgmBrowseFilter = ""; ImGui.OpenPopup("##bgmbrowse"); }
-        DrawBgmBrowsePopup(tt, local);
+        // b238: opens the pop-out picker window (category chips + lazy per-category parse) instead of the old inline popup.
+        if (ImGui.Button("Browse music##bgm", new Vector2(-PanelPad, 0f))) { bgmBrowseFilter = ""; OpenBgmPicker(local); }
 
         // NPC scene-cleanup (host-authoritative), folded in here so all scene-presentation controls live together. LOCAL
         // cinematic omits it - hiding NPCs on the REAL live zone is a session/loaded-map feature, not a cosmetic sky tweak.
@@ -1886,44 +1916,158 @@ public class HMSyncUI
         if (toToggle != 0) ToggleNpcHide?.Invoke(toToggle);
     }
 
-    // Two-column searchable BGM picker in a popup - the smart alternative to a giant dropdown. Search by title, click
-    // to play. Populated from the Orchestrion-named track list.
-    private void DrawBgmBrowsePopup(uint tt, bool local)
+    // b238: the chip categories for the BGM picker. Reuses the Zones-tab classification verbatim (so a chip == a map
+    // category and the territory list is free), plus the "Orchestrion" roll catalog chip. Order mirrors the Zones pill row.
+    // NOTE: lazily built on first ACCESS, not as a static field-initializer. `Categories` is declared later in the file, so
+    // a `= BuildBgmChips()` field-initializer would run inside the type initializer BEFORE `Categories` is set -> NRE that
+    // crashes the whole plugin's render (b238 regression). Deferring to first use (well after the cctor) is order-safe.
+    private static string[]? bgmChipsCache;
+    private static string[] BgmChips => bgmChipsCache ??= BuildBgmChips();
+    private static string[] BuildBgmChips()
     {
-        // Anchor the popup to a STABLE position (just below the Browse button's left edge), not the mouse-click point -
-        // ImGui popups otherwise open at the cursor, so the corner landed wherever in the button you happened to click.
-        var anchor = ImGui.GetItemRectMin();
-        var btnBottom = ImGui.GetItemRectMax().Y;
-        ImGui.SetNextWindowPos(new Vector2(anchor.X, btnBottom + 2f), ImGuiCond.Appearing);
-        ImGui.SetNextWindowSize(new Vector2(360f, 460f), ImGuiCond.Appearing);
-        if (!ImGui.BeginPopup("##bgmbrowse")) return;
+        var list = new List<string>(Categories.Length + 1);
+        // b240: no Cutscenes chip - cutscene music isn't reachable through the territory/LGB machinery (director-driven per
+        // scene, not bound to a browsable territory). b242: no "All" chip - it built the whole flat catalog on open (the
+        // launch-stutter path); every chip is now a bounded lazy category. Orchestrion appended as its own chip.
+        foreach (var c in Categories) { if (c == "All" || c == "Cutscenes") continue; list.Add(c); }
+        list.Add("Orchestrion");
+        return list.ToArray();
+    }
 
-        ImGui.TextUnformatted("Browse music");
+    // b238: territory ids per chip category, built once from the Zones clusters. "Orchestrion" isn't zone-derived.
+    private List<uint> BgmChipTerritories(string cat)
+    {
+        if (bgmChipZones == null)
+        {
+            if (clusters == null) BuildClusters();
+            bgmChipZones = new Dictionary<string, List<uint>>(StringComparer.Ordinal);
+            if (clusters != null)
+                foreach (var c in clusters)
+                {
+                    if (!bgmChipZones.TryGetValue(c.Category, out var l)) { l = new List<uint>(); bgmChipZones[c.Category] = l; }
+                    foreach (var v in c.Variants) l.Add(v.Id);
+                }
+        }
+        return bgmChipZones.TryGetValue(cat, out var ids) ? ids : new List<uint>();
+    }
+
+    // b238: the pop-out BGM picker window. Category chips across the top; the active chip's tracks below, parsed LAZILY by
+    // the service (no eager all-zones sweep -> no lag). "Orchestrion" shows the roll catalog; any map category parses just
+    // its own territories' LGBs on first open (cached after). Selection mirrors the inline Music row: local preview plays
+    // via PlayBgm, host writes config.MapBgmId + broadcasts, and the picked label is remembered verbatim (b236). Rendered
+    // every frame from HMSyncPlugin's UiBuilder.Draw; no-op unless popped out.
+    public void DrawBgmPickerWindow()
+    {
+        if (!bgmPickerOpen || MapSettings == null) return;
+        uint loadedZone = CurrentLoadedZone?.Invoke() ?? 0;
+        bool live = (CanLoad?.Invoke() ?? false) && loadedZone != 0;
+        uint tt = live ? loadedZone : (CurrentRealTerritory?.Invoke() ?? 0);
+        bool local = bgmPickerLocal;
+        uint zoneDefault = tt != 0 ? MapSettings.GetDefaultBgm(tt) : 0;
+
+        var acc = Accent();
+        ImGui.PushStyleColor(ImGuiCol.TitleBg, Darken(acc, 0.32f));
+        ImGui.PushStyleColor(ImGuiCol.TitleBgActive, Darken(acc, 0.55f));
+        ImGui.SetNextWindowSize(new Vector2(420, 520), ImGuiCond.FirstUseEver);
+        if (!ImGui.Begin("Browse music##hmsbgmpicker", ref bgmPickerOpen))
+        {
+            ImGui.End();
+            ImGui.PopStyleColor(2);
+            return;
+        }
+
+        // Search box.
         ImGui.SetNextItemWidth(-1);
-        ImGui.InputTextWithHint("##bgmsearch", "Search by name\u2026", ref bgmBrowseFilter, 128);
+        ImGui.InputTextWithHint("##bgmpickersearch", "Search by name…", ref bgmBrowseFilter, 128);
+        var q = bgmBrowseFilter.Trim();
+        bool searching = q.Length > 0;
+
+        // Category pill row (single-select, reflowing) - mirrors the Zones tab.
+        {
+            float avail0 = ImGui.GetContentRegionAvail().X, x = 0f; const float gap = 6f;
+            for (int i = 0; i < BgmChips.Length; i++)
+            {
+                string lbl = BgmChips[i];
+                float w = ImGui.CalcTextSize(lbl).X + ImGui.GetStyle().FramePadding.X * 2f + 4f;
+                if (i > 0) { if (x + gap + w > avail0) x = 0f; else { ImGui.SameLine(0f, gap); x += gap; } }
+                bool on = bgmPickerCat == lbl;
+                ImGui.PushStyleColor(ImGuiCol.Button, on ? Darken(acc, 0.5f) : new Vector4(0.15f, 0.16f, 0.19f, 1f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.24f, 0.25f, 0.29f, 1f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.24f, 0.25f, 0.29f, 1f));
+                ImGui.PushStyleColor(ImGuiCol.Text, on ? Lighten(acc, 1.05f) : new Vector4(0.72f, 0.75f, 0.80f, 1f));
+                if (ImGui.Button(lbl + "##bgmchip" + i, new Vector2(w, 0f))) bgmPickerCat = lbl;
+                ImGui.PopStyleColor(4);
+                x += w;
+            }
+        }
         ImGui.Separator();
 
-        var choices = MapSettings!.GetBgmChoices(MapSettings.GetDefaultBgm(tt));
-        var q = bgmBrowseFilter.Trim();
+        uint activeSel = local ? MapSettings.GetCurrentBgm() : config.MapBgmId;
 
-        // ONE scroll region, ONE column. The two-column layout needed an inner child per column → nested scrollbars
-        // (a cardinal UI sin). A single vertical list in one scroll container is the clean answer: the search box does
-        // the "narrow it down" work that a second column was pretending to do, and one scrollbar is unambiguous.
-        if (ImGui.BeginChild("##bgmlist", new Vector2(0f, 0f)))
+        if (ImGui.BeginChild("##bgmpickerlist", new Vector2(0f, 0f)))
         {
-            foreach (var (id, name) in choices)
+            if (bgmPickerCat == "Orchestrion")
             {
-                if (q.Length > 0 && !name.Contains(q, StringComparison.OrdinalIgnoreCase)) continue;
-                if (ImGui.Selectable(name + "##bgm" + id, (local ? MapSettings.GetCurrentBgm() : config.MapBgmId) == id))
+                DrawBgmPickerOrchestrion(q, searching, activeSel, local);
+            }
+            else
+            {
+                // Zone default + None affordances (top of every track chip).
+                if (zoneDefault != 0 && (!searching || "zone default".Contains(q, StringComparison.OrdinalIgnoreCase)))
+                    BgmPickerRow(zoneDefault, "Zone default (" + MapSettings.BgmName(zoneDefault) + ")", activeSel, tt, local);
+                if (!searching || "none".Contains(q, StringComparison.OrdinalIgnoreCase))
+                    BgmPickerRow(0, "None", activeSel, tt, local);
+
+                // The chip's tracks: parse this category's territories lazily (background, cached), then list its bucket
+                // sorted by name. b242: no "All" flat-catalog branch any more - every chip is a bounded lazy category.
+                MapSettings.EnsureCategoryParsed(bgmPickerCat, BgmChipTerritories(bgmPickerCat));
+                if (!MapSettings.IsCategoryReady(bgmPickerCat))
+                    ImGui.TextDisabled("Loading " + bgmPickerCat + " tracks…");
+                foreach (var kv in MapSettings.GetCategoryTracks(bgmPickerCat)
+                             .Where(kv => kv.Key != zoneDefault)
+                             .OrderBy(kv => kv.Value, StringComparer.OrdinalIgnoreCase))
                 {
-                    if (local) MapSettings.PlayBgm(id);   // local cinematic: play on this client only, no persist/broadcast
-                    else { config.MapBgmId = id; config.Save(); RunCommand?.Invoke("mapbgm", id.ToString()); }
-                    ImGui.CloseCurrentPopup();
+                    if (searching && !kv.Value.Contains(q, StringComparison.OrdinalIgnoreCase)) continue;
+                    BgmPickerRow(kv.Key, kv.Value, activeSel, tt, local);
                 }
             }
         }
         ImGui.EndChild();
-        ImGui.EndPopup();
+        ImGui.End();
+        ImGui.PopStyleColor(2);
+    }
+
+    // b238: one selectable track row in the pop-out picker. Same routing as the inline Music row: local preview via
+    // PlayBgm, host via config.MapBgmId + broadcast; the picked label is remembered verbatim (b236). id 0 = "None".
+    private void BgmPickerRow(uint id, string name, uint activeSel, uint tt, bool local)
+    {
+        if (ImGui.Selectable(name + "##bgmpick" + id, activeSel == id))
+        {
+            if (local) { MapSettings!.PlayBgm(id); bgmPickLocal = (tt, id, name); }
+            else { config.MapBgmId = id; config.Save(); RunCommand?.Invoke("mapbgm", id.ToString()); bgmPickHost = (tt, id, name); }
+        }
+    }
+
+    // b238: the Orchestrion section, grouped by the game's genre categories (mirrors the inline popup's orchestrion block).
+    private void DrawBgmPickerOrchestrion(string q, bool searching, uint activeSel, bool local)
+    {
+        var orch = MapSettings!.GetOrchestrionChoices();
+        string curCat = "";
+        foreach (var (sel, title, category, catOrder, order) in orch)
+        {
+            if (searching && !title.Contains(q, StringComparison.OrdinalIgnoreCase)) continue;
+            if (category != curCat)
+            {
+                curCat = category;
+                if (!string.IsNullOrEmpty(category))
+                    ImGui.TextColored(new Vector4(0.55f, 0.70f, 0.90f, 1f), category);
+            }
+            if (ImGui.Selectable(title + "##bgmpickorch" + sel, activeSel == sel))
+            {
+                if (local) MapSettings.PlayBgm(sel);
+                else { config.MapBgmId = sel; config.Save(); RunCommand?.Invoke("mapbgm", sel.ToString()); }
+            }
+        }
     }
 
     // "This map" spawn-point editor (loaded-map scoped). BGM moved into Time & weather; Hide-NPCs into the
@@ -2375,6 +2519,17 @@ ImGui.Spacing();
             }
             ImGui.SameLine(); ImGui.TextDisabled("current weather in the server-info bar");
             if (ImGui.IsItemHovered()) ImGui.SetTooltip("Adds the current weather name to Dalamud's server-info bar (top-right). Click it to pop out the weather presets.");
+
+            // b240: matching music readout - the current track name in the DTR bar; click it to open the BGM picker.
+            bool trkDtr = config.ShowTrackDtr;
+            if (ImGui.Checkbox("Show music", ref trkDtr))
+            {
+                config.ShowTrackDtr = trkDtr;
+                config.Save();
+                ReloadTrackDtr?.Invoke();
+            }
+            ImGui.SameLine(); ImGui.TextDisabled("current track in the server-info bar");
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Adds the current music track to Dalamud's server-info bar (top-right). Click it to open the music picker.");
         }
         EndPanel();
 
