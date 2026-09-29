@@ -899,13 +899,40 @@ public class StateApplyService : IDisposable
 
     private long joinSequenceCounter;   // S326h: monotonic, stamps each peer's join order for the participant #-column
 
+    // b247: prune a STALE DUPLICATE of the same person. The relay mints a fresh peerId every connection, and a silent
+    // network drop sends no clean LeaveRoom, so an old roster entry can linger; when that person reconnects (new peerId,
+    // SAME ContentId) both entries exist and the participant list shows two of them (the "duplicate of yourself on
+    // reconnect" report). Remove every peerInfos/peerStates entry with this ContentId under a DIFFERENT peerId. This is a
+    // LIGHT dict-only removal - same ContentId == the same real game object, which the surviving entry re-binds via
+    // ResolvePeerObjectIndex, so we must NOT run the heavy UnregisterPeer (it would tear down the shared body). Returns
+    // the displaced peer's join order so the reconnect keeps its original arrival slot in the roster. Concurrent-safe
+    // (ConcurrentDictionary), so it's callable from the relay thread (transform path) as well as the framework thread.
+    private long PruneContentIdDuplicates(ulong contentId, string keepPeerId)
+    {
+        if (contentId == 0) return 0;
+        long carriedSeq = 0;
+        foreach (var kv in peerInfos)
+        {
+            if (kv.Key == keepPeerId || kv.Value.ContentId != contentId) continue;
+            if (kv.Value.JoinSequence > 0) carriedSeq = kv.Value.JoinSequence;
+            peerInfos.TryRemove(kv.Key, out _);
+            peerStates.TryRemove(kv.Key, out _);
+            log.Information("[HMSync] Pruned stale duplicate peer " + kv.Key[..System.Math.Min(6, kv.Key.Length)]
+                + " (content=" + contentId + ") - superseded by reconnect " + keepPeerId[..System.Math.Min(6, keepPeerId.Length)]);
+        }
+        return carriedSeq;
+    }
+
     public void RegisterPeer(string peerId, ulong contentId, uint entityId, string characterName)
     {
-        // Keep a peer's original join order if it's already registered (re-register on re-resolve) - only assign a new
-        // sequence to a genuinely new peer, so the #-column order is stable and reflects true arrival order.
+        // b247: drop any lingering old-peerId entry for this same ContentId (silent-drop + reconnect) before we add.
+        long carriedSeq = PruneContentIdDuplicates(contentId, peerId);
+        // Keep a peer's original join order if it's already registered (re-register on re-resolve), else inherit the
+        // pruned duplicate's order (a reconnect keeps its slot), else assign a fresh one - so the #-column order is
+        // stable and reflects true arrival order.
         long seq = peerInfos.TryGetValue(peerId, out var existing) && existing.JoinSequence > 0
             ? existing.JoinSequence
-            : System.Threading.Interlocked.Increment(ref joinSequenceCounter);
+            : (carriedSeq > 0 ? carriedSeq : System.Threading.Interlocked.Increment(ref joinSequenceCounter));
         var info = new PeerInfo
         {
             PeerId = peerId,
@@ -913,6 +940,7 @@ public class StateApplyService : IDisposable
             EntityId = entityId,
             CharacterName = characterName,
             JoinSequence = seq,
+            LastSeenTick = System.Environment.TickCount64,   // b248: fresh peer is live now
         };
         ResolvePeerObjectIndex(info);
         peerInfos[peerId] = info;
@@ -926,6 +954,23 @@ public class StateApplyService : IDisposable
             OnPeerBound?.Invoke(info.ObjectIndex.Value);
         log.Information("[HMSync] Registered peer " + peerId[..6] + " as " + characterName +
             " (content=" + contentId + ", entity=" + entityId + ", idx=" + (info.ObjectIndex?.ToString() ?? "?") + ", seq=" + seq + ")");
+    }
+
+    // b248: peerIds whose HOT heartbeat has gone silent for longer than timeoutMs - a silent drop the relay never sent
+    // a LeaveRoom for. Read-only; the caller (framework thread) routes each through the normal leave cleanup. Only
+    // meaningful while HOT is expected to flow (an active session with a map loaded) - the CALLER gates on that, since a
+    // bare lobby is legitimately silent and every peer would look timed out.
+    private static readonly System.Collections.Generic.List<string> EmptyPeerIdList = new();
+    public System.Collections.Generic.List<string> CollectTimedOutPeerIds(long timeoutMs)
+    {
+        var now = System.Environment.TickCount64;
+        System.Collections.Generic.List<string>? stale = null;
+        foreach (var kv in peerInfos)
+        {
+            if (now - kv.Value.LastSeenTick <= timeoutMs) continue;
+            (stale ??= new System.Collections.Generic.List<string>()).Add(kv.Key);
+        }
+        return stale ?? EmptyPeerIdList;
     }
 
     public unsafe void UnregisterPeer(string peerId)
@@ -1094,7 +1139,10 @@ public class StateApplyService : IDisposable
             if (!peerInfos.TryGetValue(peerId, out var pinfo))
             {
                 // First time we've heard from this peer with an identity → create the entry (unbound; binds later).
-                long seq = System.Threading.Interlocked.Increment(ref joinSequenceCounter);
+                // b247: a transform can be the FIRST sign of a reconnect (if it beats the relay's PeerJoined), so prune
+                // any stale old-peerId entry for this ContentId here too, and inherit its join order if present.
+                long carried = PruneContentIdDuplicates(transform.SenderContentId, peerId);
+                long seq = carried > 0 ? carried : System.Threading.Interlocked.Increment(ref joinSequenceCounter);
                 pinfo = new PeerInfo { PeerId = peerId, ContentId = transform.SenderContentId, JoinSequence = seq };
                 peerInfos[peerId] = pinfo;
             }
@@ -1104,6 +1152,7 @@ public class StateApplyService : IDisposable
                 pinfo.ContentId = transform.SenderContentId;
                 pinfo.ObjectIndex = null;
             }
+            pinfo.LastSeenTick = System.Environment.TickCount64;   // b248: liveness stamp - this peer is heartbeating
         }
 
         var newState = new TransformSnapshot
@@ -2939,6 +2988,11 @@ public class PeerInfo
     public ulong ContentId { get; set; }
     public string CharacterName { get; set; } = "";
     public long JoinSequence { get; set; }   // S326h: arrival order for the participant #-column (stable per peer)
+    // b248: last time we received ANY frame from this peer (Environment.TickCount64 ms). Updated per-frame in
+    // OnTransformReceived; read by CollectTimedOutPeerIds to reap a peer whose HOT heartbeat has gone silent (a
+    // silent drop the relay never sent a LeaveRoom for). Written on the relay thread, read on the framework thread -
+    // a 64-bit timestamp, so a torn read is a non-issue and inconsequential either way.
+    public long LastSeenTick { get; set; }
     public ushort? ObjectIndex { get; set; }
     // v0.7.328: the peer's REAL position captured ONCE at first bind - before HMS starts overriding it with synthetic
     // coords. Because the packet firewall pins the peer at their session-start spot server-side (they read as idle),

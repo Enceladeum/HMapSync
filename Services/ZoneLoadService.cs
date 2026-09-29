@@ -4590,6 +4590,98 @@ public unsafe class ZoneLoadService : IDisposable
     };
 
     // ══════════════════════════════════════════════════════════════════════════════════════════════════════
+    // b245/b246 - PURPLE LINE-LIGHT SUPPRESSION. Dungeon curtains AND barriers leave behind a purple glow that
+    // survives hiding the model + its VFX. It is self-identifying: a Light instance of LightType.Line (@0x38,
+    // enum Line=5) with a purple colour - a layout "Line light". b245 coupled it to the dext curtain by
+    // PROXIMITY, which caught Pharos Sirius 160's under-curtain glow but MISSED line-lights tied to a barrier rather
+    // than a curtain (1345 The Clyteum's purple line, nowhere near a dext - user: "it is not [scaled]"). b246
+    // drops the proximity gate: since the glow is a purple Line light regardless of what it decorates, we extinguish
+    // those directly on the same all-instanced-content pass as HideBarrierVfx. Extinguish = black the colour
+    // (GetColor save / SetColor black, vfuncs 45/46), restored on stop/leave. This is exactly what a layout-light
+    // inspector does by hand ("extinguish placed lights - the glow that survives hiding a model + its VFX").
+    private readonly Dictionary<uint, System.Numerics.Vector4> barrierLineLightColor = new();   // key -> original colour, for restore
+
+    // A "purple" light: red and blue both clearly exceed green (violet/magenta), with non-trivial magnitude - the
+    // backlight's signature. Lenient (an HDR purple still passes); proximity already bounds the blast radius.
+    private static bool IsPurpleLight(in System.Numerics.Vector4 c)
+        => c.X > c.Y * 1.15f && c.Z > c.Y * 1.15f && (c.X + c.Z) > 0.03f;
+
+    private unsafe delegate void SceneLightFn(ILayoutInstance* inst, uint key);
+
+    // Walk every Light in both layouts - the flat InstancesByType[Light] bucket AND nested SharedGroups (dungeon
+    // doorway lights live inside SharedGroup prefabs). Mirrors LightsOutService.ForEachLight/WalkGroupLights.
+    private unsafe void ForEachSceneLight(SceneLightFn fn)
+    {
+        var world = LayoutWorld.Instance();
+        if (world == null) return;
+        WalkSceneLights(world->ActiveLayout, fn);
+        if (world->GlobalLayout != world->ActiveLayout) WalkSceneLights(world->GlobalLayout, fn);
+    }
+
+    private unsafe void WalkSceneLights(LayoutManager* layout, SceneLightFn fn)
+    {
+        if (layout == null) return;
+        if (layout->InstancesByType.TryGetValuePointer(InstanceType.Light, out var m) && m != null && m->Value != null)
+            foreach (var kv in *m->Value) { var inst = kv.Item2.Value; if (inst != null) fn(inst, inst->Id.InstanceKey); }
+        if (layout->InstancesByType.TryGetValuePointer(InstanceType.SharedGroup, out var sg) && sg != null && sg->Value != null)
+            foreach (var kv in *sg->Value) { var g = (SharedGroupLayoutInstance*)kv.Item2.Value; if (g != null) WalkSceneGroupLights(g, fn); }
+    }
+
+    private unsafe void WalkSceneGroupLights(SharedGroupLayoutInstance* sg, SceneLightFn fn)
+    {
+        if (sg == null) return;
+        foreach (var cptr in sg->Instances.Instances)
+        {
+            var child = cptr.Value; if (child == null) continue;
+            var inst = child->Instance; if (inst == null) continue;
+            var ty = inst->Id.Type;
+            if (ty == InstanceType.Light) fn(inst, inst->Id.InstanceKey);
+            else if (ty == InstanceType.SharedGroup) WalkSceneGroupLights((SharedGroupLayoutInstance*)inst, fn);
+        }
+    }
+
+    // Extinguish every PURPLE LightType.Line instance (the surviving curtain/barrier glow). Self-identifying, so no
+    // proximity to a curtain/collider is needed - this is what generalises b245 to 1345 and every other dungeon.
+    // Idempotent per pass: re-asserts black on an already-suppressed light (survives re-stream); saves each original
+    // colour once. Two gates keep it surgical: LINE type (point/spot/directional scene lighting is untouched) + PURPLE.
+    private unsafe void SuppressBarrierLineLights()
+    {
+        int blacked = 0;
+        ForEachSceneLight((inst, key) =>
+        {
+            if (barrierLineLightColor.ContainsKey(key))   // already suppressed - re-assert black (survives re-stream)
+            {
+                System.Numerics.Vector4 blk = default; inst->SetColor(&blk);
+                return;
+            }
+            if (((LightLayoutInstance*)inst)->LightType != LightType.Line) return;   // only the line-light glows
+            System.Numerics.Vector4 cur = default; inst->GetColor(&cur);
+            if (!IsPurpleLight(cur)) return;
+            barrierLineLightColor[key] = cur;
+            System.Numerics.Vector4 black = default; inst->SetColor(&black);
+            blacked++;
+        });
+        if (blacked > 0)
+            log.Information("[HMSync] barrier line-light suppress: blacked " + blacked + " purple Line light(s).");
+    }
+
+    // Restore suppressed line-lights to their saved colour (on stop/leave). Zone changes free the instances anyway,
+    // so this matters mainly for /hms stop on the same map.
+    private unsafe void RestoreBarrierLineLights()
+    {
+        if (barrierLineLightColor.Count == 0) return;
+        try
+        {
+            ForEachSceneLight((inst, key) =>
+            {
+                if (barrierLineLightColor.TryGetValue(key, out var saved)) { var s = saved; inst->SetColor(&s); }
+            });
+        }
+        catch (Exception ex) { log.Warning("[HMSync] RestoreBarrierLineLights skipped: " + ex.Message); }
+        barrierLineLightColor.Clear();
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════════════════════════════════
     // v0.7.466 - LineVFX (boss-barrier line) SUPPRESSION. InstanceType 59 (0x3B) = LineVfxLayoutInstance: the
     // red/white and blue "do not cross" curtains with the pulsing stars. HMS already kills their COLLIDERS
     // (SetColliderActive, vf37 - see DisableSpawnAreaColliders); the visible line is a DIFFERENT object (the
@@ -5035,6 +5127,7 @@ public unsafe class ZoneLoadService : IDisposable
                 if (gfx != null) { ((DrawObject*)gfx)->IsVisible = false; hid++; }
             }
         }
+        SuppressBarrierLineLights();   // b246: black out the surviving purple Line-light glows (curtain + barrier), all dungeons
         return hid;
     }
 
@@ -5106,6 +5199,7 @@ public unsafe class ZoneLoadService : IDisposable
         }
 
         barrierSavedState.Clear();
+        RestoreBarrierLineLights();  // b246: restore the purple Line-light glows we blacked out
         RemoveRoadClones();   // v0.7.353: drop the 1345 road-mesh clones on stop
     }
 

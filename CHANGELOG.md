@@ -5,6 +5,13 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.4.1] - 2026-09-30
+
+### Fixed
+
+- **Cleaner session roster on reconnect.** A member who drops and rejoins no longer appears twice, and a member who drops without rejoining is removed once their connection goes quiet.
+- **Cleaner dungeon doorways.** The purple glow that lingered after the dungeon entry/exit curtain is auto-hidden is now removed too, in every dungeon.
+
 ## [1.0.4.0] - 2026-09-23
 
 ### Added

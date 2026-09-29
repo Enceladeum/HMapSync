@@ -788,6 +788,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         lightsOut.Tick();   // Q-0010: hold the dungeon light/flame suppression against re-streaming; idle no-op unless active
         weatherDtr.Tick();  // b225: refresh the server-info-bar weather readout (change-gated; idle no-op unless enabled)
         trackDtr.Tick();    // b240: refresh the server-info-bar music readout (change-gated; idle no-op unless enabled)
+        ReapTimedOutPeers(); // b248: drop peers whose heartbeat went silent (silent DC the relay never announced); self-throttled
 
         // b140 Path I: hold the donor-bank handle swap in EnvSpace+0x90 against any per-frame zone reassert (no-op unless
         // a wxcyclecram is active). Runs before the zone-change clear below so a real hop still tears it down cleanly.
@@ -4682,26 +4683,46 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         log.Information("[HMSync] Re-sent zone-load (territory " + territory + ") to catch up a joining peer.");
     }
 
-    private void OnPeerLeft(string peerId)
+    private void OnPeerLeft(string peerId) => RemovePeerFromSession(peerId, "left the session.");
+
+    // b248: shared departing-peer teardown. Both the relay's clean LeaveRoom (OnPeerLeft) AND the heartbeat-timeout
+    // reaper (below) funnel here, so a silent drop the relay never announced is cleaned up identically to a graceful
+    // leave. Early-returns if the peer is already gone, so a leave + a timeout for the same peer can't double-chat.
+    // `reason` is the chat tail.
+    private void RemovePeerFromSession(string peerId, string reason)
     {
         RunOnMainThread(() =>
         {
             // S322: announce by name (was a nameless "Peer disconnected."). Grab the name before unregister.
-            string who = "A peer";
-            if (stateApply.Peers.TryGetValue(peerId, out var info))
+            if (!stateApply.Peers.TryGetValue(peerId, out var info)) return;   // already removed - nothing to tear down
+            string who = string.IsNullOrEmpty(info.CharacterName) ? "A peer" : info.CharacterName;
+            if (info.ContentId != 0) disguiseSync.OnPeerDeparted(info.ContentId);   // FEAT-R2: revert disguise + despawn their mirror puppets (before unregister drops the roster entry)
+            if (info.ContentId != 0) lobbyNameplate.OnPeerDeparted(info.ContentId);   // b195: forget their cached lobby nameplate (ClearName below restores the real plate)
+            if (info.ObjectIndex.HasValue)
             {
-                if (!string.IsNullOrEmpty(info.CharacterName)) who = info.CharacterName;
-                if (info.ContentId != 0) disguiseSync.OnPeerDeparted(info.ContentId);   // FEAT-R2: revert disguise + despawn their mirror puppets (before unregister drops the roster entry)
-                if (info.ContentId != 0) lobbyNameplate.OnPeerDeparted(info.ContentId);   // b195: forget their cached lobby nameplate (ClearName below restores the real plate)
-                if (info.ObjectIndex.HasValue)
-                {
-                    actorVisibility.UnregisterPeer(info.ObjectIndex.Value);
-                    moniker.ClearName(info.ObjectIndex.Value);   // S328x: restore the departing peer's real nameplate
-                }
+                actorVisibility.UnregisterPeer(info.ObjectIndex.Value);
+                moniker.ClearName(info.ObjectIndex.Value);   // S328x: restore the departing peer's real nameplate
             }
             stateApply.UnregisterPeer(peerId);
-            chat.Print("[HMSync] " + who + " left the session.");
+            chat.Print("[HMSync] " + who + " " + reason);
         });
+    }
+
+    // b248: heartbeat-timeout reaper cadence + threshold. A live peer sends a HOT frame at least every KeepaliveSecs (2s)
+    // during a session, so ~15s of silence (7.5 missed keepalives) means a genuine drop the relay never sent a leave
+    // for - NOT normal lag. Only run while a map is loaded (HOT flows only then); a bare lobby is legitimately silent.
+    private long lastPeerReapTick;
+    private const long PeerReapCheckMs = 2000;
+    private const long PeerHeartbeatTimeoutMs = 15000;
+    private void ReapTimedOutPeers()
+    {
+        if (!relay.IsConnected || !zoneLoad.IsZoneLoaded) return;   // HOT only flows in an active (map-loaded) session
+        long nowTick = Environment.TickCount64;
+        if (nowTick - lastPeerReapTick < PeerReapCheckMs) return;
+        lastPeerReapTick = nowTick;
+        var timedOut = stateApply.CollectTimedOutPeerIds(PeerHeartbeatTimeoutMs);
+        for (int i = 0; i < timedOut.Count; i++)
+            RemovePeerFromSession(timedOut[i], "timed out (no signal) - removed from the session.");
     }
 
     // The current host's relay PeerId - tracked so the roster can pin + amber-tint the host on everyone's screen. Set
