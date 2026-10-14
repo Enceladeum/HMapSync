@@ -344,6 +344,13 @@ public unsafe class PacketFilterService : IDisposable
     public bool RoomPassthrough;
     public readonly HashSet<ushort> SpawnOpcodes = new();     // PlayerSpawn (arrival key = a2)
     public readonly HashSet<ushort> DespawnOpcodes = new();   // DespawnCharacter (leaver key = payload +4)
+    // b255 MOVEMENT MIRROR: ActorMove / ActorSetPos. A tracked walk-in's position updates are passed INBOUND so the
+    // hidden mirror actor tracks their real movement and is at the correct spot on session end, instead of frozen at
+    // the spawn/door position (the "walk-in stuck at the door" fallback). Mover key = a2 (same id space as the spawn
+    // key; see the capture note at OnReceivePacket ~L746), so a movement is passed ONLY when a2 is already a tracked
+    // roomActor (instantiated via a validated spawn) - it never widens what the firewall instantiates. Inbound-only,
+    // actor stays hidden, so no outbound leak and no visual bleed. Fail-closed: empty set / untracked a2 → suppress.
+    public readonly HashSet<ushort> MoveOpcodes = new();
 
     // ── Stage 2 (D-16): PlayerSpawn opcode SELF-RE-LEARN ───────────────────────────────────────────────────────────
     // After a game patch rotates PlayerSpawn's opcode, the seeded SpawnOpcodes set (from the embedded opcodes.min.json)
@@ -391,23 +398,28 @@ public unsafe class PacketFilterService : IDisposable
 
     // Push the NAME-resolved opcodes in at session engage. Empty sets (name not in the loaded map) = tracking inert for
     // that packet = fail-closed. Clearing the register here too so a fresh session starts from an empty room.
-    public void ConfigureRosterOpcodes(IEnumerable<ushort> spawnOpcodes, IEnumerable<ushort> despawnOpcodes)
+    public void ConfigureRosterOpcodes(IEnumerable<ushort> spawnOpcodes, IEnumerable<ushort> despawnOpcodes, IEnumerable<ushort>? moveOpcodes = null)
     {
         SpawnOpcodes.Clear();
         foreach (var op in spawnOpcodes) if (op != 0) SpawnOpcodes.Add(op);
         DespawnOpcodes.Clear();
         foreach (var op in despawnOpcodes) if (op != 0) DespawnOpcodes.Add(op);
+        MoveOpcodes.Clear();   // b255: ActorMove / ActorSetPos; null = movement mirror off (fail-closed, door fallback)
+        if (moveOpcodes != null) foreach (var op in moveOpcodes) if (op != 0) MoveOpcodes.Add(op);
         spawnRelearnCandidates.Clear();   // fresh session → discard any stale re-learn tallies
         despawnRelearnCandidates.Clear();
         lock (rosterLock) roomActors.Clear();
         log.Information("[HMSync] [ROSTER] configured: " + SpawnOpcodes.Count + " spawn opcode(s), " +
-            DespawnOpcodes.Count + " despawn opcode(s). Tracking " + (RoomTrackingEnabled ? "ON" : "OFF") + ".");
+            DespawnOpcodes.Count + " despawn opcode(s), " + MoveOpcodes.Count + " move opcode(s). Tracking " + (RoomTrackingEnabled ? "ON" : "OFF") + ".");
     }
 
     public void ClearRoster() { lock (rosterLock) roomActors.Clear(); }
     public int RosterCount { get { lock (rosterLock) return roomActors.Count; } }
     // Snapshot the currently-present real actor ids (copy; safe to read off-thread). Used at exit-time reconcile.
     public List<uint> SnapshotRoster() { lock (rosterLock) return new List<uint>(roomActors.Keys); }
+    // b255: is this entity id a currently-tracked room actor (a walk-in we instantiated via a validated spawn)? Gates
+    // the movement mirror so only known room actors' ActorMove crosses the firewall. Thread-safe (network-thread read).
+    private bool IsRoomActor(uint id) { lock (rosterLock) return roomActors.ContainsKey(id); }
 
     // Called from OnReceivePacket (network thread) for every inbound packet while the filter is active. Reads the
     // arrival/departure keys and updates the register. Never touches game state, never calls Original.
@@ -845,6 +857,22 @@ public unsafe class PacketFilterService : IDisposable
                             return;
                         }
                         return;   // opcode matched but id implausible → fail closed (do NOT pass a misparse)
+                    }
+                    // b255 MOVEMENT MIRROR: a tracked walk-in's position update (ActorMove / ActorSetPos). Pass INBOUND
+                    // ONLY when a2 is already a roomActor (instantiated via a validated spawn) so the hidden mirror tracks
+                    // their real movement and lands at the correct spot on session end instead of frozen at the door.
+                    // Inbound-only + actor stays hidden (ActorVisibility) → no outbound leak, no visual bleed; bounded to
+                    // known room actors, so it never widens what the firewall instantiates. A move for a non-tracked
+                    // actor is suppressed here and does NOT run the spawn/despawn re-learn scans below (a move is neither).
+                    else if (MoveOpcodes.Contains(rop))
+                    {
+                        if (IsTrackableActorId(a2) && IsRoomActor(a2))
+                        {
+                            receiveHook!.Original(a1, a2, a3);   // apply the walk-in's position to its hidden mirror (inbound only)
+                            if (SendDiag)
+                                log.Information("[HMSync] [ROSTER-MOVE] opcode=" + rop + " eid=0x" + a2.ToString("X8") + " (tracked room actor) → Original");
+                        }
+                        return;   // handled (passed if tracked, else suppressed) - a move is not a spawn/despawn candidate
                     }
                     // Stage 2 self-re-learn: this opcode is NOT a currently-known spawn/despawn. If the packet nonetheless
                     // carries the fixed-header spawn SIGNATURE, PlayerSpawn's opcode has rotated (patch) and the seeded set

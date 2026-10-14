@@ -5,6 +5,12 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.4.2] - 2026-10-14
+
+### Fixed
+
+- **Walk-ins appear in the right place when a session ends.** A player who walks into your room during a session now shows up where they actually are when it ends, instead of at the doorway until they next move.
+
 ## [1.0.4.1] - 2026-09-30
 
 ### Fixed

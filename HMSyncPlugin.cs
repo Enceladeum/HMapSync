@@ -2076,7 +2076,8 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         packetFilter.RoomPassthrough = true;
         packetFilter.ConfigureRosterOpcodes(
             opcodeMap.InboundOpcodesForNames("PlayerSpawn"),
-            opcodeMap.InboundOpcodesForNames("DespawnCharacter"));
+            opcodeMap.InboundOpcodesForNames("DespawnCharacter"),
+            opcodeMap.InboundOpcodesForNames("ActorMove", "ActorSetPos"));   // b255: mirror a tracked walk-in's movement so they're at their true spot on session end, not frozen at the door
         // Cache our own entity id for the network-thread despawn re-learn correlation (a despawn's a2 == local player).
         // Framework thread here; read as an atomic uint off-thread. Stable for the session, so a one-shot cache is enough.
         packetFilter.LocalPlayerEntityId = objectTable.LocalPlayer?.EntityId ?? 0u;
