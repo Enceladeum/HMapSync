@@ -484,12 +484,16 @@ public unsafe class PacketFilterService : IDisposable
         {
             // (1) 8-byte ContentId at payload+0 (abs +0x10): nonzero and larger than a despawn's small index word.
             ulong contentId = *(ulong*)(a3 + 0x10);
-            // (2) Fixed structural marker at payload+0x0C (abs +0x1C) = 17 00 40 00 in ALL 20 measured spawns (7.55).
+            // (2) Structural marker at payload+0x0C (abs +0x1C). The UPPER 3 BYTES are the invariant (`__ 00 40 00` =
+            //     0x004000__); the LOW byte VARIES per spawn (0x17 in most, 0x2E and others seen in live 2026-10-29
+            //     rosterdump captures - b33's "0x17 in all 20" was a small-sample fluke). Match the top 3 bytes and
+            //     IGNORE the low byte, or a valid spawn whose low byte isn't 0x17 is wrongly suppressed and the walk-in
+            //     never instantiates (b257 fix - the intermittent "actors don't appear on session exit" regression).
             uint marker = *(uint*)(a3 + 0x1C);
-            // (3) First appearance/status-slot sentinel: byte at abs +0x33 == 0xE0 in every measured spawn.
+            // (3) First appearance/status-slot sentinel: byte at abs +0x33 == 0xE0 in every measured PLAYER spawn.
             byte sentinel = *(byte*)(a3 + 0x33);
             bool c1 = contentId > 0xFFFF;
-            bool c2 = marker == 0x00400017u;
+            bool c2 = (marker & 0xFFFFFF00u) == 0x00400000u;   // b257: upper-3-byte match; low byte varies per spawn
             bool c3 = sentinel == 0xE0;
             // NOTE (b36): the 4th check - "name first byte decodes A-Z @ +0x262" - was REMOVED after a measured
             // false-reject. In-session peer spawns shift the tail (gear/mount/status length is variable), so +0x262 does
@@ -503,7 +507,7 @@ public unsafe class PacketFilterService : IDisposable
                 // Diagnostic: dump the actual field values so a rejected packet on the spawn opcode tells us which check
                 // failed - drift signal (Information so no /senddiag needed; spawns are infrequent).
                 log.Information("[HMSync] [SHAPE-SPAWN] FAIL cid=0x" + contentId.ToString("X") +
-                    " marker=0x" + marker.ToString("X8") + "(want 00400017) sent=0x" + sentinel.ToString("X2") +
+                    " marker=0x" + marker.ToString("X8") + "(want 004000xx) sent=0x" + sentinel.ToString("X2") +
                     "(want E0) → c1=" + c1 + " c2=" + c2 + " c3=" + c3);
             return ok;
         }
@@ -519,7 +523,7 @@ public unsafe class PacketFilterService : IDisposable
         try
         {
             return *(ulong*)(a3 + 0x10) > 0xFFFF
-                && *(uint*)(a3 + 0x1C) == 0x00400017u
+                && (*(uint*)(a3 + 0x1C) & 0xFFFFFF00u) == 0x00400000u   // b257: upper-3-byte match (low byte varies per spawn)
                 && *(byte*)(a3 + 0x33) == 0xE0;
         }
         catch { return false; }
