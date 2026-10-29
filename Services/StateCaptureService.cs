@@ -241,9 +241,12 @@ public unsafe class StateCaptureService : IDisposable
                     }
                 }
                 // Suppress the game's native face-camera flag every frame while it's set, so it never drives the local
-                // look-at itself (our FaceControlState path is the sole driver). Flag @ Character+0x1930.
+                // look-at itself (our FaceControlState path is the sole driver). b256: write the NAMED CS field
+                // (ch->LookAt.IsFacingCamera — the same flag the old raw `*(byte*)ch+0x1930` wrote, == Character+0xD80
+                // LookAt +0xBB0) so a game-patch struct shift can't leave this stomping a stale raw offset. The read
+                // above (line ~209) already uses the named field; this makes the write match, and it auto-tracks CS.
                 if (faceCamera)
-                    *((byte*)ch + 0x1930) = 0;
+                    ch->LookAt.IsFacingCamera = false;
                 lastCapturedFaceCamera = faceCamera;
             }
         }
