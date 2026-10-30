@@ -5,6 +5,12 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.4.5] - 2026-10-30
+
+### Changed
+
+- **Set the time of day from the pop-out weather window.** The time slider, Freeze and reset now sit at the top of the weather-presets pop-out, so you can adjust the sky and the hour without opening the main HMS window.
+
 ## [1.0.4.4] - 2026-10-29
 
 ### Fixed

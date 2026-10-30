@@ -1525,6 +1525,64 @@ public class HMSyncUI
     // Movement / Appearance tear-offs), so it survives tab switches and doesn't vanish when the Map Control tab isn't the
     // active one. Renders only when weatherPresetsPoppedOut. It recomputes the same live/local context DrawTimeAndWeather
     // does (so the grid tracks the loaded synthetic zone when live, the real zone when local) and drives the shared body.
+    // b258: live-map time controls (reset / HH:MM slider / Freeze) as ONE shared row, so the Map Control panel and the
+    // torn-off Weather-presets window drive the IDENTICAL path (no divergence). `local` = out-of-session local-cinematic
+    // (Brio time hook: ApplyTime/FreezeAtCurrent/DisableTimeOverride) vs in-session host (SetHostTime + epoch push).
+    private void DrawTimeControls(bool local)
+    {
+        if (MapSettings == null) return;
+        // Time: HH:MM slider (0..1439) + Freeze + reset. Moving the slider AUTO-FREEZES (pins) the time - RP scenes need
+        // a static sky, and the Eorzea clock races (~20x real), so dragging to a time you want and having it hold is the
+        // desired default. Uncheck Freeze (or hit reset) to release the override and let the real clock resume.
+        // DISPLAY: always read the LIVE Eorzea clock (GetEorzeaTimeOfDay reads ClientTime.EorzeaTime). When frozen the
+        // clock IS the held value (the Brio hook pins it), when not it's the real marching time. Reading the live clock
+        // on BOTH host and peer means the displayed integers match exactly - they read the same underlying field, which
+        // the freeze holds identically on every client.
+        int totalMin;
+        {
+            var (lh, lm) = MapSettings.GetEorzeaTimeOfDay();
+            totalMin = (lh * 60 + lm) % 1440;
+        }
+        int sliderVal = totalMin;
+        string hhmm = (sliderVal / 60).ToString("D2") + ":" + (sliderVal % 60).ToString("D2");
+        // Reset button - release the freeze, real clock resumes.
+        if (ImGuiComponents.IconButton("##timereset", FontAwesomeIcon.UndoAlt))
+        {
+            if (local) MapSettings.DisableTimeOverride();   // release the local freeze - the real clock resumes
+            else SetHostTime?.Invoke(config.MapEorzeaHour, config.MapEorzeaMinute, false);   // forced=false → unfreeze
+        }
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Reset to the real, flowing Eorzea time.");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(210);
+        bool sliderChanged = ImGui.SliderInt("##maptime", ref sliderVal, 0, 1439, hhmm);
+        if (sliderChanged)
+        {
+            // Dragging pins the time (auto-freeze). One silent path: SetHostTime updates config + applies locally +
+            // bumps the map-state epoch so peers get THIS value on the next transform. LOCAL: just pin the Brio freeze.
+            if (local) MapSettings.ApplyTime((ushort)(sliderVal / 60), (byte)(sliderVal % 60));
+            else SetHostTime?.Invoke((ushort)(sliderVal / 60), (byte)(sliderVal % 60), true);
+        }
+        TimeDragHold = ImGui.IsItemActive();
+        ImGui.SameLine();
+        bool timeForced = local ? MapSettings.IsTimeOverridden() : config.MapTimeForced;
+        if (ImGui.Checkbox("Freeze", ref timeForced))
+        {
+            if (timeForced)
+            {
+                // Freeze pins the time showing RIGHT NOW (capture the live clock, not a stale stored value).
+                if (local) MapSettings.FreezeAtCurrent();
+                else { var (nh, nm) = MapSettings.GetEorzeaTimeOfDay(); SetHostTime?.Invoke((ushort)nh, (byte)nm, true); }
+            }
+            else if (local) MapSettings.DisableTimeOverride();
+            else SetHostTime?.Invoke(config.MapEorzeaHour, config.MapEorzeaMinute, false);
+        }
+        bool timeFrozenNow = local ? MapSettings.IsTimeOverridden() : config.MapTimeForced;
+        if (timeFrozenNow)
+            ImGui.TextDisabled("Time frozen at " + hhmm + ". Uncheck Freeze or reset to resume the real clock.");
+        else
+            ImGui.Dummy(new Vector2(0f, ImGui.GetTextLineHeightWithSpacing()));   // a slider + time is self-explanatory; keep the space, no how-to text
+    }
+
     public void DrawWeatherPresetsWindow()
     {
         if (!weatherPresetsPoppedOut || MapSettings == null) return;
@@ -1549,6 +1607,10 @@ public class HMSyncUI
         else
         {
             RefreshWeatherCacheFor(tt);
+            // b258: time controls at the top of the pop-out (above the A-Z presets), so the DTR-launched window can set
+            // time-of-day too (HMS changes live-map time like Weatherman) without opening the main HMS window.
+            DrawTimeControls(local);
+            ImGui.Separator();
             byte pickW = local ? localPickWeather : config.MapWeatherId;
             uint pickD = local ? localPickDonor : config.MapWeatherDonor;
             DrawWeatherPresetBody(tt, loadedZone, local, pickW, pickD);
@@ -1616,59 +1678,7 @@ public class HMSyncUI
         }
         ImGui.Spacing();
 
-        // Time: HH:MM slider (0..1439) + Freeze + reset. Moving the slider AUTO-FREEZES (pins) the time - RP scenes need
-        // a static sky, and the Eorzea clock races (~20x real), so dragging to a time you want and having it hold is the
-        // desired default. Uncheck Freeze (or hit reset) to release the override and let the real clock resume.
-        // DISPLAY: always read the LIVE Eorzea clock (GetEorzeaTimeOfDay reads ClientTime.EorzeaTime). When frozen the
-        // clock IS the held value (the Brio hook pins it), when not it's the real marching time. Reading the live clock
-        // on BOTH host and peer means the displayed integers match exactly - they read the same underlying field, which
-        // the freeze holds identically on every client. (Reading config here instead diverged from the peer's live read
-        // and made the on-load integers briefly disagree even though the sky was synced.)
-        int totalMin;
-        {
-            var (lh, lm) = MapSettings.GetEorzeaTimeOfDay();
-            totalMin = (lh * 60 + lm) % 1440;
-        }
-        int sliderVal = totalMin;
-        string hhmm = (sliderVal / 60).ToString("D2") + ":" + (sliderVal % 60).ToString("D2");
-        // Reset button - release the freeze, real clock resumes.
-        if (ImGuiComponents.IconButton("##timereset", FontAwesomeIcon.UndoAlt))
-        {
-            if (local) MapSettings.DisableTimeOverride();   // release the local freeze - the real clock resumes
-            else SetHostTime?.Invoke(config.MapEorzeaHour, config.MapEorzeaMinute, false);   // forced=false → unfreeze
-        }
-        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Reset to the real, flowing Eorzea time.");
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(210);
-        bool sliderChanged = ImGui.SliderInt("##maptime", ref sliderVal, 0, 1439, hhmm);
-        if (sliderChanged)
-        {
-            // Dragging pins the time (auto-freeze). One silent path: SetHostTime updates config + applies locally +
-            // bumps the map-state epoch so peers get THIS value on the next transform - no chat spam, no separate
-            // mirror. Called every drag frame; each epoch bump carries the new value to peers. LOCAL: no config / no
-            // epoch - just pin the Brio freeze at the dragged time on this client.
-            if (local) MapSettings.ApplyTime((ushort)(sliderVal / 60), (byte)(sliderVal % 60));
-            else SetHostTime?.Invoke((ushort)(sliderVal / 60), (byte)(sliderVal % 60), true);
-        }
-        TimeDragHold = ImGui.IsItemActive();
-        ImGui.SameLine();
-        bool timeForced = local ? MapSettings.IsTimeOverridden() : config.MapTimeForced;
-        if (ImGui.Checkbox("Freeze", ref timeForced))
-        {
-            if (timeForced)
-            {
-                // Freeze pins the time showing RIGHT NOW (capture the live clock, not a stale stored value).
-                if (local) MapSettings.FreezeAtCurrent();
-                else { var (nh, nm) = MapSettings.GetEorzeaTimeOfDay(); SetHostTime?.Invoke((ushort)nh, (byte)nm, true); }
-            }
-            else if (local) MapSettings.DisableTimeOverride();
-            else SetHostTime?.Invoke(config.MapEorzeaHour, config.MapEorzeaMinute, false);
-        }
-        bool timeFrozenNow = local ? MapSettings.IsTimeOverridden() : config.MapTimeForced;
-        if (timeFrozenNow)
-            ImGui.TextDisabled("Time frozen at " + hhmm + ". Uncheck Freeze or reset to resume the real clock.");
-        else
-            ImGui.Dummy(new Vector2(0f, ImGui.GetTextLineHeightWithSpacing()));   // a slider + time is self-explanatory; keep the space, no how-to text
+        DrawTimeControls(local);   // b258: shared time row (reset / HH:MM slider / Freeze), also used by the Weather-presets pop-out
 
         // Weather. The dropdown's DISPLAYED value is the LIVE weather the engine is rendering (GetActiveWeather), so it
         // always matches the sky - even the map's natural weather on load, which the host never explicitly picked.
