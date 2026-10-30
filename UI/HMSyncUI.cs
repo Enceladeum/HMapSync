@@ -334,7 +334,6 @@ public class HMSyncUI
     // choice caches above are keyed on the acted-on zone `tt`, so live and local reuse them - they never render at once.)
     private byte localPickWeather;
     private uint localPickDonor;
-    private bool showAllWeather;                        // S326s: reveal the full (experimental) weather list
     private bool weatherPresetsPoppedOut;               // b226: render the Extra-presets grid in its own floating window (DrawWeatherPresetsWindow)
     private List<(byte id, string name, bool legal)>? mapAllWeather;   // lazy full flagged list for the loaded zone
     private string roomPasswordInput = "";              // S326f: room password entry (host) - shared by Host/Join segments
@@ -1733,31 +1732,19 @@ public class HMSyncUI
             }
             ImGui.EndCombo();
         }
-        // b177: the extra-preset grid is now a SET-ONCE COLLAPSIBLE (was a right-aligned "Show more presets" link). It's a
-        // wall of ~70 momentary cram chips you configure once, so it collapses out of the way of the day-to-day controls
-        // below. showAllWeather tracks the header's open state (kept as the field so the zone-hop invalidation at ~line 1245
-        // and the lazy rebuild below still key off it). b168: no longer DEBUG-gated — the cram/day-set feature is proven.
-        // b226: "Extra presets" (the ~70-chip cram grid + city-variant sub-block) can be TORN OFF into its own floating
-        // window (DrawWeatherPresetsWindow) so it stops crowding the day-to-day time / weather / BGM controls.
-        // weatherPresetsPoppedOut flips the two states: DOCKED → the set-once collapsible renders here, with a "Pop out"
-        // button; POPPED → a compact note + "Dock" button here, and the grid lives in the separate window instead. The
-        // grid/city body is shared (DrawWeatherPresetBody) so both hosts drive the identical apply path.
+        // b259: "Extra presets" (the ~70-chip cram grid + city-variant sub-block) ALWAYS opens in its own window - never an
+        // inline expander. An expanded in-panel grid buried Music / Map control / Spawn point under a long scroll, so the
+        // old docked collapsible + Dock/Pop-out toggle (and the showAllWeather gate) is gone: one button opens/focuses the
+        // tear-off, and the grid lives ONLY in DrawWeatherPresetsWindow now. b168: no longer DEBUG-gated (cram proven).
         ImGui.Spacing();
         if (weatherPresetsPoppedOut)
-        {
-            ImGui.TextDisabled("Extra presets are in their own window.");
-            ImGui.SameLine();
-            if (ImGui.SmallButton("Dock##dockpresets")) weatherPresetsPoppedOut = false;
-        }
+            ImGui.TextDisabled("Extra presets are open in their own window.");
         else
         {
-            showAllWeather = InsetCollapsingHeader("Extra presets##extrapresets");
-            if (showAllWeather)
-            {
-                if (ImGui.SmallButton("Pop out##poppresets")) weatherPresetsPoppedOut = true;
-                if (ImGui.IsItemHovered()) ImGui.SetTooltip("Move these presets into their own window so they don't crowd the map controls.");
-                DrawWeatherPresetBody(tt, loadedZone, local, pickW, pickD);
-            }
+            if (ImGui.Button("Extra presets##openpresets"))
+                weatherPresetsPoppedOut = true;
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Open the full weather presets (crammable A-Z list + city sky variants) in their own window,\nso they don't crowd the map controls.");
         }
 
         // ── Music (BGM). Play/Stop toggle + reset-to-zone-default (single curved arrow) + Browse. The row shows the
