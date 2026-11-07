@@ -43,6 +43,8 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     private readonly ZoneLoadService zoneLoad;
     private readonly QuestSpoofService questSpoof;   // NB-19 Phase 1: quest-populace read-spoof (per-zone policy) + /hms questprobe read-log
     private readonly CutsceneStageService cutscene;   // cutscene free-roam (Tier B LoadZone / Tier A donor-redirect)
+    private readonly DressingIngest dressingIngest;     // b272: derives the dressing catalog from the installed game (per game version)
+    private volatile bool disposed;                     // set first in Dispose; background callbacks (DressingIngest) check it before touching services
     private readonly CutsceneDressingService dressing;   // b260: cutscene set dressing layered onto a loaded map (Features/CutsceneDressing)
     private readonly NoclipService noclip;
     private readonly CarpetService carpet;   // S315: ported HCollider ground-carpet (walk anywhere)
@@ -290,7 +292,10 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         cutscene = new CutsceneStageService(pluginInterface, log, dataManager, zoneLoad);
         dressing = new CutsceneDressingService(log, sigScanner, dataManager, () => zoneLoad.IsZoneLoaded && !zoneLoad.IsTransitioning);
         // b263/b266: the auto-ranked lab dressings join the stage list; TT-backed ones show in the zone tree under their territory, TT-less ones in the Cutscenes chip.
-        cutscene.SetLabStages(dressing.Catalog.Lab.Select(l => new CutsceneStageService.Stage(l.Name, l.Bg, true, l.Quest, l.TerritoryId, DressingRow: l.Row)));
+        PublishDressingStages();
+        // b272: re-derive the dressings from the installed game once per game version (cached); the shipped data covers the gap.
+        dressingIngest = new DressingIngest(log, dataManager, pluginInterface.ConfigDirectory.FullName);
+        dressingIngest.Start(GetGameVersion(), OnDressingIngested);
         noclip = new NoclipService(objectTable, framework, log, sigScanner, hooks);
         carpet = new CarpetService(objectTable, framework, log, config);
         emoteDiag = new EmoteDiagService(objectTable, framework, dataManager, log);
@@ -1308,6 +1313,10 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 {
                     case "clear": dressing.Clear(); break;
                     case "reapply": dressing.Reapply(); break;
+                    case "ingest":   // b272: re-derive the catalog from the installed game now, ignoring the cache
+                        dressingIngest.Start(GetGameVersion(), OnDressingIngested, force: true);
+                        chat.Print("[HMSync] Dressing ingest started (see the log for the result).");
+                        break;
                     case "rot":
                         if (dArgs.Length > 1 && int.TryParse(dArgs[1], out var rm) && rm >= 0 && rm < CutsceneDressingService.RotModeCount)
                         { dressing.RotMode = rm; dressing.Reapply(); }
@@ -1918,6 +1927,36 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         packetFilter.PassSayChat = true;
         packetFilter.PassSayChatOut = true;
         return true;
+    }
+
+    // b263/b266: the lab dressings join the stage list; TT-backed ones show in the zone tree under their territory, TT-less ones in the Cutscenes chip.
+    private void PublishDressingStages() =>
+        cutscene.SetLabStages(dressing.Catalog.Lab.Select(l => new CutsceneStageService.Stage(l.Name, l.Bg, true, l.Quest, l.TerritoryId, DressingRow: l.Row)));
+
+    // b272: DressingIngest callback (background thread) -> adopt on the framework thread, then log how it differs from
+    // what was in use (the shipped data on a first run), so a patch's effect on the set is visible.
+    private void OnDressingIngested(DressingCatalog.FileDto curated, DressingCatalog.FileDto lab, string source)
+    {
+        if (disposed) return;   // the derive outlived the plugin (reloaded or updated mid-derive): nothing to adopt into
+        framework.RunOnFrameworkThread(() =>
+        {
+            if (disposed) return;
+            try
+            {
+                var prev = dressing.Catalog;
+                var next = new DressingCatalog(log, curated, lab, source);
+                var prevLab = prev.Lab.Select(l => l.Row).ToHashSet();
+                var nextLab = next.Lab.Select(l => l.Row).ToHashSet();
+                int propDiff = 0;
+                foreach (var r in nextLab.Intersect(prevLab))
+                    if (prev.TryGet(r, out var a) && next.TryGet(r, out var b) && a.Props.Count != b.Props.Count) propDiff++;
+                log.Information("[DressingIngest] vs " + prev.Source + ": lab " + prevLab.Count + " -> " + nextLab.Count +
+                                " (+" + nextLab.Except(prevLab).Count() + " / -" + prevLab.Except(nextLab).Count() + ", " + propDiff + " with a different prop count)");
+                dressing.ReplaceCatalog(next);
+                PublishDressingStages();
+            }
+            catch (Exception ex) { log.Error("[DressingIngest] adopt failed, keeping " + dressing.Catalog.Source + ": " + ex); }
+        });
     }
 
     private string GetGameVersion()
@@ -5126,6 +5165,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
 
     public void Dispose()
     {
+        disposed = true;
         framework.Update -= OnFrameworkUpdate;
 #if HMS_TESTING
         commands.RemoveHandler("/hmst");   // NB-22: testing build registers ONLY /hmst (see AddHandler)

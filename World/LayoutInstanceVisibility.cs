@@ -93,6 +93,43 @@ public sealed unsafe class LayoutInstanceVisibility
         return new Result(matched, flipped);
     }
 
+    /// <summary>
+    /// Keys of live, top-level BgParts drawing the same model as one of <paramref name="targets"/> within
+    /// <paramref name="radius"/> of it: the level's own copy of an object a scene re-places (the default bed, a desk set
+    /// moved half a yalm). Read-only; feed the result to Apply. Paths compare case-insensitively.
+    /// </summary>
+    public static HashSet<ulong> BgPartsNear(IReadOnlyList<(string Path, System.Numerics.Vector3 Pos)> targets, float radius)
+    {
+        var found = new HashSet<ulong>();
+        if (targets.Count == 0) return found;
+        var byPath = new Dictionary<string, List<System.Numerics.Vector3>>(System.StringComparer.OrdinalIgnoreCase);
+        foreach (var (p, pos) in targets)
+        {
+            if (!byPath.TryGetValue(p, out var l)) byPath[p] = l = new();
+            l.Add(pos);
+        }
+        var lw = LayoutWorld.Instance();
+        if (lw == null) return found;
+        float r2 = radius * radius;
+        foreach (var layout in new[] { lw->ActiveLayout, lw->GlobalLayout })
+        {
+            if (layout == null) continue;
+            if (!layout->InstancesByType.TryGetValuePointer(InstanceType.BgPart, out var m) || m == null || m->Value == null) continue;
+            foreach (var kv in *m->Value)
+            {
+                var inst = kv.Item2.Value;
+                if (inst == null || inst->SubId != 0) continue;
+                string? path = null;
+                try { var cs = inst->GetPrimaryPath(); if (cs.HasValue) path = cs.ToString(); } catch { }
+                if (path == null || !byPath.TryGetValue(path, out var spots)) continue;
+                System.Numerics.Vector3 ip; inst->GetTranslation(&ip);
+                foreach (var s in spots)
+                    if (System.Numerics.Vector3.DistanceSquared(s, ip) <= r2) { found.Add(Key(inst->Id.LayerKey, inst->Id.InstanceKey)); break; }
+            }
+        }
+        return found;
+    }
+
     /// <summary>Undo everything this switched off. Call before the zone unloads.</summary>
     public void Restore()
     {

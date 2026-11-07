@@ -22,7 +22,8 @@ namespace HMSync.Features.CutsceneDressing;
 // Tick() lands the dressing once the map has settled. Peers apply the same row locally: the data is
 // deterministic, so the wire carries only the row id (ZoneLoadData "csr").
 //
-// Data: DressingCatalog (embedded, derived offline from the game data). Engine work: World.BgSpawner +
+// Data: DressingCatalog (b272: derived at runtime from the installed game by DressingIngest, once per game version;
+// the embedded copy is the bootstrap). Engine work: World.BgSpawner +
 // World.LayoutInstanceVisibility.
 // ============================================================================
 public sealed class CutsceneDressingService : IDisposable
@@ -31,6 +32,8 @@ public sealed class CutsceneDressingService : IDisposable
     private const int HidePassEvery = 30;       // re-run the hide pass for as long as the dressing is active: parts stream
                                                 // in as you move on big maps, and the game may re-show some
     private const int HideReportAt = 600;       // log one tally ~10s in
+    private const int ReplaceScanEvery = 300;   // b272: live scan for the level's own copies of re-placed props (~5s; streams in)
+    private const float ReplaceRadius = 0.6f;
 
     private readonly IPluginLog log;
     private readonly IDataManager data;
@@ -42,7 +45,7 @@ public sealed class CutsceneDressingService : IDisposable
     private uint armedRow;
     private Dressing? active;
     // What the active dressing switches off: its baked hides, or (lab entries) read from the cutb at activation.
-    private IReadOnlyDictionary<InstanceType, HashSet<ulong>> activeHides = new Dictionary<InstanceType, HashSet<ulong>>();
+    private Dictionary<InstanceType, HashSet<ulong>> activeHides = new();   // own copy per activation (b272 adds to it live)
     // Lights only, re-asserted EVERY frame: the game re-lights between 30-frame passes (b262 flicker, Valens).
     private IReadOnlyDictionary<InstanceType, HashSet<ulong>> activeLights = new Dictionary<InstanceType, HashSet<ulong>>();
     private int activeHideCount;
@@ -72,7 +75,17 @@ public sealed class CutsceneDressingService : IDisposable
 
     public void ClearTweaks() => tweaks.Clear();
 
-    public DressingCatalog Catalog { get; }
+    /// <summary>The live catalog. Starts as the shipped (embedded) data; b272 swaps in the runtime ingest for the
+    /// installed game version once it is ready (ReplaceCatalog, framework thread).</summary>
+    public DressingCatalog Catalog { get; private set; }
+
+    /// <summary>b272: adopt a freshly ingested catalog. The active dressing (already resolved) keeps running; an armed
+    /// row missing from the new catalog is dropped.</summary>
+    public void ReplaceCatalog(DressingCatalog next)
+    {
+        Catalog = next;
+        if (armedRow != 0 && !next.TryGet(armedRow, out _)) armedRow = 0;
+    }
 
     /// <summary>Row of the dressing on the current map (0 = none). What the host broadcasts.</summary>
     public uint ActiveRow => active?.Row ?? 0;
@@ -125,7 +138,7 @@ public sealed class CutsceneDressingService : IDisposable
     private void Activate(Dressing d)
     {
         active = d;
-        activeHides = d.HidesFromCutb ? Merge(CutbInstanceRefs.Read(data, d.Cutb), d.Hides) : d.Hides;   // b264: lab = cutb list + baked replacement hides
+        activeHides = Merge(d.HidesFromCutb ? CutbInstanceRefs.Read(data, d.Cutb) : new(), d.Hides);   // b264: cutb list + baked hides
         activeLights = activeHides.TryGetValue(InstanceType.Light, out var l)
             ? new Dictionary<InstanceType, HashSet<ulong>> { [InstanceType.Light] = l }
             : new Dictionary<InstanceType, HashSet<ulong>>();
@@ -159,7 +172,8 @@ public sealed class CutsceneDressingService : IDisposable
         colliders.Clear();   // b269: before the zone unloads, like the models
         hider.Restore();
         active = null;
-        activeHides = activeLights = new Dictionary<InstanceType, HashSet<ulong>>();
+        activeHides = new();
+        activeLights = new Dictionary<InstanceType, HashSet<ulong>>();
         activeHideCount = 0;
         settledFrames = 0;
         propsPlaced = false;
@@ -178,6 +192,8 @@ public sealed class CutsceneDressingService : IDisposable
 
         // Hide first: the scene's props replace the level's own copies (the default bed, Rabanastre's ruins), so the
         // originals must be gone before the replacements land.
+        // b272: the level's own copy of a re-placed prop (same model within ReplaceRadius) is found live, not baked.
+        if (d.Props.Count > 0 && hideFrames % ReplaceScanEvery == 0) AddReplacementHides(d);
         if (activeHideCount > 0 && hideFrames % HidePassEvery == 0) lastHide = hider.Apply(activeHides);
         else if (activeLights.Count > 0) hider.Apply(activeLights);
         if (hideFrames == HideReportAt && activeHideCount > 0)
@@ -202,6 +218,26 @@ public sealed class CutsceneDressingService : IDisposable
         }
     }
 
+    private void AddReplacementHides(Dressing d)
+    {
+        var targets = new List<(string, Vector3)>(d.Props.Count * 2);
+        foreach (var p in d.Props)
+        {
+            targets.Add((p.Path, p.Pos));
+            int a = p.Path.IndexOf("/asset/", StringComparison.Ordinal);   // housing swap: the level copy is the .mdl
+            if (a > 0 && p.Path.EndsWith(".sgb", StringComparison.Ordinal))
+                targets.Add((p.Path[..a] + "/bgparts/" + p.Path[(a + 7)..^4] + ".mdl", p.Pos));
+        }
+        var found = LayoutInstanceVisibility.BgPartsNear(targets, ReplaceRadius);
+        if (found.Count == 0) return;
+        if (!activeHides.TryGetValue(InstanceType.BgPart, out var set)) activeHides[InstanceType.BgPart] = set = new HashSet<ulong>();
+        int before = set.Count;
+        set.UnionWith(found);
+        if (set.Count == before) return;
+        activeHideCount = activeHides.Values.Sum(v => v.Count);   // ReplaceScanEvery is a multiple of HidePassEvery: applied this frame
+        log.Information("[Dressing] '" + d.Name + "': " + (set.Count - before) + " level copy(ies) of re-placed props found live, switched off");
+    }
+
     public string Status()
     {
         var d = active;
@@ -210,6 +246,7 @@ public sealed class CutsceneDressingService : IDisposable
             ", " + colliders.Count + " collider(s)" +
             "; switched off " + hider.HiddenCount + "/" + activeHideCount + " level instance(s)" +
             (propsPlaced ? "" : " (waiting for map to settle)") + " [rot " + RotMode + "]" +
+            " [catalog: " + Catalog.Source + "]" +
             (tweaks.Count > 0 ? " tweaks: " + string.Join(", ", tweaks.Select(kv => kv.Key + " x" + kv.Value.Scale + " dy" + kv.Value.Dy)) : "");
     }
 

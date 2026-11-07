@@ -5,6 +5,14 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.5.1] - 2026-11-07
+
+### Changed
+
+- **Cutscene dressings now update themselves after a game patch.** HMS rebuilds its dressing list from the installed game the first time it starts on a new game version (a few seconds, in the background) and keeps the result for later starts, so cutscenes added by a patch appear without waiting for an HMS update. The list shipped with HMS is used until the rebuild finishes, and stays in use if it fails.
+- **New dressings from recent patches**, including Phantom Village, Unmoored Isle, The Skydeep Cenote and Urqopacha. One existing Lochs dressing is renamed "The Lochs (stmact07080)", because a new Lochs scene now takes the plain name.
+- **Objects a scene moves are no longer doubled.** When a dressing re-places an object the map already has, the map's own copy is now found and switched off as the area loads.
+
 ## [1.0.5.0] - 2026-11-07
 
 ### Added

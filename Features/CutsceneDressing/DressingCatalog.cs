@@ -53,24 +53,48 @@ public sealed class DressingCatalog
     /// <summary>Lab entries in ranked order, for the "Cutscenes 2" chip.</summary>
     public IReadOnlyList<LabEntry> Lab => lab;
 
+    /// <summary>Where this catalog's data came from ("embedded" or "ingest &lt;game version&gt;"), for logs/status.</summary>
+    public string Source { get; }
+
+    public static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
+
+    /// <summary>The shipped data (embedded resources): the bootstrap until a runtime ingest for this game version exists.</summary>
     public DressingCatalog(IPluginLog log)
     {
-        Load(log, ResourceName, isLab: false);
-        Load(log, LabResourceName, isLab: true);
-        log.Information("[Dressing] catalog loaded: " + (byRow.Count - lab.Count) + " curated + " + lab.Count + " lab dressing(s)");
+        Source = "embedded";
+        Add(log, ReadEmbedded(log, ResourceName), isLab: false, ResourceName);
+        Add(log, ReadEmbedded(log, LabResourceName), isLab: true, LabResourceName);
+        log.Information("[Dressing] catalog loaded (embedded): " + (byRow.Count - lab.Count) + " curated + " + lab.Count + " lab dressing(s)");
     }
 
-    private void Load(IPluginLog log, string resourceName, bool isLab)
+    /// <summary>b272: data produced at runtime by DressingIngest from the installed game (same shape as the embedded files).</summary>
+    public DressingCatalog(IPluginLog log, FileDto curated, FileDto labData, string source)
+    {
+        Source = source;
+        Add(log, curated, isLab: false, "ingest curated");
+        Add(log, labData, isLab: true, "ingest lab");
+        log.Information("[Dressing] catalog loaded (" + source + "): " + (byRow.Count - lab.Count) + " curated + " + lab.Count + " lab dressing(s)");
+    }
+
+    private static FileDto? ReadEmbedded(IPluginLog log, string resourceName)
     {
         try
         {
             var asm = Assembly.GetExecutingAssembly();
             var res = Array.Find(asm.GetManifestResourceNames(), n => n.EndsWith(resourceName, StringComparison.OrdinalIgnoreCase));
-            if (res == null) { log.Warning("[Dressing] " + resourceName + " not embedded"); return; }
+            if (res == null) { log.Warning("[Dressing] " + resourceName + " not embedded"); return null; }
             using var stream = asm.GetManifestResourceStream(res);
-            if (stream == null) return;
+            if (stream == null) return null;
             using var reader = new StreamReader(stream);
-            var dto = JsonSerializer.Deserialize<FileDto>(reader.ReadToEnd(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            return JsonSerializer.Deserialize<FileDto>(reader.ReadToEnd(), JsonOptions);
+        }
+        catch (Exception ex) { log.Warning("[Dressing] " + resourceName + " read failed: " + ex.Message); return null; }
+    }
+
+    private void Add(IPluginLog log, FileDto? dto, bool isLab, string what)
+    {
+        try
+        {
             foreach (var d in dto?.Dressings ?? new List<DressingDto>())
             {
                 var props = new List<DressingProp>();
@@ -92,15 +116,16 @@ public sealed class DressingCatalog
                     lab.Add(new LabEntry(d.Row, d.Name ?? ("cutscene " + d.Row), d.Quest ?? "", d.Bg, d.Tt));
             }
         }
-        catch (Exception ex) { log.Warning("[Dressing] " + resourceName + " load failed: " + ex.Message); }
+        catch (Exception ex) { log.Warning("[Dressing] " + what + " load failed: " + ex.Message); }
     }
 
     public bool TryGet(uint row, out Dressing dressing) => byRow.TryGetValue(row, out dressing!);
 
     private static Vector3 V(float[] a) => new(a[0], a[1], a[2]);
 
-    private sealed class FileDto { public List<DressingDto>? Dressings { get; set; } }
-    private sealed class DressingDto
+    // Data shape shared by the embedded files, the runtime ingest and its cache.
+    public sealed class FileDto { public List<DressingDto>? Dressings { get; set; } }
+    public sealed class DressingDto
     {
         public uint Row { get; set; }
         public string? Name { get; set; }
@@ -114,7 +139,7 @@ public sealed class DressingCatalog
         public uint Tt { get; set; }                // lab only: TerritoryType (0 = swap stage)
         public bool HidesFromCutb { get; set; }     // lab: read hides from the cutb at runtime
     }
-    private sealed class PropDto
+    public sealed class PropDto
     {
         public string? Path { get; set; }
         public float[]? Pos { get; set; }
