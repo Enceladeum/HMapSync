@@ -3,7 +3,7 @@
         <TargetFramework>net10.0-windows</TargetFramework>
         <LangVersion>latest</LangVersion>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-        <Version>1.0.4.6</Version>
+        <Version>1.0.5.0</Version>
         <AssemblyName>HMSync</AssemblyName>
         <RootNamespace>HMSync</RootNamespace>
         <Nullable>enable</Nullable>
@@ -32,6 +32,12 @@
              AllStages spawns came from). A venue absent here keeps its donor-territory fallback spawn (no regression).
              Regenerate per patch. -->
         <EmbeddedResource Include="cutscene-spawns.json" />
+        <!-- DRESSING: cutscene set dressing, per Cutscene row: the props the scene places and the level instances it
+             switches off. Derived offline from the game data and read by DressingCatalog. Regenerate per patch. -->
+        <EmbeddedResource Include="Features\CutsceneDressing\cutscene-dressings.json" />
+        <!-- DRESSING: the auto-ranked set (props only; the hides are read from the cutscene at runtime). Same
+             provenance; regenerate per patch. -->
+        <EmbeddedResource Include="Features\CutsceneDressing\cutscene-dressings-lab.json" />
         <!-- DEBRIS: TerritoryId-keyed op=None battle-debris hide set for Tuliyollal (y6t1, TT 1185). Its
              MSQ-invasion debris is a single always-on (FilterOp=None) SharedGroup instance (y6t1_destory =
              InstanceId 10757216, asset sgbg_y6t1_w1_des01.sgb) that the server hides by LayerId once the quest

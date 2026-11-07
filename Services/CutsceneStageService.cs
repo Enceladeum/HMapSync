@@ -20,12 +20,15 @@ namespace HMSync.Services;
 // ============================================================================
 public sealed class CutsceneStageService : IDisposable
 {
-    public sealed record Stage(string Name, string Bg, bool Experimental, string Quest = "", uint TerritoryId = 0, (float X, float Y, float Z)? Spawn = null, float? Facing = null)
+    public sealed record Stage(string Name, string Bg, bool Experimental, string Quest = "", uint TerritoryId = 0, (float X, float Y, float Z)? Spawn = null, float? Facing = null, uint DressingRow = 0, bool Lab = false)
     {
         public string Expansion => Bg.StartsWith("ex") && Bg.Length >= 3
             ? (Bg[..3] switch { "ex1" => "HW", "ex2" => "SB", "ex3" => "ShB", "ex4" => "EW", "ex5" => "DT", _ => "ARR" })
             : "ARR";
         public string Code => Bg.Split('/').Last();   // "n4e5" - searchable tag for the ID column
+        // b260: identity. Dressed variants share their map's bg (two hangar scenes on z3b1), so anything that tells
+        // chips apart (favourites, dedup) keys by bg#row; an undressed stage keeps its bare bg (existing favourites stay valid).
+        public string Key => DressingRow != 0 ? Bg + "#" + DressingRow : Bg;
     }
 
     private static readonly Stage[] AllStages =
@@ -121,6 +124,14 @@ public sealed class CutsceneStageService : IDisposable
         new("Limsa Lominsa", "ffxiv/sea_s1/twn/s1t1/level/s1t1", false, "", 181),
         new("Eorzean Subterrane", "ffxiv/sea_s1/bah/s1b7/level/s1b7", false, "", 338),
         new("The Ridorana Cataract", "ex2/05_zon_z3/rad/z3r2/level/z3r2", false, "", 787),
+        // --- b260 cutscene dressings: a map + the set dressing ONE cutscene layers onto it (Features/CutsceneDressing).
+        //     DressingRow = Cutscene sheet row; the props/parts live in the embedded cutscene-dressings.json. These are
+        //     surfaced in the Cutscenes chip even when TT-backed (the dressing is what the plain map can't show). ---
+        new("Valnain", "ex2/05_zon_z3/rad/z3r1/level/z3r1", false, "March of the Bloody Queen", 734, DressingRow: 2504),
+        new("Imperial hangar", "ex2/05_zon_z3/btl/z3b1/level/z3b1", false, "Blood of Emerald", 893, DressingRow: 2392),
+        new("Imperial hangar, Diamond", "ex2/05_zon_z3/btl/z3b1/level/z3b1", false, "Duty in the Sky with Diamond", 893, DressingRow: 2516),
+        new("Valens van Varro's chambers, furnished", "ex2/05_zon_z3/evt/z3e4/level/z3e4", false, "Sleep Now in Sapphire", Spawn: (0.1282f, 0.0f, 5.9394f), Facing: 3.1332f, DressingRow: 2348),
+        new("Black Rose facility", "ffxiv/lak_l1/fld/l1f1/level/l1f1", false, "Seiryu's Wall", 156, DressingRow: 1882),   // b262: over Mor Dhona; arrival point lives in the dressing data
     };
 
     private readonly IPluginLog log;
@@ -129,6 +140,16 @@ public sealed class CutsceneStageService : IDisposable
     private readonly CutsceneStageDetectService detect;   // NB-33: runtime cutscene-only venue auto-detection
 
     private List<Stage>? _exposed;
+    private List<Stage> _lab = new();   // b263: experimental "Cutscenes 2" dressings (supplied by the dressing catalog)
+
+    /// <summary>b263: the lab dressings to list under "Cutscenes 2". Appended after the curated/detected stages; the
+    /// chip filters on Stage.Lab. Rebuilds the exposed list and notifies the UI.</summary>
+    public void SetLabStages(IEnumerable<Stage> stages)
+    {
+        _lab = stages.Select(s => s with { Lab = true }).ToList();
+        _exposed = null;
+        StagesChanged?.Invoke();
+    }
 
     // NB-33: the chip catalog is the curated Tier-A stages (indices/names/spawns preserved) PLUS the
     // auto-detected cutscene-only venues (the 4 new Tier-B patch venues + everything the scan surfaces).
@@ -143,7 +164,7 @@ public sealed class CutsceneStageService : IDisposable
 
     private List<Stage> BuildExposed()
     {
-        var list = AllStages.Where(x => x.TerritoryId == 0).ToList();   // curated Tier A - unchanged chip head
+        var list = AllStages.Where(x => x.TerritoryId == 0 || x.DressingRow != 0).ToList();   // curated Tier A + b260 dressed rows (TT-backed allowed)
         var present = new HashSet<string>(list.Select(s => s.Bg), StringComparer.Ordinal);
         var curatedByBg = AllStages
             .GroupBy(s => s.Bg, StringComparer.Ordinal)
@@ -153,6 +174,8 @@ public sealed class CutsceneStageService : IDisposable
             if (!present.Add(d.Bg)) continue;   // already present (curated Tier A, or dup)
             list.Add(curatedByBg.TryGetValue(d.Bg, out var cur) ? cur : d);   // curated wins for name/spawn
         }
+        var keys = new HashSet<string>(list.Select(s => s.Key), StringComparer.Ordinal);
+        foreach (var l in _lab) if (keys.Add(l.Key)) list.Add(l);   // b263: lab rows last, never displacing a curated row
         return list;
     }
 

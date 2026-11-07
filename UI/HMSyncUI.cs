@@ -1281,6 +1281,7 @@ public class HMSyncUI
                         // v0.7.352: show the stage TAG in parens (e.g. "o1e1") to match zone chips' "name (id)" format.
                         // Tag = the bg path's last '/'-segment.
                         string bg = place.StageBg;
+                        int hash = bg.IndexOf('#'); if (hash >= 0) bg = bg[..hash];   // b271: dressed key bg#row -> show the stage tag only
                         int slash = bg.LastIndexOf('/');
                         string tag = slash >= 0 && slash < bg.Length - 1 ? bg.Substring(slash + 1) : bg;
                         label = CutsceneEntries[found].Name + "  (" + tag + ")";
@@ -3008,8 +3009,23 @@ ImGui.Spacing();
         "ex2/03_ocn_o3/evt/o3e2/level/o3e2",  // Seaship (o3e2) - NB-38
     };
     // Cutscene stages (populated by the plugin from CutsceneStageService). OnLoadCutscene loads by index.
-    public struct CutsceneEntry { public string Name; public string Region; public string Quest; public string Code; public string Bg; public uint Id; public int Index; }
+    public struct CutsceneEntry { public string Name; public string Region; public string Quest; public string Code; public string Bg; public uint Id; public int Index; public bool Lab; public bool Dressed; }   // b263 Lab (auto-ranked set) / b266 Dressed (has a cutscene dressing)
     public List<CutsceneEntry> CutsceneEntries = new();
+
+    // b266: dressed entries indexed by territory, rebuilt whenever the plugin swaps in a new CutsceneEntries list.
+    private List<CutsceneEntry>? dressingIndexSource;
+    private Dictionary<uint, List<CutsceneEntry>> dressingIndex = new();
+    private static readonly List<CutsceneEntry> NoDressings = new();
+    private List<CutsceneEntry> DressingsFor(uint territoryId)
+    {
+        if (!ReferenceEquals(dressingIndexSource, CutsceneEntries))
+        {
+            dressingIndexSource = CutsceneEntries;
+            dressingIndex = CutsceneEntries.Where(e => e.Dressed && e.Id != 0)
+                .GroupBy(e => e.Id).ToDictionary(g => g.Key, g => g.OrderBy(e => e.Lab).ThenBy(e => e.Quest).ToList());
+        }
+        return dressingIndex.TryGetValue(territoryId, out var l) ? l : NoDressings;
+    }
 
     // v0.7.232: build version in the window title so it's never a guess which build is running (e.g. the Dalamud
     // assembly-cache cases where the plugin list shows a version the running code doesn't match). Computed once.
@@ -3346,7 +3362,9 @@ ImGui.Spacing();
             else
                 shownE = shownE.Where(c => c.Key.Contains(f, StringComparison.OrdinalIgnoreCase)
                                         || c.Region.Contains(f, StringComparison.OrdinalIgnoreCase)
-                                        || c.Variants.Any(v => QuestNames.TryGetValue(v.Id, out var q) && q.Contains(f, StringComparison.OrdinalIgnoreCase)));
+                                        || c.Variants.Any(v => QuestNames.TryGetValue(v.Id, out var q) && q.Contains(f, StringComparison.OrdinalIgnoreCase))
+                                        || c.Variants.Any(v => DressingsFor(v.Id).Any(e => e.Name.Contains(f, StringComparison.OrdinalIgnoreCase)
+                                                                                     || (e.Quest ?? "").Contains(f, StringComparison.OrdinalIgnoreCase))));   // b266
         }
         var list = shownE.ToList();
 
@@ -3403,7 +3421,7 @@ ImGui.Spacing();
             // Outline pill for the name; a fixed toggle slot before EVERY pill keeps all pill left-edges aligned
             // (the disclosure triangle sits in that slot for clusters; the slot is just empty space otherwise -
             // no placeholder glyph, which would only add noise). depth 1 = a nested variant row.
-            void DrawNamePill(string label, uint id, bool multi, bool open, string cluKey, int depth)
+            void DrawNamePill(string label, uint id, bool multi, bool open, string cluKey, int depth, int csIndex = -1)
             {
                 ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(9f, 2f));
                 float slot = ImGui.GetFrameHeight();
@@ -3428,7 +3446,8 @@ ImGui.Spacing();
                 ImGui.PushStyleColor(ImGuiCol.ButtonActive, Darken(acc, 0.42f));
                 ImGui.PushStyleColor(ImGuiCol.Text, Lighten(acc, 1.05f));
                 ImGui.PushStyleColor(ImGuiCol.Border, new Vector4(acc.X, acc.Y, acc.Z, 0.30f));
-                if (ImGui.Button(label + "##load" + id)) OnQuickLoad?.Invoke(id);
+                if (csIndex >= 0) { if (ImGui.Button(label + "##dress" + csIndex)) OnLoadCutscene?.Invoke(csIndex); }   // b266: a dressing row
+                else if (ImGui.Button(label + "##load" + id)) OnQuickLoad?.Invoke(id);
                 ImGui.PopStyleColor(5);
                 ImGui.PopStyleVar();
                 if (ImGui.IsItemHovered()) ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
@@ -3436,9 +3455,25 @@ ImGui.Spacing();
             }
             void InfoCell(string text) { ImGui.TableSetColumnIndex(3); if (!string.IsNullOrEmpty(text)) { ImGui.AlignTextToFramePadding(); ImGui.TextDisabled(text); } }
 
+            // b266: cutscene dressings on a territory, listed under it like its TT variants. Curated rows keep their name
+            // ("Valnain") with the quest as info; auto-ranked rows are named by quest (their name is just the place).
+            void DressingRows(uint tt)
+            {
+                foreach (var e in DressingsFor(tt))
+                {
+                    ImGui.TableNextRow();
+                    ImGui.TableSetColumnIndex(0); DrawCutsceneStar(e.Bg, acc2);
+                    ImGui.TableSetColumnIndex(1); ImGui.AlignTextToFramePadding(); ImGui.TextDisabled(tt.ToString());
+                    string label = e.Lab && !string.IsNullOrEmpty(e.Quest) ? e.Quest : e.Name;
+                    ImGui.TableSetColumnIndex(2); DrawNamePill("\u2726 " + label, tt, false, false, "", 1, e.Index);
+                    InfoCell(e.Lab || string.IsNullOrEmpty(e.Quest) ? "Cutscene" : e.Quest);
+                }
+            }
+
             void ClusterRows(ZoneCluster c)
             {
-                bool multi = c.Variants.Count > 1;
+                bool hasDressings = c.Variants.Any(v => DressingsFor(v.Id).Count > 0);
+                bool multi = c.Variants.Count > 1 || hasDressings;
                 bool open = multi && expandedClusters.Contains(c.Key);
                 ImGui.TableNextRow();
                 ImGui.TableSetColumnIndex(0); DrawStar(c.Primary.Id);
@@ -3446,6 +3481,8 @@ ImGui.Spacing();
                 ImGui.TableSetColumnIndex(2); DrawNamePill(c.Key, c.Primary.Id, multi, open, c.Key, 0);
                 InfoCell(InfoText(c));
                 if (open)
+                {
+                    DressingRows(c.Primary.Id);   // b266: the primary's dressings first
                     foreach (var v in c.Variants)
                     {
                         if (v.Id == c.Primary.Id) continue;   // primary is the parent row - don't list it twice
@@ -3454,7 +3491,9 @@ ImGui.Spacing();
                         ImGui.TableSetColumnIndex(1); ImGui.AlignTextToFramePadding(); ImGui.TextDisabled(v.Id.ToString());
                         ImGui.TableSetColumnIndex(2); DrawNamePill(v.Name, v.Id, false, false, c.Key, 1);
                         InfoCell(VariantTag(v));
+                        DressingRows(v.Id);
                     }
+                }
             }
             void SectionRow(string label, bool pinned)
             {
@@ -3615,7 +3654,9 @@ ImGui.Spacing();
     {
         if (CutsceneEntries.Count == 0) { ImGui.TextDisabled("Cutscene stages unavailable."); return; }
         var f = filter.Trim();
-        IEnumerable<CutsceneEntry> shown = CutsceneEntries;
+        // b266: the Cutscenes chip lists stages WITHOUT a territory of their own (bg-swap stages, dressed or not). A dressing
+        // on a real territory lives in the zone tree under that territory, next to its TT variants (DressingsFor).
+        IEnumerable<CutsceneEntry> shown = CutsceneEntries.Where(e => e.Id == 0);
         if (f.Length > 0)
             shown = shown.Where(e => e.Name.Contains(f, StringComparison.OrdinalIgnoreCase)
                                   || (e.Code ?? "").Contains(f, StringComparison.OrdinalIgnoreCase)
@@ -3640,13 +3681,14 @@ ImGui.Spacing();
             ImGui.TableSetupColumn("Quest", ImGuiTableColumnFlags.WidthFixed, 210f);
             ImGui.TableHeadersRow();
 
-            void NamePill(string label, int idx)
+            void NamePill(string label, int idx, bool indented = false)
             {
                 var acc = acc2;
                 ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(9f, 2f));
                 // Match the zone tab's single-row indent (fold-arrow slot) so the cutscene tab reads consistently.
+                // b267: skipped when the caller already drew the fold arrow or a child indent.
                 float slot = ImGui.GetFrameHeight();
-                ImGui.Dummy(new Vector2(slot, 1f)); ImGui.SameLine(0f, 4f);
+                if (!indented) { ImGui.Dummy(new Vector2(slot, 1f)); ImGui.SameLine(0f, 4f); }
                 ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1f);
                 ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0f, 0f, 0f, 0f));
                 ImGui.PushStyleColor(ImGuiCol.ButtonHovered, Darken(acc, 0.55f));
@@ -3676,16 +3718,48 @@ ImGui.Spacing();
                 dl.PopClipRect();
             }
 
-            void EntryRow(CutsceneEntry e)
+            void EntryRow(CutsceneEntry e, int depth = 0, bool hasChildren = false, string groupKey = "")
             {
                 ImGui.TableNextRow();
                 ImGui.TableSetColumnIndex(0); DrawCutsceneStar(e.Bg, acc2);
                 ImGui.TableSetColumnIndex(1);
                 ImGui.AlignTextToFramePadding();
                 ImGui.TextDisabled(e.Id != 0 ? e.Id.ToString() : (string.IsNullOrEmpty(e.Code) ? "\u2014" : e.Code));
-                ImGui.TableSetColumnIndex(2); NamePill(e.Name, e.Index);
+                ImGui.TableSetColumnIndex(2);
+                // b267: a stage with variants gets the zone tree's fold arrow; its variants indent beneath it.
+                if (hasChildren)
+                {
+                    bool open = expandedClusters.Contains(groupKey);
+                    ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0f, 0f, 0f, 0f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.24f, 0.25f, 0.29f, 1f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.24f, 0.25f, 0.29f, 1f));
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.60f, 0.63f, 0.70f, 1f));
+                    if (ImGui.ArrowButton("##csexp" + e.Index, open ? ImGuiDir.Down : ImGuiDir.Right))
+                    { if (open) expandedClusters.Remove(groupKey); else expandedClusters.Add(groupKey); }
+                    ImGui.PopStyleColor(4);
+                    ImGui.SameLine(0f, 4f);
+                }
+                else if (depth > 0) { ImGui.Dummy(new Vector2(ImGui.GetFrameHeight() + 16f, 1f)); ImGui.SameLine(0f, 4f); }
+                string label = depth > 0 ? "\u2726 " + (e.Lab && !string.IsNullOrEmpty(e.Quest) ? e.Quest : e.Name) : e.Name;
+                NamePill(label, e.Index, indented: hasChildren || depth > 0);
                 ImGui.TableSetColumnIndex(3);
-                if (!string.IsNullOrEmpty(e.Quest)) { ImGui.AlignTextToFramePadding(); ImGui.TextDisabled(e.Quest); }
+                if (!string.IsNullOrEmpty(e.Quest)) { ImGui.AlignTextToFramePadding(); ImGui.TextDisabled(depth > 0 && e.Lab ? "Cutscene" : e.Quest); }
+            }
+
+            // b267: entries sharing a stage bg (Bg before '#') form one group: the undressed stage (or the first) is the
+            // parent row, the dressed/lab variants fold under it, exactly like a territory and its TT variants.
+            static string BaseBg(CutsceneEntry e) { var i = e.Bg.IndexOf('#'); return i < 0 ? e.Bg : e.Bg[..i]; }
+            void GroupRows(IEnumerable<CutsceneEntry> entries)
+            {
+                foreach (var grp in entries.GroupBy(BaseBg).OrderBy(gr => gr.Min(en => en.Name)))
+                {
+                    var members = grp.OrderBy(en => en.Dressed).ThenBy(en => en.Lab).ThenBy(en => en.Name).ToList();
+                    if (members.Count == 1) { EntryRow(members[0]); continue; }
+                    string gk = "cs:" + grp.Key;
+                    EntryRow(members[0], 0, true, gk);
+                    if (expandedClusters.Contains(gk))
+                        foreach (var m in members.Skip(1)) EntryRow(m, 1);
+                }
             }
 
             // Pinned favourites first (across all regions), mirroring the zone chip's "Pinned" section.
@@ -3693,7 +3767,7 @@ ImGui.Spacing();
             if (pinned.Count > 0)
             {
                 SectionRow("Pinned", true);
-                foreach (var e in pinned.OrderBy(en => en.Name)) EntryRow(e);
+                foreach (var e in pinned.OrderBy(en => en.Name)) EntryRow(e);   // pinned rows stay flat (each was starred on its own)
             }
             var rest = list.Where(e => string.IsNullOrEmpty(e.Bg) || !favCs.Contains(e.Bg)).ToList();
 
@@ -3701,7 +3775,7 @@ ImGui.Spacing();
             foreach (var g in rest.GroupBy(e => string.IsNullOrEmpty(e.Region) ? "\u2014" : e.Region).OrderBy(gr => ExpOrd(gr.Key)))
             {
                 SectionRow(g.Key, false);
-                foreach (var e in g.OrderBy(en => en.Name)) EntryRow(e);
+                GroupRows(g);   // b267: same-stage entries fold under one parent
             }
             if (list.Count == 0) { ImGui.TableNextRow(); ImGui.TableSetColumnIndex(2); ImGui.TextDisabled("No cutscene stages match."); }
             ResumeWrap();

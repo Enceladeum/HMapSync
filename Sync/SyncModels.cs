@@ -427,6 +427,12 @@ public class ZoneLoadData
 
     [JsonPropertyName("stnm")]
     public string StageName { get; set; } = "";
+
+    // b260: cutscene dressing row (Features/CutsceneDressing). The dressing data is embedded and deterministic, so the
+    // row id is all a peer needs to layer the same props/parts on its own load. Additive + optional: an older client
+    // ignores it (loads the plain map), an older host omits it (0 = no dressing).
+    [JsonPropertyName("csr")]
+    public uint DressingRow { get; set; }
 }
 
 public class RoomJoinedData

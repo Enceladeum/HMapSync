@@ -5,6 +5,15 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.5.0] - 2026-11-07
+
+### Added
+
+- **Cutscene set dressing.** Many cutscenes rearrange a map with their own props and switch parts of the level off. HMS can now load a map with one cutscene's dressing layered on top, so rooms, hangars and facilities appear the way the scene shows them, at the cutscene's scale and with collision where the game provides it. Curated scenes include Valnain, the Imperial hangars, Valens van Varro's furnished chambers and the Black Rose facility, plus more than 200 found automatically.
+- **Where to find them.** A dressed version of a real territory is listed under that territory in the Zones list, marked ✦, next to its other variants. Stages without a territory of their own are grouped in the Cutscenes chip, with their dressed versions folded under them.
+- **Recent remembers the dressed version** you loaded, so its chip reopens the furnished room rather than the bare map.
+- **Shared with your session.** Peers load the same dressing when you load one. Players on an older version load the plain map.
+
 ## [1.0.4.6] - 2026-10-30
 
 ### Changed

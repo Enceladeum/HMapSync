@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using Dalamud.Game.Command;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
+using HMSync.Features.CutsceneDressing;
 using HMSync.Services;
 using HMSync.Sync;
 using HMSync.UI;
@@ -42,6 +43,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     private readonly ZoneLoadService zoneLoad;
     private readonly QuestSpoofService questSpoof;   // NB-19 Phase 1: quest-populace read-spoof (per-zone policy) + /hms questprobe read-log
     private readonly CutsceneStageService cutscene;   // cutscene free-roam (Tier B LoadZone / Tier A donor-redirect)
+    private readonly CutsceneDressingService dressing;   // b260: cutscene set dressing layered onto a loaded map (Features/CutsceneDressing)
     private readonly NoclipService noclip;
     private readonly CarpetService carpet;   // S315: ported HCollider ground-carpet (walk anywhere)
     private readonly DeckFloorService deckFloor;   // v0.7.351: constructive collision - add box floor patches
@@ -286,6 +288,9 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         zoneLoad.ArmQuestSpoof = questSpoof.ArmForZone;   // wire the virtual-load-only quest-populace spoof lifecycle
         zoneLoad.DisarmQuestSpoof = questSpoof.Disarm;
         cutscene = new CutsceneStageService(pluginInterface, log, dataManager, zoneLoad);
+        dressing = new CutsceneDressingService(log, sigScanner, dataManager, () => zoneLoad.IsZoneLoaded && !zoneLoad.IsTransitioning);
+        // b263/b266: the auto-ranked lab dressings join the stage list; TT-backed ones show in the zone tree under their territory, TT-less ones in the Cutscenes chip.
+        cutscene.SetLabStages(dressing.Catalog.Lab.Select(l => new CutsceneStageService.Stage(l.Name, l.Bg, true, l.Quest, l.TerritoryId, DressingRow: l.Row)));
         noclip = new NoclipService(objectTable, framework, log, sigScanner, hooks);
         carpet = new CarpetService(objectTable, framework, log, config);
         emoteDiag = new EmoteDiagService(objectTable, framework, dataManager, log);
@@ -539,6 +544,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // or external (normal teleport / zone line). /hms stop|leave is handled in DoLeaveInternal.
         zoneLoad.ZoneWillChange += carpet.Disable;
         zoneLoad.ZoneWillChange += lightsOut.ClearForZoneChange;   // b213: lights-out/VFX toggles never carry across a map load/change/cutscene
+        zoneLoad.ZoneWillChange += dressing.OnZoneWillChange;      // b260: tear the dressing down BEFORE the scene unloads; promote an armed one
 
         // S240: single consolidated window (Session + Zones tabs). Zone directory
         // wiring moves onto the unified UI; reuses the proven DoLoad path, greys out
@@ -552,11 +558,17 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 if (idx < 0 || idx >= cutscene.Stages.Count) return;
                 uint donor = clientState.TerritoryType != 0 ? clientState.TerritoryType : 1u;   // current zone as the donor
                 if (!relay.IsSessionActive) DoStartSolo();                 // solo-if-idle, mirrors DoQuickLoad
-                if (relay.IsSessionActive) cutscene.LoadStage(cutscene.Stages[idx], donor, DoLoad);   // DoLoad brings up the filter
+                if (relay.IsSessionActive)
+                {
+                    var stage = cutscene.Stages[idx];
+                    dressing.Arm(stage.DressingRow);   // b260: rides the zone change LoadStage triggers (0 = plain stage)
+                    cutscene.LoadStage(stage, donor, DoLoad);   // DoLoad brings up the filter
+                    dressing.Disarm();                 // consumed by ZoneWillChange if the load ran; dropped if it aborted
+                }
             }),
             CutsceneEntries = cutscene.Stages.Select((st, i) => new HMSyncUI.CutsceneEntry
             {
-                Name = st.Name, Region = st.Expansion, Quest = st.Quest, Code = st.Code, Bg = st.Bg, Id = st.TerritoryId, Index = i
+                Name = st.Name, Region = st.Expansion, Quest = st.Quest, Code = st.Code, Bg = st.Key, Id = st.TerritoryId, Index = i, Lab = st.Lab, Dressed = st.DressingRow != 0   // b260: Key = bg#row for dressed variants (distinct favourites); b263 Lab; b266 Dressed
             }).ToList(),
             // v0.7.371: Modules panel. Aliases cover the internal-vs-display name gap (HMS itself ships as "HM-Sync"),
             // so a module isn't silently reported missing just because its manifest name differs from the label.
@@ -684,7 +696,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         {
             ui.CutsceneEntries = cutscene.Stages.Select((st, i) => new HMSyncUI.CutsceneEntry
             {
-                Name = st.Name, Region = st.Expansion, Quest = st.Quest, Code = st.Code, Bg = st.Bg, Id = st.TerritoryId, Index = i
+                Name = st.Name, Region = st.Expansion, Quest = st.Quest, Code = st.Code, Bg = st.Key, Id = st.TerritoryId, Index = i, Lab = st.Lab, Dressed = st.DressingRow != 0   // b260: Key (see above); b263 Lab; b266 Dressed
             }).ToList();
             log.Information("[HMSync] Cutscene chip refreshed: " + ui.CutsceneEntries.Count + " venue(s)");
         });
@@ -781,6 +793,8 @@ public sealed class HMSyncPlugin : IDalamudPlugin
 
         // Apply an in-progress teleport for a few frames so the engine's re-grounding doesn't revert it.
         if (teleportHoldFrames > 0 && teleportHoldTarget.HasValue) { ApplyTeleportHold(); teleportHoldFrames--; }
+
+        dressing.Tick();   // b260: land the cutscene dressing once the map settles; ready-gates spawned models
 
         // b195: drive lobby nameplate sync (broadcast our Moniker name + apply peers' names while out of a map). Self-
         // gating: no-op unless config.SyncLobbyNameplates && connected && room-joined && NOT in a loaded map.
@@ -1206,6 +1220,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 case "pktcap":     // S327: packet inspector capture - a diagnostic; useful out of session (passes packets through when not filtering)
                 case "rosterdump": // b31 (D-16 measurement): read-only spawn/despawn struct dump - MUST run out of session (idle in a populated area, no filter)
                 case "firecut":    // P1 cutscene probe - arms capture; must run in an inn (out of session)
+                case "cutprobe":   // b267: read-only live scene dump (path/pos/rot/scale) - run DURING a cutscene replay (out of session)
                 case "cutstop":    // P1 safety escape - must work anywhere
                 case "stagelights":// Q-0010: local dungeon light suppression (broadcasts only if connected; useful solo too)
                 case "vfxoff":     // Q-0010: local dungeon UNIVERSAL VFX suppression (broadcasts only if connected; useful solo too)
@@ -1237,6 +1252,16 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 zoneLoad.CutStop();
                 return;
 
+            case "cutprobe":
+                // b267: dump every drawn background model whose path contains <filter> with its LIVE transform, to read the
+                // engine's real scale/placement during a cutscene replay (e.g. /hms cutprobe w_cut_530_02a). Read-only.
+                {
+                    if (!config.ShowDebugCommands) { chat.Print("[HMSync] /hms cutprobe is a debug command. Enable debug mode in Config to use it."); return; }
+                    int n = HMSync.World.SceneProbe.Dump(log, arg ?? "");
+                    chat.Print("[HMSync] cutprobe: " + n + " match(es) logged - search [SCENEPROBE] in /xllog.");
+                }
+                return;
+
             case "mapdiag":
             case "mapreveal":
             case "maprestore":
@@ -1255,6 +1280,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             case "questprobe": // NB-19 Phase 1: quest-read diagnostic log toggle (Fable)
             case "debug":
             case "teardownhousing":
+            case "dressing":   // b260: cutscene-dressing status / clear / reapply / rot / tweak
                 if (!config.ShowDebugCommands)
                 {
                     chat.Print("[HMSync] /hms " + sub + " is a debug command. Enable debug mode in Config to use it.");
@@ -1274,6 +1300,31 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             case "vfxoff": lightsOut.ToggleVfx(); break;
             case "vfxlist": lightsOut.DryRunVfx(); break;
             case "memo": CaptureSpawn(0); break;   // record a spawn point for the current map (== the Set spawn button)
+            case "dressing":
+                // b260 (Features/CutsceneDressing): no arg = status. 'clear' tears it down; 'reapply' re-places it on the
+                // current map; 'rot <0-2>' (b262) switches the prop Euler convention and re-places (see RotMode).
+                var dArgs = (arg ?? "").Trim().ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                switch (dArgs.Length > 0 ? dArgs[0] : "")
+                {
+                    case "clear": dressing.Clear(); break;
+                    case "reapply": dressing.Reapply(); break;
+                    case "rot":
+                        if (dArgs.Length > 1 && int.TryParse(dArgs[1], out var rm) && rm >= 0 && rm < CutsceneDressingService.RotModeCount)
+                        { dressing.RotMode = rm; dressing.Reapply(); }
+                        else chat.Print("[HMSync] usage: /hms dressing rot <0|1|2>  (0 ClientStructs, 1 negated yaw, 2 vnavmesh)");
+                        break;
+                    case "tweak":
+                        // b266 (diagnostic): live per-prop experiment. 'tweak <path-substring> scale <x>' multiplies the size,
+                        // 'tweak <path-substring> dy <y>' raises it; 'tweak clear' drops all. Re-places the dressing.
+                        if (dArgs.Length == 2 && dArgs[1] == "clear") { dressing.ClearTweaks(); dressing.Reapply(); }
+                        else if (dArgs.Length == 4 && (dArgs[2] == "scale" || dArgs[2] == "dy")
+                                 && float.TryParse(dArgs[3], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var tv))
+                        { dressing.SetTweak(dArgs[1], dArgs[2] == "scale" ? tv : 1f, dArgs[2] == "dy" ? tv : 0f); dressing.Reapply(); }
+                        else chat.Print("[HMSync] usage: /hms dressing tweak <path-substring> scale <x> | dy <y> | clear");
+                        break;
+                }
+                chat.Print("[HMSync] Dressing: " + dressing.Status());
+                break;
             case "join":
                 if (arg == null) { chat.Print("[HMSync] Usage: /hms join <code>"); return; }
                 DoJoin(arg); break;
@@ -2172,11 +2223,15 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 spawn = curatedStage;
                 if (curatedFacing.HasValue) spawnFacing = curatedFacing;
             }
+            else if (dressing.TryGetArmedSpawn(out var stageDressingSpawn))
+                spawn = stageDressingSpawn;   // b263: a dressed swap stage with no calibrated spawn arrives at its props
             else
             {
                 spawn = zoneLoad.ResolveSpawnPoint(territoryId);
             }
         }
+        else if (dressing.TryGetArmedSpawn(out var dressingSpawn))
+            spawn = dressingSpawn;   // b262: a dressing on a big field map (Black Rose over Mor Dhona) arrives at its scene, not the map's default
         else if (config.UserSpawns.TryGetValue(territoryId, out var us) && us.Length >= 3)
         {
             spawn = new System.Numerics.Vector3(us[0], us[1], us[2]);
@@ -2212,7 +2267,12 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         config.PushRecentZone(territoryId);   // legacy list (kept for migration)
         // v0.7.231: unified recent - a swap cutscene stage records by its bg (stageBg), a plain zone by territoryId.
         // This is why "I just visited the Correction Chamber" now shows up in Recent instead of the donor zone.
-        config.PushRecentPlace(territoryId, stageBg);
+        // b271: a dressed load records the stage KEY (bg#row, as chips/favourites use) so the Recent chip reloads the
+        // dressed version (furnished Valens, Valnain, ...) instead of the plain stage/territory.
+        string? recentKey = stageBg;
+        if (dressing.ActiveRow != 0)
+            foreach (var st in cutscene.Stages) if (st.DressingRow == dressing.ActiveRow) { recentKey = st.Key; break; }
+        config.PushRecentPlace(territoryId, recentKey);
 
         // v0.7.475 (was v0.7.429, supersedes S326u): reset the WEATHER pick per load, exactly like BGM below.
         // The reset is still right but the REASON changed and the old wording is now false - PushMapState no
@@ -2273,6 +2333,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             SpawnX = spawn.X, SpawnY = spawn.Y, SpawnZ = spawn.Z,
             StageBg = bcastStageBg,
             StageName = bcastStageName,
+            DressingRow = dressing.ActiveRow,   // b260: promoted by ZoneWillChange inside LoadZone above (0 = plain)
         });
 
         ui.SetStatus("Zone: " + zoneName);
@@ -2434,6 +2495,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             log.Information("[HMSync] HDM own-body sanitised on session teardown (restoreVisual=" + restoreVisual + ").");
         }
 
+        dressing.Clear();   // b260: Revert reloads via loadZoneHook.Original (no ZoneWillChange) - tear down while the scene lives
         if (zoneLoad.IsZoneLoaded) zoneLoad.Revert();
 
         // S301: filter must end OFF after any stop/leave, via exactly one owner: the deferred restore poll
@@ -4680,6 +4742,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             SpawnX = spawn.X, SpawnY = spawn.Y, SpawnZ = spawn.Z,
             StageBg = rsStageBg,
             StageName = rsStageName,
+            DressingRow = dressing.ActiveRow,   // b260: a late joiner layers the same dressing
         });
         log.Information("[HMSync] Re-sent zone-load (territory " + territory + ") to catch up a joining peer.");
     }
@@ -4890,7 +4953,8 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             // different stage on the same donor, would be wrongly skipped).
             bool isStage = data.StageBg.Length > 0;
             if (zoneLoad.IsZoneLoaded && zoneLoad.CurrentLoadedZone == data.TerritoryId
-                && (zoneLoad.ActiveStageBg ?? "") == (isStage ? data.StageBg : ""))
+                && (zoneLoad.ActiveStageBg ?? "") == (isStage ? data.StageBg : "")
+                && dressing.ActiveRow == data.DressingRow)   // b260: same map, different dressing (hangar I -> II) is a real load
             {
                 log.Information("[HMSync] Ignoring zone-load for territory " + data.TerritoryId + " - already loaded (catch-up re-send for a newcomer).");
                 return;
@@ -4918,8 +4982,10 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             }
 
             var peerIndices = stateApply.GetPeerObjectIndices();
+            dressing.Arm(data.DressingRow);   // b260: rides this load's ZoneWillChange (0 = plain)
             zoneLoad.LoadZone(data.TerritoryId, peerIndices,
                 new FFXIVClientStructs.FFXIV.Common.Math.Vector3(data.SpawnX, data.SpawnY, data.SpawnZ));
+            dressing.Disarm();
             actorVisibility.Refresh();
             // S327j: the guest just loaded a fresh map. Force the host's current map-state (esp. a HELD time) to
             // re-apply on the next transform - otherwise the new map runs on the real clock until the host next edits
@@ -5086,6 +5152,8 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // v0.7.448: restore any auto-revealed maps on plugin unload too (graceful disable mid-session). The
         // crash-recovery file would catch this on next load regardless, but sanitising here cleans up now.
         try { SanitiseRevealedMaps(); } catch (Exception ex) { log.Warning("[HMSync] map-reveal sanitise on dispose failed: " + ex.Message); }
+
+        try { dressing.Dispose(); } catch (Exception ex) { log.Warning("[HMSync] dressing dispose failed: " + ex.Message); }   // b260: before the revert unloads the scene
 
         // Safety: revert zone if loaded to prevent character getting stuck
         if (zoneLoad.IsZoneLoaded)
