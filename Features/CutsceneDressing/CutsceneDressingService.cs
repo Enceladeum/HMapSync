@@ -41,6 +41,10 @@ public sealed class CutsceneDressingService : IDisposable
     private readonly BgSpawner spawner;
     private readonly LayoutInstanceVisibility hider = new();
     private readonly ColliderSpawner colliders;   // b269: the props' own collision meshes
+    private readonly LightCloner lights;          // b274: copies of live level lights (map edits)
+    private List<LightCopy> pendingLights = new();
+    private int lightTries;
+    private const int LightMaxTries = 20;         // hide passes (~10s) to wait for the source lights to stream in
 
     private uint armedRow;
     private Dressing? active;
@@ -100,6 +104,7 @@ public sealed class CutsceneDressingService : IDisposable
         Catalog = new DressingCatalog(log);
         spawner = new BgSpawner(log, sigScanner, "hms_dressing");
         colliders = new ColliderSpawner(log);
+        lights = new LightCloner(log, "hms_dressing");
     }
 
     public void Arm(uint row)
@@ -170,6 +175,9 @@ public sealed class CutsceneDressingService : IDisposable
     {
         spawner.Clear();
         colliders.Clear();   // b269: before the zone unloads, like the models
+        lights.Clear();      // b274: likewise
+        pendingLights = new List<LightCopy>();
+        lightTries = 0;
         hider.Restore();
         active = null;
         activeHides = new();
@@ -193,8 +201,9 @@ public sealed class CutsceneDressingService : IDisposable
         // Hide first: the scene's props replace the level's own copies (the default bed, Rabanastre's ruins), so the
         // originals must be gone before the replacements land.
         // b272: the level's own copy of a re-placed prop (same model within ReplaceRadius) is found live, not baked.
-        if (d.Props.Count > 0 && hideFrames % ReplaceScanEvery == 0) AddReplacementHides(d);
+        if (d.Props.Count > 0 && !d.ExactHides && hideFrames % ReplaceScanEvery == 0) AddReplacementHides(d);
         if (activeHideCount > 0 && hideFrames % HidePassEvery == 0) lastHide = hider.Apply(activeHides);
+        if (pendingLights.Count > 0 && hideFrames % HidePassEvery == 0) CloneLights(d);
         else if (activeLights.Count > 0) hider.Apply(activeLights);
         if (hideFrames == HideReportAt && activeHideCount > 0)
             log.Information("[Dressing] '" + d.Name + "' hides: " + hider.HiddenCount + "/" + activeHideCount + " switched off by us (live now: " +
@@ -204,18 +213,44 @@ public sealed class CutsceneDressingService : IDisposable
         if (!propsPlaced)
         {
             propsPlaced = true;
-            int ok = 0, solid = 0;
+            pendingLights = d.Lights?.ToList() ?? new List<LightCopy>();
+            lightTries = 0;
+            int ok = 0, solid = 0, models = 0;
             foreach (var p in d.Props)
             {
                 var pos = p.Pos; var scale = p.Scale;
+                if (p.Path.Length == 0)   // b273: collision-only (the level already draws the part); b276: or a box collider
+                {
+                    if (p.Box ? colliders.AddBox(pos, p.RotEuler, scale) : p.Coll != null && colliders.Add(p.Coll, pos, p.RotEuler, scale)) solid++;
+                    continue;
+                }
+                models++;
                 foreach (var (sub, t) in tweaks)
                     if (p.Path.Contains(sub, StringComparison.OrdinalIgnoreCase)) { scale *= t.Scale; pos.Y += t.Dy; }
                 if (spawner.Spawn(p.Path, pos, ToQuaternion(p.RotEuler, RotMode), scale)) ok++;
                 if (p.Coll != null && colliders.Add(p.Coll, pos, p.RotEuler, scale)) solid++;   // b269: same transform as the model
             }
-            log.Information("[Dressing] '" + d.Name + "': spawned " + ok + "/" + d.Props.Count + " prop(s), " + solid + " with collision" +
+            log.Information("[Dressing] '" + d.Name + "': spawned " + ok + "/" + models + " prop(s), " + solid + " collision mesh(es)" +
                 (spawner.GroupsAvailable ? "" : " (.sgb path unavailable, groups skipped)"));
         }
+    }
+
+    // b274: copy the level's own lights once they are live (they stream in with the cottage); give up after LightMaxTries.
+    private void CloneLights(Dressing d)
+    {
+        var src = LightCloner.FindSources(pendingLights.Select(l => l.Source).ToHashSet());
+        int made = 0;
+        var left = new List<LightCopy>();
+        foreach (var l in pendingLights)
+        {
+            if (src.TryGetValue(l.Source, out var ptr)) { if (lights.Clone(ptr, l.Offset, l.Yaw, l.Pivot)) made++; }
+            else left.Add(l);
+        }
+        pendingLights = left;
+        if (made > 0 || ++lightTries >= LightMaxTries || left.Count == 0)
+            log.Information("[Dressing] '" + d.Name + "': " + lights.Count + " light(s) copied" +
+                (left.Count > 0 ? ", " + left.Count + " source light(s) not live" + (lightTries >= LightMaxTries ? " (gave up)" : " yet") : ""));
+        if (lightTries >= LightMaxTries) pendingLights = new List<LightCopy>();
     }
 
     private void AddReplacementHides(Dressing d)
@@ -223,6 +258,7 @@ public sealed class CutsceneDressingService : IDisposable
         var targets = new List<(string, Vector3)>(d.Props.Count * 2);
         foreach (var p in d.Props)
         {
+            if (p.Path.Length == 0) continue;
             targets.Add((p.Path, p.Pos));
             int a = p.Path.IndexOf("/asset/", StringComparison.Ordinal);   // housing swap: the level copy is the .mdl
             if (a > 0 && p.Path.EndsWith(".sgb", StringComparison.Ordinal))
@@ -243,7 +279,7 @@ public sealed class CutsceneDressingService : IDisposable
         var d = active;
         if (d == null) return "no dressing active" + (armedRow != 0 ? " (armed row " + armedRow + ")" : "");
         return "'" + d.Name + "' row " + d.Row + ": props " + spawner.LandedCount + "/" + spawner.Count + " landed of " + d.Props.Count +
-            ", " + colliders.Count + " collider(s)" +
+            ", " + colliders.Count + " collider(s), " + lights.Count + " light(s)" +
             "; switched off " + hider.HiddenCount + "/" + activeHideCount + " level instance(s)" +
             (propsPlaced ? "" : " (waiting for map to settle)") + " [rot " + RotMode + "]" +
             " [catalog: " + Catalog.Source + "]" +
@@ -265,5 +301,6 @@ public sealed class CutsceneDressingService : IDisposable
         Teardown();
         spawner.Dispose();
         colliders.Dispose();
+        lights.Dispose();
     }
 }

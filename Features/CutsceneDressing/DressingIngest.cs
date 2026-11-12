@@ -37,7 +37,7 @@ namespace HMSync.Features.CutsceneDressing;
 // ============================================================================
 public sealed class DressingIngest
 {
-    private const int DeriveVersion = 1;            // bump when a rule above changes, to force a re-derive
+    private const int DeriveVersion = 5;            // bump when a rule above changes, to force a re-derive (2: b273 map edits; 3: b275 lights + door; 4: b276 deck floor; 5: b277 drawn deck floor + turned cottage)
     private const string CacheFileName = "cutscene-dressings.ingest.json";
     private const int MinProps = 8;
     private const double DedupeJaccard = 0.7;
@@ -65,10 +65,15 @@ public sealed class DressingIngest
         this.cacheDir = cacheDir;
     }
 
+    // b278: the cache is also keyed to the exact plugin build, so a rebuild can never reuse a stale derivation (b277 did:
+    // a fix rebuilt under the same DeriveVersion kept serving the planter pillars from the cache).
+    private static readonly string BuildId = typeof(DressingIngest).Assembly.ManifestModule.ModuleVersionId.ToString();
+
     private sealed class CacheDto
     {
         public string GameVersion { get; set; } = "";
         public int DeriveVersion { get; set; }
+        public string Build { get; set; } = "";   // b278: the plugin build that derived it (a new build re-derives: ~4s)
         public FileDto? Curated { get; set; }
         public FileDto? Lab { get; set; }
     }
@@ -108,7 +113,7 @@ public sealed class DressingIngest
         {
             if (!File.Exists(path)) return false;
             var c = JsonSerializer.Deserialize<CacheDto>(File.ReadAllText(path), JsonOptions);
-            if (c == null || c.GameVersion != gameVersion || c.DeriveVersion != DeriveVersion || c.Curated?.Dressings == null || c.Lab?.Dressings == null) return false;
+            if (c == null || c.GameVersion != gameVersion || c.DeriveVersion != DeriveVersion || c.Build != BuildId || c.Curated?.Dressings == null || c.Lab?.Dressings == null) return false;
             dto = c;
             return true;
         }
@@ -120,7 +125,7 @@ public sealed class DressingIngest
         try
         {
             Directory.CreateDirectory(cacheDir);
-            File.WriteAllText(path, JsonSerializer.Serialize(new CacheDto { GameVersion = gameVersion, DeriveVersion = DeriveVersion, Curated = curated, Lab = lab }));
+            File.WriteAllText(path, JsonSerializer.Serialize(new CacheDto { GameVersion = gameVersion, DeriveVersion = DeriveVersion, Build = BuildId, Curated = curated, Lab = lab }));
         }
         catch (Exception ex) { log.Warning("[DressingIngest] cache write failed: " + ex.Message); }
     }
@@ -271,6 +276,8 @@ public sealed class DressingIngest
             d.Name = seen[k] == 1 ? place : place + " (" + c.Cutb[(c.Cutb.LastIndexOf('/') + 1)..] + ")";
             labOut.Dressings.Add(d);
         }
+        // b273: map edits (levels rebuilt from their own and a sibling level's parts) ride the same lab list.
+        labOut.Dressings.AddRange(MapEdits.Derive(data, log));
         return (curatedOut, labOut);
     }
 

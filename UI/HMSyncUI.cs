@@ -3464,9 +3464,11 @@ ImGui.Spacing();
                     ImGui.TableNextRow();
                     ImGui.TableSetColumnIndex(0); DrawCutsceneStar(e.Bg, acc2);
                     ImGui.TableSetColumnIndex(1); ImGui.AlignTextToFramePadding(); ImGui.TextDisabled(tt.ToString());
-                    string label = e.Lab && !string.IsNullOrEmpty(e.Quest) ? e.Quest : e.Name;
+                    // b273: map edits (not cutscenes) show their own name and say what they are
+                    bool mapEdit = e.Quest == HMSync.Features.CutsceneDressing.MapEdits.Quest;
+                    string label = !mapEdit && e.Lab && !string.IsNullOrEmpty(e.Quest) ? e.Quest : e.Name;
                     ImGui.TableSetColumnIndex(2); DrawNamePill("\u2726 " + label, tt, false, false, "", 1, e.Index);
-                    InfoCell(e.Lab || string.IsNullOrEmpty(e.Quest) ? "Cutscene" : e.Quest);
+                    InfoCell(mapEdit ? "Map edit" : e.Lab || string.IsNullOrEmpty(e.Quest) ? "Cutscene" : e.Quest);
                 }
             }
 

@@ -51,6 +51,23 @@ public sealed unsafe class ColliderSpawner : IDisposable
         catch (Exception ex) { log.Warning("[ColliderSpawner] AddColliderMesh threw for " + pcbPath + ": " + ex.Message); return false; }
     }
 
+    /// <summary>b276: add a box collider (unit cube scaled by <paramref name="halfExtents"/>), the game's own factory as
+    /// a collision editor's proven call. False if the scene isn't up or the engine refused it.</summary>
+    public bool AddBox(NVector3 pos, NVector3 rotEuler, NVector3 halfExtents)
+    {
+        var sw = Scene();
+        if (sw == null) return false;
+        NVector3 p = pos, r = rotEuler, s = halfExtents;
+        try
+        {
+            var c = (Collider*)sw->AddColliderBox(1ul, &p, &r, &s);
+            if (c == null) return false;
+            colliders.Add((nint)c);
+            return true;
+        }
+        catch (Exception ex) { log.Warning("[ColliderSpawner] AddColliderBox threw: " + ex.Message); return false; }
+    }
+
     public void Clear()
     {
         if (colliders.Count == 0) return;

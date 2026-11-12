@@ -12,7 +12,10 @@ using HMSync.World;
 namespace HMSync.Features.CutsceneDressing;
 
 /// <summary>One prop a cutscene places: asset path + authored world transform (rotation as Euler radians X,Y,Z).</summary>
-public sealed record DressingProp(string Path, Vector3 Pos, Vector3 RotEuler, Vector3 Scale, string? Coll = null);   // b269: Coll = the model's own .pcb, if the game ships one
+/// <summary>b274: copy a live level light (layout instance key) to the same transform moved by Offset.</summary>
+public sealed record LightCopy(uint Source, Vector3 Offset, float Yaw = 0, Vector3 Pivot = default);   // b277: then turned by Yaw about Pivot
+
+public sealed record DressingProp(string Path, Vector3 Pos, Vector3 RotEuler, Vector3 Scale, string? Coll = null, bool Box = false);   // b276: Box = a box collider (Scale = half extents), no model   // b269: Coll = the model's own .pcb, if the game ships one
 
 /// <summary>
 /// A cutscene's set dressing, keyed by its Cutscene sheet row: the level instances it switches off, per instance type
@@ -21,7 +24,8 @@ public sealed record DressingProp(string Path, Vector3 Pos, Vector3 RotEuler, Ve
 /// maps). The stage to load it on is chosen by the catalog entry that references the row.
 /// </summary>
 public sealed record Dressing(uint Row, string Name, string Cutb, IReadOnlyDictionary<InstanceType, HashSet<ulong>> Hides,
-    IReadOnlyDictionary<string, int> HideOther, IReadOnlyList<DressingProp> Props, Vector3? Spawn, bool HidesFromCutb = false)
+    IReadOnlyDictionary<string, int> HideOther, IReadOnlyList<DressingProp> Props, Vector3? Spawn, bool HidesFromCutb = false,
+    IReadOnlyList<LightCopy>? Lights = null, bool ExactHides = false)   // b278: ExactHides = no live replacement-hide scan (map edits)
 {
     public int HideCount => Hides.Values.Sum(s => s.Count);
 }
@@ -99,8 +103,9 @@ public sealed class DressingCatalog
             {
                 var props = new List<DressingProp>();
                 foreach (var p in d.Props ?? new List<PropDto>())
-                    if (!string.IsNullOrEmpty(p.Path) && p.Pos is { Length: 3 } && p.Rot is { Length: 3 } && p.Scale is { Length: 3 })
-                        props.Add(new DressingProp(p.Path, V(p.Pos), V(p.Rot), V(p.Scale), string.IsNullOrEmpty(p.Coll) ? null : p.Coll));
+                    // b273: Path may be empty for a collision-only entry (a mesh added under a part the level already draws)
+                    if ((!string.IsNullOrEmpty(p.Path) || !string.IsNullOrEmpty(p.Coll) || p.Box) && p.Pos is { Length: 3 } && p.Rot is { Length: 3 } && p.Scale is { Length: 3 })
+                        props.Add(new DressingProp(p.Box ? "" : p.Path ?? "", V(p.Pos), V(p.Rot), V(p.Scale), string.IsNullOrEmpty(p.Coll) ? null : p.Coll, p.Box));
                 var hides = new Dictionary<InstanceType, HashSet<ulong>>();
                 foreach (var h in d.Hides ?? new List<uint[]>())   // [instanceId, layerId & 0xFFFF, assetType]
                     if (h is { Length: 3 } && HideTypes.TryGetValue(h[2], out var type))
@@ -110,8 +115,9 @@ public sealed class DressingCatalog
                     }
                 Vector3? spawn = d.Spawn is { Length: 3 } ? V(d.Spawn) : null;
                 if (isLab && byRow.ContainsKey(d.Row)) continue;   // curated wins
+                var lights = (d.Lights ?? new List<LightDto>()).Where(l => l.Source != 0 && l.Offset is { Length: 3 }).Select(l => new LightCopy(l.Source, V(l.Offset!), l.Yaw, l.Pivot is { Length: 3 } ? V(l.Pivot) : default)).ToList();
                 byRow[d.Row] = new Dressing(d.Row, d.Name ?? ("cutscene " + d.Row), d.Cutb ?? "", hides,
-                    d.HideOther ?? new Dictionary<string, int>(), props, spawn, d.HidesFromCutb);
+                    d.HideOther ?? new Dictionary<string, int>(), props, spawn, d.HidesFromCutb, lights.Count > 0 ? lights : null, d.ExactHides);
                 if (isLab && !string.IsNullOrEmpty(d.Bg))
                     lab.Add(new LabEntry(d.Row, d.Name ?? ("cutscene " + d.Row), d.Quest ?? "", d.Bg, d.Tt));
             }
@@ -138,6 +144,15 @@ public sealed class DressingCatalog
         public string? Bg { get; set; }             // lab only: stage bg (Stage.Bg form)
         public uint Tt { get; set; }                // lab only: TerritoryType (0 = swap stage)
         public bool HidesFromCutb { get; set; }     // lab: read hides from the cutb at runtime
+        public bool ExactHides { get; set; }        // b278 map edits: hides are complete; skip the live replacement-hide scan
+        public List<LightDto>? Lights { get; set; } // b274 map edits: live level lights to copy
+    }
+    public sealed class LightDto
+    {
+        public uint Source { get; set; }            // layout instance key of the level light
+        public float[]? Offset { get; set; }
+        public float Yaw { get; set; }              // b277: then turned by Yaw (radians) about Pivot
+        public float[]? Pivot { get; set; }
     }
     public sealed class PropDto
     {
@@ -146,5 +161,6 @@ public sealed class DressingCatalog
         public float[]? Rot { get; set; }
         public float[]? Scale { get; set; }
         public string? Coll { get; set; }
+        public bool Box { get; set; }               // b276: box collider (Scale = half extents)
     }
 }

@@ -5,6 +5,16 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.6.0] - 2026-11-12
+
+### Added
+
+- **The For'ard Cabins, furnished.** A new map edit of The For'ard Cabins: every cottage furnished like the original, with its lights, doors you can walk through, walkable decks, steps and pier, and a fifth cottage facing the sea. Find it in the Zones list under The For'ard Cabins, marked ✦ and labelled "Map edit". Peers in your session see the same edit.
+
+### Changed
+
+- After an HMS update, the cutscene dressings are rebuilt from the installed game once more (a few seconds in the background, the first time HMS starts on the new version).
+
 ## [1.0.5.1] - 2026-11-07
 
 ### Changed
