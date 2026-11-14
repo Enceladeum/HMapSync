@@ -5,6 +5,12 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.6.1] - 2026-11-14
+
+### Fixed
+
+- **Players who walked into your area during a session are visible again when it ends.** Since game patch 7.58, someone who arrived mid-session without joining could stay invisible and untargetable after you left. HMS now fully restores the players it hid.
+
 ## [1.0.6.0] - 2026-11-12
 
 ### Added

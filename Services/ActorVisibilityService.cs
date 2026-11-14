@@ -104,7 +104,17 @@ public unsafe class ActorVisibilityService : IDisposable
             var obj = objectTable[(int)idx];
             if (obj == null) continue;
             var native = (GameObject*)obj.Address;
-            Show(native);
+            // b249 FIX (no-join walk-in stays invisible after session end): clear the FULL render state, not just our
+            // 0x02 model bit. A mid-session walk-in is instantiated by the inbound pass-through at rf=0xC00 — the GAME's
+            // own render-gate (0x400|0x800) for the real-room context after the virtual hop (measured: rf=0xC00 at the
+            // first hide). HMS only ever ORs 0x02 on top (→0xC02). Show() = &= ~0x02 takes it back to 0xC00, so the
+            // game-gate survives and the actor stays hidden on exit. A correctly-homed actor sits at rf=0x00 (b30 proved
+            // force-writing 0 is the safe, exact visible state — no flapping, no redraw). This is the Stop() analogue of
+            // the b29/b30 materialize watch, which only covers BOUND late-joiners; a walk-in who never joins never binds,
+            // so Stop() is their only restore. Full-clear (not a fixed 0xC00 mask) is patch-proof: whatever residual gate
+            // the game leaves on a passed-through actor, restore wipes it. Bounded to indices WE hid, so safe. Re-confirmed
+            // on game 7.58 (b282): without it a walk-in is left at rf=0x400, invisible and untargetable.
+            native->RenderFlags = (VisibilityFlags)0;
         }
 
         hiddenIndices.Clear();
