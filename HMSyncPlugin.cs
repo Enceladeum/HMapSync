@@ -1778,8 +1778,8 @@ public sealed class HMSyncPlugin : IDalamudPlugin
 
     private void DoStart(string? code = null)
     {
-        // Force-clear stale connection state
-        if (relay.IsConnected)
+        // Force-clear stale connection state (b285: including an auto-reconnect in flight)
+        if (relay.IsConnected || relay.Reconnecting)
         {
             DoLeaveInternal(silent: true);
         }
@@ -2022,7 +2022,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             return;
         }
 
-        if (relay.IsConnected)
+        if (relay.IsConnected || relay.Reconnecting)
         {
             chat.Print("[HMSync] Leaving current session.");
             DoLeaveInternal(silent: true);
@@ -2404,6 +2404,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
 
     private void DoLeaveInternal(bool silent)
     {
+        EndReconnect();   // b285: any teardown (stop, leave, error, give-up) ends an auto-reconnect in flight
         // S289: AIRBORNE-STOP FIX. Do NOT revoke flight while still airborne over the foreign zone -
         // the moment IsFlightProhibited flips back to prohibited, the GAME force-relocates the airborne
         // actor to a "valid" position, which over flyable-but-not-walkable space (e.g. the Clyteum)
@@ -4926,6 +4927,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         RunOnMainThread(() =>
         {
             log.Information("[HMSync] Room joined. Zone=" + data.CurrentZoneId + " Peers=" + data.PeerIds.Length);
+            if (relay.Reconnecting) { CompleteReconnect(); return; }   // b285: rejoined after a drop - no lobby flow
 
             // Fresh room → drop any roster that survived (e.g. an unclean disconnect that skipped teardown). The
             // fanned PeerJoined frames that populate this room arrive AFTER RoomJoined, so clearing here is safe.
@@ -5062,6 +5064,12 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     {
         RunOnMainThread(() =>
         {
+            // b285: a reconnect ATTEMPT's socket dropped before it was admitted - the reconnect loop retries.
+            if (relay.Reconnecting) { reconnectOutcome?.TrySetResult(false); return; }
+            // b285 (Q-0027): an abnormal drop (this handler only fires when the socket died under us; a deliberate
+            // Disconnect clears IsConnected first) keeps the session up and rejoins the same room in the background.
+            // A hard throttle (4029) is NOT retried: the relay closed us on purpose.
+            if (relay.LastCloseCode != HMSync.Wire.WireClose.RateLimitExceeded && TryBeginReconnect()) return;
             // v0.7.464 (RMS QA F3, hard tier): a close carrying 4029 is a throttle disconnect, not a network drop -
             // say so, because "lost connection" sends the user hunting a fault that isn't there. The close code is
             // only present when the relay closed CLEANLY; an aborted socket leaves it null and we fall back to the
@@ -5091,6 +5099,162 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     //   • chat gets ONE line at most every 30 s, because the relay may emit up to ~1/3 s and a per-notice print
     //     would bury the log - the sin the diagnostics-noise pass exists to prevent.
     private DateTime lastThrottleChatPrint = DateTime.MinValue;
+
+    // ── b285 (Q-0027): AUTO-RECONNECT after an abnormal relay drop ──
+    // A transient on the path to the relay (2026-11-14: a Cloudflare-edge blip, relay + tunnel healthy) used to end the
+    // whole session: OnDisconnected ran the full teardown (zone revert, filter off, peers cleared). Now the session stays
+    // up - virtual map, packet filter, our own position and mount untouched - while we rejoin the SAME room with the
+    // cached opaque RoomId + password (CreateIfMissing=false), backing off 1,2,4,8,16,30,30... s for up to
+    // ReconnectWindowSecs. Relay contract (the relay's auto-reconnect spec): the rejoin mints a NEW peer
+    // id (others see PeerLeft(old) then PeerJoined(new) and re-bind us by ContentId, as for any joiner); IsHost comes
+    // from the fresh RoomJoined (an ex-host whose seat was passed on comes back as a peer and its HOST lane stops, since
+    // the lane sender is gated on relay.IsHost); the password is re-checked every rejoin. Outcomes: RoomJoined → full
+    // resend of every lane (peers get our exact current state); RoomNotFound as HOST (everyone had left) → re-host a
+    // fresh room with the same password so the map keeps going; RoomNotFound as a peer / WrongPassword / Banned /
+    // Kicked / NotHosting → end; connect failures and RoomFull → retry. /hms stop, leave, start or join cancel it.
+    private static readonly int[] ReconnectBackoffSecs = { 1, 2, 4, 8, 16, 30 };
+    private const int ReconnectWindowSecs = 180;
+    private const int ReconnectAdmitTimeoutSecs = 10;
+    private System.Threading.CancellationTokenSource? reconnectCts;
+    private System.Threading.Tasks.TaskCompletionSource<bool>? reconnectOutcome;   // true = admitted (RoomJoined), false = this attempt failed
+    private bool reconnectWasHost;
+    private bool reconnectRehost;                           // the old room ended and we hosted it: the next attempt re-hosts
+    private string reconnectPassword = "";                  // memory only, never logged or persisted (spec 2.2)
+
+    private bool TryBeginReconnect()
+    {
+        if (relay.SoloMode || relay.Reconnecting) return false;
+        string roomId = relay.CachedRoomId;
+        if (string.IsNullOrEmpty(roomId)) return false;     // never admitted to a room: nothing to rejoin
+        reconnectWasHost = relay.IsHost;
+        reconnectRehost = false;
+        reconnectPassword = relay.CurrentPassword;
+        relay.Reconnecting = true;
+        reconnectCts = new System.Threading.CancellationTokenSource();
+        chat.Print("[HMSync] Lost connection to relay - reconnecting…");
+        ui.SetStatus("Reconnecting…");
+        log.Information("[HMSync] [RECONNECT] abnormal drop - rejoining room " + roomId[..Math.Min(6, roomId.Length)] +
+            " as " + (reconnectWasHost ? "host" : "peer") + " (window " + ReconnectWindowSecs + "s)");
+        _ = ReconnectLoop(roomId, reconnectCts.Token);
+        return true;
+    }
+
+    private async System.Threading.Tasks.Task ReconnectLoop(string roomId, System.Threading.CancellationToken ct)
+    {
+        var started = DateTime.UtcNow;
+        for (int attempt = 0; !ct.IsCancellationRequested; attempt++)
+        {
+            int wait = ReconnectBackoffSecs[Math.Min(attempt, ReconnectBackoffSecs.Length - 1)];
+            if ((DateTime.UtcNow - started).TotalSeconds + wait > ReconnectWindowSecs) break;
+            try { await System.Threading.Tasks.Task.Delay(wait * 1000, ct); } catch (OperationCanceledException) { return; }
+
+            // Identity on the framework thread (object table). No local player (a loading screen) → try again later.
+            (ulong cid, uint eid, string name, ulong[] nearby)? id = null;
+            try
+            {
+                id = await framework.RunOnFrameworkThread(() =>
+                {
+                    var lp = objectTable.LocalPlayer;
+                    if (lp == null) return ((ulong, uint, string, ulong[])?)null;
+                    return (LocalContentId(), lp.EntityId, lp.Name.TextValue, EnumerateNearbyContentIds());
+                });
+            }
+            catch { id = null; }
+            if (ct.IsCancellationRequested) return;
+            if (id == null) continue;
+
+            var outcome = new System.Threading.Tasks.TaskCompletionSource<bool>(System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
+            reconnectOutcome = outcome;
+            bool rehost = reconnectRehost;
+            log.Information("[HMSync] [RECONNECT] attempt " + (attempt + 1) + (rehost ? " (re-hosting a fresh room)" : ""));
+            bool sent = await relay.Connect(config.RelayUrl, rehost ? "" : roomId, createIfMissing: rehost, password: reconnectPassword,
+                nearbyContentIds: id.Value.nearby, id.Value.cid, id.Value.eid, id.Value.name);
+            if (ct.IsCancellationRequested) return;
+            if (!sent) continue;   // socket did not open (its error is consumed by HandleReconnectError): back off and retry
+            try { await System.Threading.Tasks.Task.WhenAny(outcome.Task, System.Threading.Tasks.Task.Delay(ReconnectAdmitTimeoutSecs * 1000, ct)); }
+            catch (OperationCanceledException) { return; }
+            if (ct.IsCancellationRequested) return;
+            if (outcome.Task.IsCompleted && outcome.Task.Result) return;   // admitted: CompleteReconnect ran
+            if (relay.RoomJoinedAcknowledged) return;   // admitted just as the wait expired: CompleteReconnect is queued, don't abort it
+        }
+        if (ct.IsCancellationRequested) return;
+        RunOnMainThread(() =>
+        {
+            if (!relay.Reconnecting) return;
+            log.Information("[HMSync] [RECONNECT] gave up after " + ReconnectWindowSecs + "s");
+            chat.Print("[HMSync] Couldn't reconnect to the relay - the session has ended.");
+            DoLeaveInternal(silent: true);
+            ui.SetStatus("Disconnected");
+        });
+    }
+
+    // A relay refusal while reconnecting. true = handled here (the session continues or the loop retries).
+    private bool HandleReconnectError(uint code, string msg)
+    {
+        switch (code)
+        {
+            case 0u:                                   // our own connect failure (relay unreachable): retry quietly
+            case HMSync.Wire.ErrCode.RoomFull:         // spec 2.3: back off and retry
+                log.Information("[HMSync] [RECONNECT] attempt refused (" + code + "), retrying");
+                reconnectOutcome?.TrySetResult(false);
+                return true;
+            case HMSync.Wire.ErrCode.RoomNotFound when reconnectWasHost && !reconnectRehost:
+                // Everyone left while we were away, so the relay pruned the room. We were hosting: keep the map going in
+                // a fresh room with the same password (anyone can rejoin it the usual way).
+                log.Information("[HMSync] [RECONNECT] room ended while away - re-hosting");
+                reconnectRehost = true;
+                reconnectOutcome?.TrySetResult(false);
+                return true;
+            default:
+                // Terminal (WrongPassword, Banned, Kicked, NotHosting, a peer's RoomNotFound, ...): end the session the
+                // normal way; DoLeaveInternal ends the reconnect.
+                log.Information("[HMSync] [RECONNECT] terminal refusal (" + code + ")");
+                chat.Print("[HMSync] Couldn't rejoin the session: " + msg);
+                DoLeaveInternal(silent: true);
+                ui.SetStatus("");
+                return true;
+        }
+    }
+
+    // RoomJoined after a drop: we are back. The roster was rebuilt by OnRoomJoined's caller path below; re-send every
+    // lane so the room has our complete current state (position, mount, emote, map-state if host) at once.
+    private void CompleteReconnect()
+    {
+        reconnectOutcome?.TrySetResult(true);
+        bool rehosted = reconnectRehost, wasHost = reconnectWasHost;
+        EndReconnect();
+        stateApply.ClearRoster();                              // the relay re-fans the current members; drops anyone who left meanwhile
+        currentHostPeerId = relay.IsHost ? relay.LocalPeerId : "";
+        stateCapture.RequestFullResend();
+        log.Information("[HMSync] [RECONNECT] rejoined as " + (relay.IsHost ? "host" : "peer") + (rehosted ? " (fresh room)" : ""));
+        if (relay.IsHost)
+        {
+            ui.SetStatus("Hosting");
+            chat.Print(rehosted
+                ? "[HMSync] Reconnected. The old room had ended, so you're hosting a fresh one with the same password."
+                : "[HMSync] Reconnected.");
+        }
+        else
+        {
+            ui.SetStatus("Joined");
+            chat.Print(wasHost
+                ? "[HMSync] Reconnected. Another member took over as host while you were away."
+                : "[HMSync] Reconnected.");
+        }
+    }
+
+    // Idempotent: stop any reconnect in flight and forget its state.
+    private void EndReconnect()
+    {
+        if (!relay.Reconnecting && reconnectCts == null) return;
+        relay.Reconnecting = false;
+        try { reconnectCts?.Cancel(); } catch { }
+        try { reconnectCts?.Dispose(); } catch { }
+        reconnectCts = null;
+        reconnectOutcome?.TrySetResult(false);
+        reconnectOutcome = null;
+        reconnectPassword = "";
+    }
 
     private void OnRelayRateLimited()
     {
@@ -5128,6 +5292,9 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                                                      "the session has ended. You can reconnect when ready.",
                 _ => string.IsNullOrEmpty(relayMsg) ? "Relay error." : relayMsg,
             };
+            // b285: during an auto-reconnect a refusal is an attempt outcome, not a session end (Q-0027 spec 2.3).
+            if (relay.Reconnecting && HandleReconnectError(code, msg)) return;
+
             chat.Print("[HMSync] " + msg);
 
             // The close frame arrives moments after this - and on this path DoLeaveInternal disconnects us first, so
@@ -5216,6 +5383,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         relay.OnZoneLoadReceived -= OnZoneLoadReceived;
         relay.OnSessionEnded -= OnSessionEnded;
         relay.OnDisconnected -= OnDisconnected;
+        EndReconnect();
         relay.OnError -= OnRelayError;
         relay.OnRateLimited -= OnRelayRateLimited;   // v0.7.464: symmetry (the DrawFaceControlBar leak's lesson)
 

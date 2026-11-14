@@ -64,7 +64,11 @@ public class RelaySyncService : IDisposable
     // Peer-only operations (summon/kick/password/lock/transfer host) stay on the literal IsHost - solo can't do them.
     public bool SoloMode { get; set; }
     public bool HasMapAuthority => IsHost || SoloMode;
-    public bool IsSessionActive => IsConnected || SoloMode;
+    // b285 (Q-0027): true while the plugin is auto-reconnecting after an abnormal drop. The session (virtual map, packet
+    // filter, own state) stays up through that window, so everything keyed on IsSessionActive keeps behaving as "in a
+    // session"; sends stay gated on IsConnected/RoomJoinedAcknowledged.
+    public bool Reconnecting { get; set; }
+    public bool IsSessionActive => IsConnected || SoloMode || Reconnecting;
 
     public event Action<string, ulong, string>? OnPeerJoined;
     public event Action<string>? OnPeerLeft;

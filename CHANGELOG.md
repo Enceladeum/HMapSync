@@ -5,6 +5,13 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.7.0] - 2026-11-14
+
+### Added
+
+- **Automatic reconnect.** If your connection to the relay drops unexpectedly (a network hiccup, not you leaving), HMS keeps your session running, with the map, your position and the rest unchanged, and rejoins the same room in the background, usually within a second. It keeps trying for up to three minutes before ending the session. Others in the room briefly see you leave and come back.
+- If you were hosting and someone else took over as host while you were away, you come back as a member; you can take the host role back as usual. If everyone had left and the room closed, HMS opens a new one for you with the same password.
+
 ## [1.0.6.2] - 2026-11-14
 
 ### Fixed
