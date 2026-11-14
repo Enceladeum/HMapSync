@@ -35,6 +35,18 @@ public unsafe class ActorVisibilityService : IDisposable
 
     // Object indices we've hidden - so we can restore them on Stop
     private readonly HashSet<ushort> hiddenIndices = new();
+    // b283 (Q-0026): the character (EntityId) each hidden slot held when WE hid it. Object-table slots are reused: if a hidden
+    // walk-in leaves mid-session and another real player takes the slot, Stop() must not restore (= fully reveal) that
+    // newcomer, whom another plugin (a blocklist, say) may be hiding. Restore only when the same character is still there.
+    private readonly Dictionary<ushort, uint> hiddenEntity = new();
+
+    private static bool IsRealEntity(uint id) => id != 0 && id != 0xE0000000u;   // 0xE0000000 = the game's "no id"
+
+    private void Track(ushort idx, GameObject* native)
+    {
+        hiddenIndices.Add(idx);
+        hiddenEntity[idx] = native->EntityId;
+    }
 
     // Object indices of registered peers - these should be visible
     private readonly HashSet<ushort> peerIndices = new();
@@ -84,6 +96,7 @@ public unsafe class ActorVisibilityService : IDisposable
         if (active) return;
         active = true;
         hiddenIndices.Clear();
+        hiddenEntity.Clear();
         peerIndices.Clear();
         hideRetry.Clear();
         materializeWatch.Clear();
@@ -104,6 +117,10 @@ public unsafe class ActorVisibilityService : IDisposable
             var obj = objectTable[(int)idx];
             if (obj == null) continue;
             var native = (GameObject*)obj.Address;
+            // b283: the slot was reused by someone else after we hid its occupant (they left mid-session): not ours to restore.
+            // b284: only when BOTH ids are real. One hidden before it got a real id (0 / 0xE0000000) must still be restored,
+            // or it stays invisible: the very bug b282 fixed.
+            if (hiddenEntity.TryGetValue(idx, out var hid) && IsRealEntity(hid) && IsRealEntity(native->EntityId) && hid != native->EntityId) continue;
             // b249 FIX (no-join walk-in stays invisible after session end): clear the FULL render state, not just our
             // 0x02 model bit. A mid-session walk-in is instantiated by the inbound pass-through at rf=0xC00 — the GAME's
             // own render-gate (0x400|0x800) for the real-room context after the virtual hop (measured: rf=0xC00 at the
@@ -118,6 +135,7 @@ public unsafe class ActorVisibilityService : IDisposable
         }
 
         hiddenIndices.Clear();
+        hiddenEntity.Clear();
         peerIndices.Clear();
         hideRetry.Clear();
         materializeWatch.Clear();
@@ -133,6 +151,7 @@ public unsafe class ActorVisibilityService : IDisposable
     {
         peerIndices.Add(objectIndex);
         hiddenIndices.Remove(objectIndex);
+        hiddenEntity.Remove(objectIndex);
 
         // v0.7.335: ALWAYS clear the hide bit on bind - not gated behind our own hiddenIndices. A late joiner was hidden
         // by ZoneLoadService's LOAD-TIME sweep (a different tracking set), so it was never in our hiddenIndices; the old
@@ -173,7 +192,7 @@ public unsafe class ActorVisibilityService : IDisposable
         {
             var native = (GameObject*)obj.Address;
             Hide(native);
-            hiddenIndices.Add(objectIndex);
+            Track(objectIndex, native);
             log.Information("[HMSync] Peer [" + objectIndex + "] " + obj.Name + " - hidden (left)");
         }
     }
@@ -300,7 +319,7 @@ public unsafe class ActorVisibilityService : IDisposable
                     log.Debug("[HMSync] [ROSTER-HIDE] eid=0x" + eid.ToString("X8") + " idx=" + idx +
                         " kind=" + native->ObjectKind + " cid=" + (cid != 0 ? "set" : "0") +
                         " rf=0x" + ((uint)native->RenderFlags).ToString("X") + (isPc ? " → HIDE" : " (non-Pc, skip)"));
-                    if (isPc) { Hide(native); hiddenIndices.Add(idx); }
+                    if (isPc) { Hide(native); Track(idx, native); }
                     break;
                 }
                 if (resolved) { hideRetry.Remove(eid); continue; }
@@ -375,7 +394,7 @@ public unsafe class ActorVisibilityService : IDisposable
             if (!IsHidden(native))
             {
                 Hide(native);
-                hiddenIndices.Add(idx);
+                Track(idx, native);
             }
         }
     }
@@ -400,7 +419,7 @@ public unsafe class ActorVisibilityService : IDisposable
             if (native->ObjectKind != ObjectKind.Pc) continue;
 
             Hide(native);
-            hiddenIndices.Add(idx);
+            Track(idx, native);
             log.Debug("[HMSync] Hidden [" + idx + "] " + obj.Name + " via RenderFlags");
         }
     }
