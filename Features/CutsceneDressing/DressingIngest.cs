@@ -49,8 +49,35 @@ public sealed class DressingIngest
         [2504] = ("Valnain", null),
         [2392] = ("Imperial hangar (Blood of Emerald)", null),
         [2516] = ("Imperial hangar (Duty in the Sky with Diamond)", null),
-        [2348] = ("Valens van Varro's chambers, furnished", null),
+        [2348] = ("Valens van Varro's HQ", null),
+        [890] = ("The Excelsior", new[] { 0f, 251.5f, 0f }),   // b286/b287: Ysayle vs the Gration; arrive on the party's airship
+        // b288: promoted to lead their stage (the plain stage row was an empty legacy dummy)
+        [3129] = ("Airship above the clouds", new[] { -0.43f, -33.16f, 0.57f }),   // on the deck (largest walkable surface of w_air_001_01a.pcb)
+        [1106] = ("The Fault in Our Cards", null),
+        [1763] = ("Bamboo huts", null),                                            // prop median + 2y: among the huts
+        [3346] = ("Shaaloani", null),
         [1882] = ("Black Rose facility", new[] { -404.4f, 6.0f, -273.5f }),
+    };
+
+    /// <summary>b287: a second entry for a curated scene, sharing its build but with its own name and arrival point (the
+    /// same dressing loads; only where you land differs). Row ids >= 900000 (outside the Cutscene sheet, like map edits).</summary>
+    public static readonly Dictionary<uint, (uint Source, string Name, float[] Spawn)> CuratedAliases = new()
+    {
+        [900890] = (890, "The Gration's bridge", new[] { 412f, -285.47f, 510f }),   // inside the sealed box; the bridge deck (user-measured)
+    };
+
+    /// <summary>b286: display names for auto-ranked (lab) rows whose derived name (place or level folder) says nothing.</summary>
+    public static readonly Dictionary<uint, string> LabNames = new()
+    {
+        [2260] = "Werlyt Orphanage",   // z3e4 dressed for Ruby Doomsday
+        [2711] = "The Ragnarok's bridge",   // k5e2, Unto the Heavens: the bridge room bundle + 6 crew-seat bundles
+    };
+
+    /// <summary>b289: arrival points for auto-ranked (lab) rows whose stage default is far from the scene. Measured from the
+    /// game's own data (here: the centroid of the largest walkable surface of the scene's airship collision + 0.5y).</summary>
+    public static readonly Dictionary<uint, float[]> LabSpawns = new()
+    {
+        [107] = new[] { -67.17f, 1.84f, -29.2f },   // Lady of the Vortex (a1e1): on the deck of w_air_002 placed at (-67.6,0,-28.6)
     };
 
     private readonly IPluginLog log;
@@ -138,6 +165,7 @@ public sealed class DressingIngest
         public List<PropDto> Props = new();
         public bool IsCurated;
         public double Score;
+        public bool SetPiece;   // b287: admitted only because its bundles' models count (see SetPieceModels)
     }
 
     private (FileDto Curated, FileDto Lab) Derive()
@@ -180,7 +208,15 @@ public sealed class DressingIngest
             var file = new CutbFile(bytes);
             if (!file.IsValid) continue;
             var props = file.ReadProps();
-            if (props.Count < MinProps && !curated) continue;
+            // b287: a bundle (.sgb) is one prop but may hold dozens of models (Ysayle vs the Gration: 6 props, 58 models).
+            // A scene below MinProps still qualifies when its models, bundles expanded, reach it; it is marked SetPiece so
+            // the UI files it in its own subsection.
+            bool setPiece = false;
+            if (props.Count < MinProps && !curated)
+            {
+                if (props.Sum(p => SetPieceModels(p.Path)) < MinProps) continue;
+                setPiece = true;
+            }
             var venue = file.DominantVenue(props);
             if (venue == null) continue;
             uint tt = ttByDir.TryGetValue(venue, out var ti) ? ti.Tt : 0;
@@ -194,7 +230,7 @@ public sealed class DressingIngest
             var (scales, curves) = file.SetupKeys();
             var c = new Cand
             {
-                Row = row.RowId, Cutb = cutb, Venue = venue, Tt = tt, IsCurated = curated, Score = score,
+                Row = row.RowId, Cutb = cutb, Venue = venue, Tt = tt, IsCurated = curated, Score = score, SetPiece = setPiece,
                 Place = tt != 0 ? ti.Place : "", Quest = questOf.GetValueOrDefault(row.RowId, ""),
             };
             foreach (var p in props)
@@ -257,7 +293,7 @@ public sealed class DressingIngest
             var d = new DressingDto
             {
                 Row = c.Row, Cutb = c.Cutb, Quest = c.Quest, Bg = c.Venue + "/level/" + seg, Tt = c.Tt,
-                HidesFromCutb = true, Props = c.Props,
+                HidesFromCutb = true, Props = c.Props, SetPiece = c.SetPiece,
             };
             if (c.Tt != 0 && c.Props.Count > 0)
                 d.Spawn = SpawnOf(c.Props);
@@ -274,11 +310,42 @@ public sealed class DressingIngest
             var k = (place, c.Quest);
             seen[k] = seen.GetValueOrDefault(k) + 1;
             d.Name = seen[k] == 1 ? place : place + " (" + c.Cutb[(c.Cutb.LastIndexOf('/') + 1)..] + ")";
+            if (LabNames.TryGetValue(c.Row, out var labName)) d.Name = labName;
+            if (LabSpawns.TryGetValue(c.Row, out var labSpawn)) d.Spawn = labSpawn;
             labOut.Dressings.Add(d);
         }
         // b273: map edits (levels rebuilt from their own and a sibling level's parts) ride the same lab list.
         labOut.Dressings.AddRange(MapEdits.Derive(data, log));
+        // b287: aliases of curated scenes (same build, own name + arrival point).
+        foreach (var (row, al) in CuratedAliases)
+        {
+            var srcDto = curatedOut.Dressings.FirstOrDefault(d => d.Row == al.Source);
+            if (srcDto == null) continue;
+            curatedOut.Dressings.Add(new DressingDto
+            {
+                Row = row, Name = al.Name, Cutb = srcDto.Cutb, Quest = srcDto.Quest, Bg = srcDto.Bg, Tt = srcDto.Tt,
+                HidesFromCutb = srcDto.HidesFromCutb, Hides = srcDto.Hides, HideOther = srcDto.HideOther, Props = srcDto.Props,
+                Lights = srcDto.Lights, ExactHides = srcDto.ExactHides, Spawn = al.Spawn,
+            });
+        }
         return (curatedOut, labOut);
+    }
+
+    // b287: models a prop stands for: 1 for a model, the number of models inside a bundle (.sgb, read with Lumina; cached).
+    private readonly Dictionary<string, int> bundleModels = new(StringComparer.Ordinal);
+    private int SetPieceModels(string path)
+    {
+        if (!path.EndsWith(".sgb", StringComparison.Ordinal)) return 1;
+        if (bundleModels.TryGetValue(path, out var n)) return n;
+        n = 1;
+        try
+        {
+            var f = data.GetFile<SgbFile>(path);
+            if (f != null)
+                n = Math.Max(1, f.LayerGroups.Sum(g => g.Layers.Sum(l => l.InstanceObjects.Count(o => o.Object is Lumina.Data.Parsing.Layer.LayerCommon.BGInstanceObject))));
+        }
+        catch { }
+        return bundleModels[path] = n;
     }
 
     // Housing furniture models by bounds key: indoor (HousingFurniture) + outdoor (HousingYardObject).

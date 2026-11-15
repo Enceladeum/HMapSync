@@ -247,6 +247,27 @@ public sealed class CutbFile
             }
             start = -1;
         }
+        if (counts.Count == 0) return LevelFileVenue();   // b286: fallback, so existing derivations are unchanged
+        return counts.OrderByDescending(c => c.Value).ThenBy(c => c.Key, StringComparer.Ordinal).First().Key;
+    }
+
+    // b286: a scene staged on a level it takes no models from (an event skybox dressed only with its own bundles, e.g. the
+    // a2e1 sky in Ysayle's attack on the Gratio) still names that level's layout file: "bg/<dir>/level/bg.lgb".
+    private string? LevelFileVenue()
+    {
+        var marker = "/level/bg.lgb"u8;
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var span = b.AsSpan();
+        for (int at = span.IndexOf(marker); at >= 0;)
+        {
+            int start = at;
+            while (start > 0 && b[start - 1] >= 0x20 && b[start - 1] < 0x7f) start--;
+            var s = Encoding.ASCII.GetString(b, start, at - start);
+            int bg = s.LastIndexOf("bg/", StringComparison.Ordinal);
+            if (bg >= 0 && s.Length - bg > 3) { var dir = s[(bg + 3)..]; counts[dir] = counts.GetValueOrDefault(dir) + 1; }
+            int next = span[(at + marker.Length)..].IndexOf(marker);
+            at = next < 0 ? -1 : at + marker.Length + next;
+        }
         return counts.Count == 0 ? null : counts.OrderByDescending(c => c.Value).ThenBy(c => c.Key, StringComparer.Ordinal).First().Key;
     }
 }

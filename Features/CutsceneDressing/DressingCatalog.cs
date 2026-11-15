@@ -31,7 +31,7 @@ public sealed record Dressing(uint Row, string Name, string Cutb, IReadOnlyDicti
 }
 
 /// <summary>A lab ("Cutscenes 2") entry: where the dressing loads, for building its chip. Bg as Stage.Bg (no "bg/").</summary>
-public sealed record LabEntry(uint Row, string Name, string Quest, string Bg, uint TerritoryId);
+public sealed record LabEntry(uint Row, string Name, string Quest, string Bg, uint TerritoryId, bool SetPiece = false);
 
 /// <summary>
 /// Loads the embedded cutscene-dressings.json (derived offline from the game data).
@@ -119,7 +119,7 @@ public sealed class DressingCatalog
                 byRow[d.Row] = new Dressing(d.Row, d.Name ?? ("cutscene " + d.Row), d.Cutb ?? "", hides,
                     d.HideOther ?? new Dictionary<string, int>(), props, spawn, d.HidesFromCutb, lights.Count > 0 ? lights : null, d.ExactHides);
                 if (isLab && !string.IsNullOrEmpty(d.Bg))
-                    lab.Add(new LabEntry(d.Row, d.Name ?? ("cutscene " + d.Row), d.Quest ?? "", d.Bg, d.Tt));
+                    lab.Add(new LabEntry(d.Row, d.Name ?? ("cutscene " + d.Row), d.Quest ?? "", d.Bg, d.Tt, d.SetPiece));
             }
         }
         catch (Exception ex) { log.Warning("[Dressing] " + what + " load failed: " + ex.Message); }
@@ -145,6 +145,7 @@ public sealed class DressingCatalog
         public uint Tt { get; set; }                // lab only: TerritoryType (0 = swap stage)
         public bool HidesFromCutb { get; set; }     // lab: read hides from the cutb at runtime
         public bool ExactHides { get; set; }        // b278 map edits: hides are complete; skip the live replacement-hide scan
+        public bool SetPiece { get; set; }          // b287 lab: a scene built from bundles (UI subsection)
         public List<LightDto>? Lights { get; set; } // b274 map edits: live level lights to copy
     }
     public sealed class LightDto

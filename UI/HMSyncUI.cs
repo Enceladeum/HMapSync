@@ -3009,7 +3009,7 @@ ImGui.Spacing();
         "ex2/03_ocn_o3/evt/o3e2/level/o3e2",  // Seaship (o3e2) - NB-38
     };
     // Cutscene stages (populated by the plugin from CutsceneStageService). OnLoadCutscene loads by index.
-    public struct CutsceneEntry { public string Name; public string Region; public string Quest; public string Code; public string Bg; public uint Id; public int Index; public bool Lab; public bool Dressed; }   // b263 Lab (auto-ranked set) / b266 Dressed (has a cutscene dressing)
+    public struct CutsceneEntry { public string Name; public string Region; public string Quest; public string Code; public string Bg; public uint Id; public int Index; public bool Lab; public bool Dressed; public bool SetPiece; }   // b287 SetPiece: a scene built from bundles, listed in its own subsection   // b263 Lab (auto-ranked set) / b266 Dressed (has a cutscene dressing)
     public List<CutsceneEntry> CutsceneEntries = new();
 
     // b266: dressed entries indexed by territory, rebuilt whenever the plugin swaps in a new CutsceneEntries list.
@@ -3459,7 +3459,9 @@ ImGui.Spacing();
             // ("Valnain") with the quest as info; auto-ranked rows are named by quest (their name is just the place).
             void DressingRows(uint tt)
             {
-                foreach (var e in DressingsFor(tt))
+                foreach (var e in DressingsFor(tt)) DressingRow(e);   // b288: set-piece scenes list with the rest (no extra nesting)
+
+                void DressingRow(CutsceneEntry e)
                 {
                     ImGui.TableNextRow();
                     ImGui.TableSetColumnIndex(0); DrawCutsceneStar(e.Bg, acc2);

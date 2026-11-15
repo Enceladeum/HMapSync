@@ -20,7 +20,7 @@ namespace HMSync.Services;
 // ============================================================================
 public sealed class CutsceneStageService : IDisposable
 {
-    public sealed record Stage(string Name, string Bg, bool Experimental, string Quest = "", uint TerritoryId = 0, (float X, float Y, float Z)? Spawn = null, float? Facing = null, uint DressingRow = 0, bool Lab = false)
+    public sealed record Stage(string Name, string Bg, bool Experimental, string Quest = "", uint TerritoryId = 0, (float X, float Y, float Z)? Spawn = null, float? Facing = null, uint DressingRow = 0, bool Lab = false, bool SetPiece = false)
     {
         public string Expansion => Bg.StartsWith("ex") && Bg.Length >= 3
             ? (Bg[..3] switch { "ex1" => "HW", "ex2" => "SB", "ex3" => "ShB", "ex4" => "EW", "ex5" => "DT", _ => "ARR" })
@@ -39,7 +39,6 @@ public sealed class CutsceneStageService : IDisposable
         new("The Borel Manor", "ex1/01_roc_r2/evt/r2e9/level/r2e9", false, "Promises Kept", Spawn: (0.1282f, 0.0f, 5.9394f), Facing: 3.1332f),
         new("Hraesvelgr and Nidhogg's forum", "ex1/02_dra_d2/evt/d2e1/level/d2e1", false, "The Song Begins", Spawn: (0.1f, 1.565f, 6f)),
         new("Alexander control room", "ex1/02_dra_d2/evt/d2e6/level/d2e6", false, "A Gob in the Machine", Spawn: (0.1282f, 0.0f, 5.9394f), Facing: 3.1332f),
-        new("Toxic skybox", "ex1/03_abr_a2/evt/a2e1/level/a2e1", true, "Bolt, Chain, and Island"),
         new("Proto Ultima trial", "ex1/03_abr_a2/fld/a2ff/level/a2ff", false, "", Spawn: (0.1282f, 0.0f, 5.9394f), Facing: 3.1332f),
         new("Elidibus on the moon", "ex1/05_zon_z2/evt/z2e1/level/z2e1", false, "Heavensward", Spawn: (0.1282f, 0.0f, 5.9394f), Facing: 3.1332f),
         new("Steps of Faith", "ex1/05_zon_z2/evt/z2e2/level/z2e2", false, "Coming to Ishgard", Spawn: (0.1282f, 0.0f, 5.9394f), Facing: 3.1332f),
@@ -52,7 +51,7 @@ public sealed class CutsceneStageService : IDisposable
         new("Doma castle finale", "ex2/02_est_e3/evt/e3e4/level/e3e4", false, "All the Little Angels", Spawn: (0.1282f, 0.0f, 5.9394f), Facing: 3.1332f),
         new("Gosetsu's island", "ex2/02_est_e3/evt/e3e6/level/e3e6", false, "Stormblood", Spawn: (0f, 0.875f, 5.9f)),
         new("The Doman Enclave", "ex2/02_est_e3/evt/e3ef/level/e3ef", false, "Fruits of Her Labor", Spawn: (0.1282f, 0.0f, 5.9394f), Facing: 3.1332f),
-        new("Valens van Varro's chambers", "ex2/05_zon_z3/evt/z3e4/level/z3e4", false, "Duty in the Sky with Diamond", Spawn: (0.1282f, 0.0f, 5.9394f), Facing: 3.1332f),
+        new("Zenos' chambers", "ex2/05_zon_z3/evt/z3e4/level/z3e4", false, "Duty in the Sky with Diamond", Spawn: (0.1282f, 0.0f, 5.9394f), Facing: 3.1332f),
         new("Ridorana Cataract", "ex2/05_zon_z3/evt/z3e6/level/z3e6", false, "Desire", Spawn: (-2.5828f, 16.837f, -12.5837f), Facing: -2.8452f),
         new("Black Rose dead camp", "ex2/05_zon_z3/evt/z3e7/level/z3e7", false, "Prelude in Violet", Spawn: (-27f, 12.978f, 202f)),
         new("Prima Vista", "ex2/05_zon_z3/evt/z3ea/level/z3ea", false, "The City of Lost Angels", Spawn: (0.1282f, -1.5f, 5.9394f), Facing: -3.1284f),
@@ -71,7 +70,6 @@ public sealed class CutsceneStageService : IDisposable
         new("The Edge of Creation", "ex4/04_uvs_u5/evt/u5e2/level/u5e2", false, "", Spawn: (113.5174f, 0.0f, 98.6273f), Facing: -1.5f),
         new("The 13th", "ex4/05_zon_z5/evt/z5e2/level/z5e2", false, "", Spawn: (0.12f, 0.0f, 5.939f)),
         new("Golbez throne", "ex4/05_zon_z5/evt/z5e3/level/z5e3", false, "", Spawn: (0.1282f, 0.0f, 5.9394f), Facing: -3.14f),
-        new("Prima Vista first map", "ffxiv/air_a1/evt/a1e1/level/a1e1", false, "A City Fallen"),
         new("Prima Vista starry sky", "ffxiv/air_a1/evt/a1e2/level/a1e2", false, "Something Fishy This Way Comes"),
         new("Alpha Ruby Sea", "ffxiv/est_e1/evt/e1e1/level/e1e1", false, "", Spawn: (-683.2109f, 45.2518f, -567.413f), Facing: 0.9337f),
         new("The Borderland Ruins", "ffxiv/lak_l1/evt/l1e4/level/l1e4", false, "An Ending to Mark a New Beginning", Spawn: (-58.7841f, 39.9581f, -36.0119f), Facing: -0.1826f),
@@ -91,9 +89,7 @@ public sealed class CutsceneStageService : IDisposable
         new("Ascian meeting", "ffxiv/zon_z1/evt/z1e7/level/z1e7", false, "Shadows of the Past", Spawn: (-0.056f, 0.0085f, -0.1209f), Facing: -3.136f),
         new("Imperial throne room", "ffxiv/zon_z1/evt/z1e8/level/z1e8", false, "A Breath of Respite", Spawn: (0.1282f, 0.0f, 5.9394f), Facing: -3.1305f),
         // --- class-2 (evt, no TT) stages the old relic-filter wrongly dropped; TT-less so they load via the swap ---
-        new("Black screen", "ffxiv/zon_z1/evt/z1e1/level/z1e1", true, ""),
         new("White screen", "ffxiv/zon_z1/evt/z1e2/level/z1e2", true, ""),
-        new("Black screen", "ffxiv/zon_z1/evt/z1eb/level/z1eb", true, ""),
         new("Baelsar's Wall", "ffxiv/fst_f1/evt/f1e8/level/f1e8", false, "", Spawn: (577.5458f, 66.5f, 1057.9313f), Facing: -2.3f),
         // --- NB-38: promote three auto-detected idle chips (name-only, no spawn) to curated. Curated wins on Bg collision
         //     in BuildExposed, so these carry the friendly name + calibrated spawn instead of the code + donor fallback. ---
@@ -130,8 +126,21 @@ public sealed class CutsceneStageService : IDisposable
         new("Valnain", "ex2/05_zon_z3/rad/z3r1/level/z3r1", false, "March of the Bloody Queen", 734, DressingRow: 2504),
         new("Imperial hangar", "ex2/05_zon_z3/btl/z3b1/level/z3b1", false, "Blood of Emerald", 893, DressingRow: 2392),
         new("Imperial hangar, Diamond", "ex2/05_zon_z3/btl/z3b1/level/z3b1", false, "Duty in the Sky with Diamond", 893, DressingRow: 2516),
-        new("Valens van Varro's chambers, furnished", "ex2/05_zon_z3/evt/z3e4/level/z3e4", false, "Sleep Now in Sapphire", Spawn: (0.1282f, 0.0f, 5.9394f), Facing: 3.1332f, DressingRow: 2348),
+        new("Valens van Varro's HQ", "ex2/05_zon_z3/evt/z3e4/level/z3e4", false, "Sleep Now in Sapphire", Spawn: (0.1282f, 0.0f, 5.9394f), Facing: 3.1332f, DressingRow: 2348),
         new("Black Rose facility", "ffxiv/lak_l1/fld/l1f1/level/l1f1", false, "Seiryu's Wall", 156, DressingRow: 1882),   // b262: over Mor Dhona; arrival point lives in the dressing data
+        // b286/b287: Ysayle's attack on the Gration (cutscene 890), the a2e1 skybox dressed with Azys Lla below, the Gration
+        // (sgbg_w_cut_081_01a, one 540y ship in 23 pieces), the party's small airship (sgbg_w_cut_080_01a, a reused set with
+        // its own collision, at (0,250,0)) and the Gration's BRIDGE, built inside a sealed 213y box (sgbg_w_cut_095_01a at
+        // (413.9,-285.6,526.9); floor at the box origin). One scene build, two entries with their own arrival point.
+        new("The Excelsior", "ex1/03_abr_a2/evt/a2e1/level/a2e1", false, "The First Flight of the Excelsior", Spawn: (0f, 251.5f, 0f), DressingRow: 890),
+        new("The Gration's bridge", "ex1/03_abr_a2/evt/a2e1/level/a2e1", false, "The First Flight of the Excelsior", Spawn: (412f, -285.47f, 510f), DressingRow: 900890),   // b288: bridge deck, user-measured
+        // b288: empty legacy leads removed (Toxic skybox a2e1, Prima Vista first map a1e1, Black screen z1e1 + z1eb, the
+        // auto-detected plain Shaaloani x6e3); a dressed scene on each stage is promoted to its lead. Arrival = the curated
+        // spawn, else the prop median + 2y (DressingIngest).
+        new("Airship above the clouds", "ffxiv/air_a1/evt/a1e1/level/a1e1", false, "What Drives Us", DressingRow: 3129),
+        new("The Fault in Our Cards", "ffxiv/zon_z1/evt/z1e1/level/z1e1", false, "The Fault in Our Cards", DressingRow: 1106),
+        new("Bamboo huts", "ffxiv/zon_z1/evt/z1eb/level/z1eb", false, "Tortoise in Time", DressingRow: 1763),
+        new("Shaaloani", "ex5/01_xkt_x6/evt/x6e3/level/x6e3", false, "All Aboard", DressingRow: 3346),
     };
 
     private readonly IPluginLog log;
@@ -246,8 +255,19 @@ public sealed class CutsceneStageService : IDisposable
     // Curated per-stage spawn (baked calibration; keyed by BG path because swap stages share donor territory ids so a
     // territoryId key would leak one stage's spawn to every co-donor stage). Returns the Stage.Spawn for the bg, if set,
     // plus the curated facing (yaw) if one was baked (null → caller keeps default orientation).
-    public bool TryGetCuratedStageSpawn(string bg, out Vector3 spawn, out float? facing)
+    public bool TryGetCuratedStageSpawn(string bg, out Vector3 spawn, out float? facing, uint dressingRow = 0)
     {
+        // b288: a dressed load first takes ITS OWN row's spawn. Several entries can share one stage bg (The Excelsior and
+        // The Gration's bridge on a2e1); matching on bg alone always returned the first one's spawn.
+        if (dressingRow != 0)
+            foreach (var st in AllStages)
+                if (st.Bg == bg && st.DressingRow == dressingRow && st.Spawn.HasValue)
+                {
+                    var v = st.Spawn.Value;
+                    spawn = new Vector3(v.X, v.Y, v.Z);
+                    facing = st.Facing;
+                    return true;
+                }
         foreach (var st in AllStages)
         {
             if (st.Bg == bg && st.Spawn.HasValue)

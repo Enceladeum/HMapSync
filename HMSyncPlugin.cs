@@ -573,7 +573,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             }),
             CutsceneEntries = cutscene.Stages.Select((st, i) => new HMSyncUI.CutsceneEntry
             {
-                Name = st.Name, Region = st.Expansion, Quest = st.Quest, Code = st.Code, Bg = st.Key, Id = st.TerritoryId, Index = i, Lab = st.Lab, Dressed = st.DressingRow != 0   // b260: Key = bg#row for dressed variants (distinct favourites); b263 Lab; b266 Dressed
+                Name = st.Name, Region = st.Expansion, Quest = st.Quest, Code = st.Code, Bg = st.Key, Id = st.TerritoryId, Index = i, Lab = st.Lab && !DressingIngest.LabNames.ContainsKey(st.DressingRow), Dressed = st.DressingRow != 0, SetPiece = st.SetPiece   // b260: Key = bg#row for dressed variants (distinct favourites); b263 Lab; b266 Dressed; b287 a named lab row displays like curated; b287 SetPiece subsection
             }).ToList(),
             // v0.7.371: Modules panel. Aliases cover the internal-vs-display name gap (HMS itself ships as "HM-Sync"),
             // so a module isn't silently reported missing just because its manifest name differs from the label.
@@ -701,7 +701,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         {
             ui.CutsceneEntries = cutscene.Stages.Select((st, i) => new HMSyncUI.CutsceneEntry
             {
-                Name = st.Name, Region = st.Expansion, Quest = st.Quest, Code = st.Code, Bg = st.Key, Id = st.TerritoryId, Index = i, Lab = st.Lab, Dressed = st.DressingRow != 0   // b260: Key (see above); b263 Lab; b266 Dressed
+                Name = st.Name, Region = st.Expansion, Quest = st.Quest, Code = st.Code, Bg = st.Key, Id = st.TerritoryId, Index = i, Lab = st.Lab && !DressingIngest.LabNames.ContainsKey(st.DressingRow), Dressed = st.DressingRow != 0, SetPiece = st.SetPiece   // b260: Key (see above); b263 Lab; b266 Dressed; b287 named lab row + SetPiece
             }).ToList();
             log.Information("[HMSync] Cutscene chip refreshed: " + ui.CutsceneEntries.Count + " venue(s)");
         });
@@ -1931,7 +1931,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
 
     // b263/b266: the lab dressings join the stage list; TT-backed ones show in the zone tree under their territory, TT-less ones in the Cutscenes chip.
     private void PublishDressingStages() =>
-        cutscene.SetLabStages(dressing.Catalog.Lab.Select(l => new CutsceneStageService.Stage(l.Name, l.Bg, true, l.Quest, l.TerritoryId, DressingRow: l.Row)));
+        cutscene.SetLabStages(dressing.Catalog.Lab.Select(l => new CutsceneStageService.Stage(l.Name, l.Bg, true, l.Quest, l.TerritoryId, DressingRow: l.Row, SetPiece: l.SetPiece)));
 
     // b272: DressingIngest callback (background thread) -> adopt on the framework thread, then log how it differs from
     // what was in use (the shipped data on a first run), so a patch's effect on the set is visible.
@@ -2257,7 +2257,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
                 spawn = new System.Numerics.Vector3(uss[0], uss[1], uss[2]);
                 if (uss.Length >= 4) spawnFacing = uss[3];
             }
-            else if (cutscene.TryGetCuratedStageSpawn(stageBg, out var curatedStage, out var curatedFacing))
+            else if (cutscene.TryGetCuratedStageSpawn(stageBg, out var curatedStage, out var curatedFacing, dressing.ArmedRow))
             {
                 spawn = curatedStage;
                 if (curatedFacing.HasValue) spawnFacing = curatedFacing;

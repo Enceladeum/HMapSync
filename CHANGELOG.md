@@ -5,6 +5,22 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.8.0] - 2026-11-15
+
+### Added
+
+- **About 130 more cutscene scenes**, including the set-piece scenes built mostly from ready-made scene pieces. They are listed with the other dressings.
+- **The Excelsior and The Gration's bridge**, from Ysayle's attack in The First Flight of the Excelsior: one scene with two arrival points.
+
+### Changed
+
+- **Clearer cutscene names:** Zenos' chambers, Valens van Varro's HQ, Werlyt Orphanage and The Ragnarok's bridge.
+- **Empty placeholder stages replaced with real scenes:** Airship above the clouds, The Fault in Our Cards, Bamboo huts, Shaaloani and The Excelsior.
+
+### Fixed
+
+- **Each cutscene arrives at its own spawn point.** Scenes sharing a stage all used the first scene's spawn.
+
 ## [1.0.7.0] - 2026-11-14
 
 ### Added

@@ -115,6 +115,9 @@ public sealed class CutsceneDressingService : IDisposable
 
     public void Disarm() => armedRow = 0;
 
+    /// <summary>b288: the row armed for the next load (0 = none), so the load path can pick that entry's own spawn.</summary>
+    public uint ArmedRow => armedRow;
+
     /// <summary>The armed dressing's own arrival point, if it has one (big field maps). Read by the load path before
     /// the zone changes, so it ranks above the map's default spawn.</summary>
     public bool TryGetArmedSpawn(out Vector3 spawn)
