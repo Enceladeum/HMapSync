@@ -93,6 +93,8 @@ public unsafe class StateCaptureService : IDisposable
     // S328x: supplies the local player's Moniker nameplate name (name, hideFc); ("",false) if none/absent. Wired by
     // the plugin so the capture service stays decoupled from the Moniker IPC.
     public System.Func<(string name, bool hideFc, bool hideName, bool hideTitle, bool hideStatus)>? MonikerNameSupplier;
+    // b292: HOutfits weapon override (WeaponModelId values, 0/0 = none). Set by the plugin; null = feature off.
+    public System.Func<(ulong main, ulong off)>? WeaponOverrideSupplier;
 
     // COSM_1_016: supplies the last locally-accepted cast (id, type, epoch, target position) for the WARM lane.
     public System.Func<(uint id, byte type, uint epoch, System.Numerics.Vector3 target, ulong targetCid)>? SkillCastSupplier;
@@ -361,6 +363,14 @@ public unsafe class StateCaptureService : IDisposable
             transform.MonikerHideName = mkHideName;
             transform.MonikerHideTitle = mkHideTitle;
             transform.MonikerHideStatus = mkHideStatus;
+        }
+
+        // b292: HOutfits weapon override (Cold lane). Always present, like the Moniker name, so late joiners get it.
+        if (WeaponOverrideSupplier != null)
+        {
+            var (wMain, wOff) = WeaponOverrideSupplier();
+            transform.WeaponOverrideMain = wMain;
+            transform.WeaponOverrideOff = wOff;
         }
 
         // S328ah: change-detection gate. Suppress a send if nothing a receiver renders from has changed since the last

@@ -52,6 +52,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     private readonly GPoseMountDrawService gposeMountDraw;   // v0.7.358: keep HMS mounts drawn in gpose
     private readonly SkillSyncService skillSync;   // COSM_1_016: cosmetic skill capture + peer replay
     private readonly EmoteUnlockService emoteUnlock;   // NB-40: in-session ownership bypass so native triggers fire locked emotes
+    private readonly HOutfitsIpc hOutfits;   // b292: HOutfits weapon-override IPC (read-only consumer)
     private readonly InstalledPluginService installedPlugins;   // v0.7.371: Modules panel presence + open
     private readonly LocalStateDetector detector;
     private readonly MonikerService moniker;   // S328x: Moniker nameplate integration
@@ -377,6 +378,9 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // S328x: Moniker nameplate integration - capture the local chosen name into outgoing transforms, and apply a
         // peer's chosen name to their puppet. Both no-op if Moniker isn't installed (MonikerService.Available == false).
         stateCapture.MonikerNameSupplier = () => moniker.GetLocalName();
+        // b292: HOutfits weapon override → Cold lane → peers draw it on our body (StateApplyService.ApplyWeaponOverride).
+        hOutfits = new HOutfitsIpc(pluginInterface, log);
+        stateCapture.WeaponOverrideSupplier = () => hOutfits.GetWeaponOverride();
         stateApply.ApplyMonikerName = (idx, name, hideFc, hideName, hideTitle, hideStatus, redraw) => moniker.ApplyName(idx, name, hideFc, hideName, hideTitle, hideStatus, redraw);
         moniker.LocalPlayerIndex = () => { var lp = objectTable.LocalPlayer; return lp != null ? (int)lp.ObjectIndex : -1; };
         relay.OnPeerJoined += OnPeerJoined;

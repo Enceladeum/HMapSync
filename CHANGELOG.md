@@ -5,6 +5,12 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.9.0] - 2026-11-16
+
+### Added
+
+- **Weapon overrides show for your session.** When you put on another class's weapon with HOutfits' Override (HOutfits 1.2.0 or later), others in your HMS session now see it too, and see your own weapon again when you restore it or leave. After a redraw on their side, your own weapon can show for about a second before the override returns. Players on older versions see your normal weapon.
+
 ## [1.0.8.0] - 2026-11-15
 
 ### Added

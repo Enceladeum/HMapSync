@@ -269,6 +269,8 @@ public class ColdPayload
     [Key(7)] public bool MonikerHideStatus { get; set; } // additive (Moniker IPC 2.4): next free key after HideTitle(6); old peers ignore key 7, missing key 7 → false (status icon shown)
     [Key(3)] public bool VisorToggled { get; set; }
     [Key(4)] public bool HatHidden { get; set; }
+    [Key(8)] public ulong WeaponOverrideMain { get; set; }   // b292 additive: HOutfits weapon override; old peers ignore keys 8/9, missing → 0 (none)
+    [Key(9)] public ulong WeaponOverrideOff { get; set; }
 }
 
 /// <summary>HOST lane (0x14): map-state block (host-authoritative). On change + late-join re-send.</summary>

@@ -341,6 +341,12 @@ public class TransformData
     // Headgear hidden (the "/displayhead" state).
     [JsonPropertyName("hth")]
     public bool HatHidden { get; set; }
+    // b292: HOutfits weapon override (WeaponModelId.Value of what the sender draws; 0/0 = none). Main != 0 draws main +
+    // off (0 = empty off hand); Main == 0 with Off != 0 overrides the off hand only. Peers draw it on the sender's body.
+    [JsonPropertyName("wom")]
+    public ulong WeaponOverrideMain { get; set; }
+    [JsonPropertyName("woo")]
+    public ulong WeaponOverrideOff { get; set; }
     // NOTE: weapon hide/show ("/displayarms") is intentionally SENDER-ONLY - not synced.
 
     /// <summary>
@@ -399,7 +405,8 @@ public class TransformData
             ActionId == o.ActionId && ActionType == o.ActionType && ActionEpoch == o.ActionEpoch &&
             ActionTgtX == o.ActionTgtX && ActionTgtY == o.ActionTgtY && ActionTgtZ == o.ActionTgtZ &&
             ActionTgtCid == o.ActionTgtCid &&
-            WeaponDrawn == o.WeaponDrawn && VisorToggled == o.VisorToggled && HatHidden == o.HatHidden;
+            WeaponDrawn == o.WeaponDrawn && VisorToggled == o.VisorToggled && HatHidden == o.HatHidden &&
+            WeaponOverrideMain == o.WeaponOverrideMain && WeaponOverrideOff == o.WeaponOverrideOff;
     }
 }
 

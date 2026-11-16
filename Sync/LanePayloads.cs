@@ -65,6 +65,7 @@ public static class LaneProjection
     {
         SubjectId = subjectId,
         MonikerName = t.MonikerName, MonikerHideFc = t.MonikerHideFc, MonikerHideName = t.MonikerHideName, MonikerHideTitle = t.MonikerHideTitle, MonikerHideStatus = t.MonikerHideStatus, VisorToggled = t.VisorToggled, HatHidden = t.HatHidden,
+        WeaponOverrideMain = t.WeaponOverrideMain, WeaponOverrideOff = t.WeaponOverrideOff,   // b292
     };
 
     public static HMSync.Wire.HostPayload ToHostWire(TransformData t, string subjectId) => new()
@@ -108,6 +109,7 @@ public static class LaneProjection
     public static void MergeColdWire(TransformData c, HMSync.Wire.ColdPayload d)
     {
         c.MonikerName = d.MonikerName; c.MonikerHideFc = d.MonikerHideFc; c.MonikerHideName = d.MonikerHideName; c.MonikerHideTitle = d.MonikerHideTitle; c.MonikerHideStatus = d.MonikerHideStatus; c.VisorToggled = d.VisorToggled; c.HatHidden = d.HatHidden;
+        c.WeaponOverrideMain = d.WeaponOverrideMain; c.WeaponOverrideOff = d.WeaponOverrideOff;   // b292
     }
 
     public static void MergeHostWire(TransformData c, HMSync.Wire.HostPayload d)
@@ -151,7 +153,8 @@ public static class LaneProjection
 
     public static bool ColdEquals(TransformData a, TransformData b) =>
         a.MonikerName == b.MonikerName && a.MonikerHideFc == b.MonikerHideFc && a.MonikerHideName == b.MonikerHideName && a.MonikerHideTitle == b.MonikerHideTitle && a.MonikerHideStatus == b.MonikerHideStatus &&
-        a.VisorToggled == b.VisorToggled && a.HatHidden == b.HatHidden;
+        a.VisorToggled == b.VisorToggled && a.HatHidden == b.HatHidden &&
+        a.WeaponOverrideMain == b.WeaponOverrideMain && a.WeaponOverrideOff == b.WeaponOverrideOff;   // b292
 
     public static bool HostEquals(TransformData a, TransformData b) =>
         a.MapWeatherId == b.MapWeatherId && a.MapWeatherDonor == b.MapWeatherDonor && a.MapWeatherForced == b.MapWeatherForced && a.MapTimeForced == b.MapTimeForced && a.MapEorzeaHour == b.MapEorzeaHour &&

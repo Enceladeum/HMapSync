@@ -121,6 +121,8 @@ public static class LaneCensus
         ["MonikerHideStatus"] = SyncLane.Cold,
         ["VisorToggled"] = SyncLane.Cold,
         ["HatHidden"] = SyncLane.Cold,
+        ["WeaponOverrideMain"] = SyncLane.Cold,   // b292: HOutfits weapon override (main + off ride together)
+        ["WeaponOverrideOff"] = SyncLane.Cold,
 
         // ── HOST: map-state block (host-authoritative) ──
         ["MapWeatherId"] = SyncLane.Host,

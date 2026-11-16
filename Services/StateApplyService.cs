@@ -355,6 +355,97 @@ public class StateApplyService : IDisposable
     // state (minions, appearance overrides) here so it's cleared in one place rather than
     // needing a per-feature teardown discovered later (which is how the mount-persist bug
     // happened). Does NOT touch state the game/Penumbra owns - only what HMS sets.
+    // -- b292: HOutfits weapon override on a peer's body -----------------------------------------------------------
+    // The sender's HOutfits draws another class's weapon on their own character with the game's loader (draw only).
+    // We draw the same ids on their body here with the same call (LoadWeapon, skipGameObject = 1): the stored weapon
+    // and the server are untouched, so restoring = reloading the stored ids. Measured with the b290/b291 probe:
+    // the override survives draw/sheathe and a Glamourer weapon change; a Penumbra redraw reloads the
+    // stored weapon, so a watchdog re-applies once the rebuilt weapon has SETTLED (weapon draw object present, ids not
+    // half-loaded, unchanged for WpnSettleFrames). Writing mid-rebuild or on the half-loaded state fails (b290). No
+    // write while Penumbra is rebuilding the actor. Expect ~1 s of the old weapon after a redraw (accepted; no hook).
+    private const int WpnSettleFrames = 10;
+
+    private unsafe void ApplyWeaponOverride(GameObject* native, Character* character, TransformData data, PeerInfo info)
+    {
+        if (rebuildingActors.Contains((nint)native)) return;
+        ulong main = data.WeaponOverrideMain, off = data.WeaponOverrideOff;
+        bool want = main != 0 || off != 0;
+
+        if (main != info.WpnMain || off != info.WpnOff)
+        {
+            if (!want) { RestoreWeaponOverride(character, info); return; }
+            info.WpnMain = main; info.WpnOff = off;
+            info.WpnStableFrames = 0; info.WpnLastDrawn = "";
+            LoadWeaponOverride(character, main, off);
+            info.WpnActive = true;
+            log.Debug("[HMSync] Weapon override on " + info.CharacterName + ": main 0x" + main.ToString("X") + " off 0x" + off.ToString("X"));
+            return;
+        }
+        if (!want) return;
+
+        // Watchdog: act once per settled drawn state.
+        var drawn = DrawnWeaponKey(character);
+        if (drawn != info.WpnLastDrawn) { info.WpnLastDrawn = drawn; info.WpnStableFrames = 0; return; }
+        if (++info.WpnStableFrames != WpnSettleFrames) return;
+        if (WeaponOverrideDrawn(character, main, off) || !WeaponSettled(character, main)) return;
+        LoadWeaponOverride(character, main, off);
+        log.Debug("[HMSync] Weapon override re-applied on " + info.CharacterName + " (drawn was " + drawn + ")");
+    }
+
+    private unsafe void RestoreWeaponOverride(Character* character, PeerInfo info)
+    {
+        if (info.WpnActive && character != null)
+        {
+            var dd = &character->DrawData;
+            dd->LoadWeapon(DrawDataContainer.WeaponSlot.MainHand, dd->Weapon(DrawDataContainer.WeaponSlot.MainHand).ModelId, 1, 0, 1, 0, false);
+            dd->LoadWeapon(DrawDataContainer.WeaponSlot.OffHand, dd->Weapon(DrawDataContainer.WeaponSlot.OffHand).ModelId, 1, 0, 1, 0, false);
+            log.Debug("[HMSync] Weapon override cleared on " + info.CharacterName + " (stored weapon reloaded)");
+        }
+        info.WpnActive = false; info.WpnMain = 0; info.WpnOff = 0; info.WpnLastDrawn = ""; info.WpnStableFrames = 0;
+    }
+
+    private static unsafe void LoadWeaponOverride(Character* character, ulong main, ulong off)
+    {
+        if (main != 0)
+            character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.MainHand, new WeaponModelId { Value = main }, 1, 0, 1, 0, false);
+        character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.OffHand, new WeaponModelId { Value = off }, 1, 0, 1, 0, false);
+    }
+
+    private static unsafe (ushort set, ushort sec, ushort var)? DrawnWeapon(Character* character, DrawDataContainer.WeaponSlot slot)
+    {
+        var dobj = character->DrawData.Weapon(slot).DrawData.DrawObject;
+        if (dobj == null) return null;
+        var w = (FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Weapon*)dobj;
+        return (w->ModelSetId, w->SecondaryId, w->Variant);
+    }
+
+    private static unsafe string DrawnWeaponKey(Character* character)
+    {
+        static string K((ushort set, ushort sec, ushort var)? d) => d == null ? "none" : d.Value.set + "-" + d.Value.sec + "-" + d.Value.var;
+        return K(DrawnWeapon(character, DrawDataContainer.WeaponSlot.MainHand)) + "/" + K(DrawnWeapon(character, DrawDataContainer.WeaponSlot.OffHand));
+    }
+
+    // Is the override what is drawn now? Compares model set, secondary id and variant (dyes are not on the draw ids).
+    private static unsafe bool WeaponOverrideDrawn(Character* character, ulong main, ulong off)
+    {
+        static bool Same((ushort set, ushort sec, ushort var)? d, ulong v)
+        {
+            var w = new WeaponModelId { Value = v };
+            if (w.Id == 0) return d == null || d.Value.set == 0;     // empty slot wanted
+            return d != null && d.Value.set == w.Id && d.Value.sec == w.Type && d.Value.var == w.Variant;
+        }
+        bool mainOk = main == 0 || Same(DrawnWeapon(character, DrawDataContainer.WeaponSlot.MainHand), main);
+        bool offOk = Same(DrawnWeapon(character, DrawDataContainer.WeaponSlot.OffHand), off);
+        return mainOk && offOk;
+    }
+
+    // The weapon in the slot we drive exists and is not half-loaded (secondary id and variant both 0 while loading).
+    private static unsafe bool WeaponSettled(Character* character, ulong main)
+    {
+        var d = DrawnWeapon(character, main != 0 ? DrawDataContainer.WeaponSlot.MainHand : DrawDataContainer.WeaponSlot.OffHand);
+        return d != null && !(d.Value.sec == 0 && d.Value.var == 0);
+    }
+
     public unsafe void SanitizePeerStates()
     {
         foreach (var (_, info) in peerInfos)
@@ -364,6 +455,9 @@ public class StateApplyService : IDisposable
             if (obj == null) continue;
             var character = (Character*)obj.Address;
             if (character == null) continue;
+
+            // b292: give the peer's body its own weapon back if we drew an override on it.
+            RestoreWeaponOverride(character, info);
 
             // S328x: clear any applied Moniker nameplate name so the peer's real name returns on session end.
             if (!string.IsNullOrEmpty(info.LastAppliedMonikerName) || info.LastAppliedMonikerHideFc || info.LastAppliedMonikerHideName || info.LastAppliedMonikerHideTitle || info.LastAppliedMonikerHideStatus)
@@ -1015,6 +1109,9 @@ public class StateApplyService : IDisposable
                     // Created event we never received can't leave the address stuck-suppressed.
                     rebuildingActors.Remove((nint)native);
 
+                    // b292: a departing peer gets its own weapon back if we drew an override on it.
+                    if (character != null) RestoreWeaponOverride(character, info);
+
                     // v0.7.370 + ground-snap on exit: return the departing peer's real actor to solid ground before we
                     // unload it. Two problems compound here:
                     //   (1) The firewall pins a peer's real actor at its session-start spot server-side, so once they
@@ -1528,6 +1625,9 @@ public class StateApplyService : IDisposable
                 // Method only - HideHeadgear owns the bit; pre-setting it no-ops the redraw.
                 character->DrawData.HideHeadgear(0, data.HatHidden);
             }
+
+            // b292: HOutfits weapon override (Cold lane) - draw it on the peer's body and keep it there.
+            ApplyWeaponOverride(native, character, data, info);
 
             // ── Mount channel (S148) - MUST run before the pose channel ──
             // Spawn/clear the mount model on the puppet from the synced MountId. The puppet
@@ -3013,6 +3113,12 @@ public class PeerInfo
     public uint LastEmoteEpoch { get; set; }
     public uint LastTargetEntityId { get; set; }
     public bool LastFaceCamera { get; set; }
+    // b292: HOutfits weapon override drawn on this peer's body (see StateApplyService.ApplyWeaponOverride).
+    public ulong WpnMain { get; set; }          // last override we applied (WeaponModelId.Value; 0/0 = none)
+    public ulong WpnOff { get; set; }
+    public bool WpnActive { get; set; }         // we drew an override that has not been restored yet
+    public string WpnLastDrawn { get; set; } = "";
+    public int WpnStableFrames { get; set; }
     public bool GazeEyesWasOn;   // dynamic face control per-slot on-state (for clean release)
     public bool GazeBodyWasOn;
     public bool GazeHeadWasOn;
