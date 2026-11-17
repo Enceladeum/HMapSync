@@ -30,6 +30,7 @@ public sealed class HOutfitsIpc
     private readonly ICallGateSubscriber<(uint, uint)> apiVersion;
     private readonly ICallGateSubscriber<(ulong, ulong)> get;
     private bool available;
+    private string lastProbeError = "";   // b294: last probe failure kind, so it is logged once
     private long nextProbe;
 
     public HOutfitsIpc(IDalamudPluginInterface pi, IPluginLog log)
@@ -39,12 +40,20 @@ public sealed class HOutfitsIpc
         get = pi.GetIpcSubscriber<(ulong, ulong)>("HOutfits.WeaponOverride.Get");
     }
 
+    /// <summary>b294: whether the IPC answered the last probe (for the wpnsync diagnostic).</summary>
+    public bool Available => available;
+
     /// <summary>The local weapon override as (main, off) WeaponModelId values; (0, 0) when none or HOutfits is absent.</summary>
     public (ulong Main, ulong Off) GetWeaponOverride()
     {
         if (!Probe()) return (0, 0);
         try { return get.InvokeFunc(); }
-        catch { available = false; nextProbe = Environment.TickCount64 + ProbeIntervalMs; return (0, 0); }
+        catch (Exception ex)
+        {
+            available = false; nextProbe = Environment.TickCount64 + ProbeIntervalMs;
+            log.Information("[HMSync] HOutfits weapon-override IPC stopped answering (" + ex.GetType().Name + "); retrying every 5 s.");
+            return (0, 0);
+        }
     }
 
     private bool Probe()
@@ -59,7 +68,18 @@ public sealed class HOutfitsIpc
             available = major == RequiredMajor;
             if (available) log.Information($"[HMSync] HOutfits weapon-override IPC {major}.{minor} found: overrides sync to session peers.");
         }
-        catch { available = false; }
+        catch (Exception ex)
+        {
+            available = false;
+            // b294: say once why (per error kind) instead of failing silently. IpcNotReadyError = HOutfits not loaded, or its
+            // IPC was unregistered (unloading a second HOutfits copy removes the shared registration until HOutfits reloads).
+            if (lastProbeError != ex.GetType().Name)
+            {
+                lastProbeError = ex.GetType().Name;
+                log.Information("[HMSync] HOutfits weapon-override IPC not available (" + lastProbeError + "); HMS keeps retrying every 5 s.");
+            }
+        }
+        if (available) lastProbeError = "";
         return available;
     }
 }

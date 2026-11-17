@@ -959,7 +959,7 @@ public sealed unsafe class WeatherCramService : IDisposable
     private int ReestablishDoodads(System.Collections.Generic.IReadOnlyList<DoodadBake> doods, bool strip, string tag)
     {
         if (captured == null) return 0;
-        FreeColdAllocs();   // release prior buffers; replay is (re-)armed by the caller, so nothing points at them yet
+        RetireColdAllocs();   // b295: the live EnvState may still point at the prior buffers until the next restamp; free later
         lastBakes = doods;  // b130: record for wxdooddiag — the VEH matches a fault's bad pointer to a word in these bytes
         var sb = new System.Text.StringBuilder();
         int n = 0;
@@ -2662,6 +2662,8 @@ public sealed unsafe class WeatherCramService : IDisposable
         if (hook == null) return "[HMSync] wxpreset: UpdateEnvironment hook unavailable (sig scan failed at ctor).";
         if (blob == null || blob.Length != EnvStateSize)
             return "[HMSync] wxpreset: bad preset size " + (blob?.Length.ToString() ?? "null") + " (expected " + EnvStateSize + ").";
+        NoteDoodadBaseline();    // b295: the scene's own doodad words, recorded before HMS first overwrites them
+        RestoreDoodadWords("preset swap");   // b295: a sky-only preset must not inherit the previous preset's doodads
         captured = (byte[])blob.Clone();
         capturedWeather = id;
         // b120 Tier-2 (candidate A): if the preset carries baked doodad descriptors, RE-ESTABLISH them from live buffers
@@ -2684,15 +2686,122 @@ public sealed unsafe class WeatherCramService : IDisposable
         return SetReplay(true);
     }
 
+    // ── b295: UNDO, not just stop ───────────────────────────────────────────────────────────────────────────────
+    // The engine recomputes the EnvState floats every frame (the restamp is POST-recompute), so stopping the restamp gives
+    // the sky back on the next frame. The two avfx doodad words (0x2C0/0x2C8) are different: the engine writes them only on
+    // a weather TRANSITION, so after a doodad preset they kept pointing at HMS's re-established descriptors. A cram never
+    // moves ActiveWeather, so no transition came: the foreign particles (Annealing Winds' blue) stayed under every later
+    // native pick and rode into the next zone. Fix: record the scene's own words before HMS first overwrites them, and
+    // put them back whenever replay stops or a preset is swapped. Guarded to the SAME EnvScene (words recorded in another
+    // scene would be dangling), and only when the live word is one of OURS (if the engine already rewrote it, leave it).
+    // Buffers are freed only once no live word points at them (retired, freed at the next teardown, or leaked at dispose).
+    private const int DoodadWord0 = 0x2C0, DoodadWord1 = 0x2C8;
+    private nint baselineScene;
+    private ulong baselineWord0, baselineWord1;
+    private bool baselineValid;
+    private readonly System.Collections.Generic.List<nint> retiredAllocs = new();
+
+    private bool IsOurs(ulong w)
+    {
+        if (w == 0) return false;
+        foreach (var p in coldAllocs) if ((ulong)p == w) return true;
+        foreach (var p in retiredAllocs) if ((ulong)p == w) return true;
+        return false;
+    }
+
+    private unsafe void NoteDoodadBaseline()
+    {
+        try
+        {
+            var env = EnvManager.Instance();
+            if (env == null) return;
+            nint scene = (nint)env->EnvScene;
+            if (baselineValid && baselineScene == scene) return;   // already recorded for this scene
+            nint es = (nint)env + EnvStateOffset;
+            ulong w0 = *(ulong*)(es + DoodadWord0), w1 = *(ulong*)(es + DoodadWord1);
+            if (IsOurs(w0) || IsOurs(w1)) return;   // a leftover of ours is not the scene's own value
+            baselineScene = scene; baselineWord0 = w0; baselineWord1 = w1; baselineValid = true;
+            log.Information($"[HMSync] [WXCRAM] doodad baseline recorded: 0x2C0=0x{w0:X} 0x2C8=0x{w1:X}");
+        }
+        catch (Exception ex) { log.Warning("[HMSync] [WXCRAM] doodad baseline failed: " + ex.Message); }
+    }
+
+    /// <summary>b295: put the scene's own doodad words back where HMS's are still live. Returns true if anything changed.</summary>
+    public unsafe bool RestoreDoodadWords(string why)
+    {
+        bool changed = false;
+        try
+        {
+            var env = EnvManager.Instance();
+            if (env == null) return false;
+            nint scene = (nint)env->EnvScene;
+            nint es = (nint)env + EnvStateOffset;
+            ulong* p0 = (ulong*)(es + DoodadWord0), p1 = (ulong*)(es + DoodadWord1);
+            bool ours0 = IsOurs(*p0), ours1 = IsOurs(*p1);
+            if (!ours0 && !ours1) { FreeUnreferencedAllocs(final: false); return false; }
+            if (!baselineValid || baselineScene != scene)
+            {
+                // Recorded in another scene (or never): writing it back would plant a dangling pointer. Leave the words and
+                // keep our buffers alive (they stay valid memory), so the worst case is a visual leftover, never a crash.
+                log.Warning($"[HMSync] [WXCRAM] {why}: doodad words still ours but no same-scene baseline; leaving them (buffers kept alive).");
+                return false;
+            }
+            if (ours0) { *p0 = baselineWord0; changed = true; }
+            if (ours1) { *p1 = baselineWord1; changed = true; }
+            log.Information($"[HMSync] [WXCRAM] {why}: restored the scene's doodad words (0x2C0=0x{*p0:X} 0x2C8=0x{*p1:X}).");
+            RetireColdAllocs();   // nothing live points at them now; free them at the next teardown (a frame or more later)
+        }
+        catch (Exception ex) { log.Warning("[HMSync] [WXCRAM] doodad restore failed: " + ex.Message); }
+        return changed;
+    }
+
+    /// <summary>b295: called just before the scene unloads (loading screen starts): undo while the baseline is still valid.</summary>
+    public void TeardownForZoneChange()
+    {
+        StopKfGraft();
+        if (ReplayActive) SetReplay(false);   // SetReplay(false) restores the doodad words
+        else RestoreDoodadWords("zone change");
+        baselineValid = false;   // the next scene records its own
+    }
+
+    private void RetireColdAllocs()
+    {
+        retiredAllocs.AddRange(coldAllocs);
+        coldAllocs.Clear();
+    }
+
+    // Free retired buffers that no live doodad word points at. final = dispose: also consider the active set.
+    private unsafe void FreeUnreferencedAllocs(bool final)
+    {
+        if (final) RetireColdAllocs();
+        if (retiredAllocs.Count == 0) return;
+        ulong w0 = 0, w1 = 0;
+        try
+        {
+            var env = EnvManager.Instance();
+            if (env != null) { nint es = (nint)env + EnvStateOffset; w0 = *(ulong*)(es + DoodadWord0); w1 = *(ulong*)(es + DoodadWord1); }
+        }
+        catch { }
+        for (int i = retiredAllocs.Count - 1; i >= 0; i--)
+        {
+            ulong a = (ulong)retiredAllocs[i];
+            if (a == w0 || a == w1) continue;   // still live: keep (leak at dispose rather than free under the engine)
+            try { Marshal.FreeHGlobal(retiredAllocs[i]); } catch { }
+            retiredAllocs.RemoveAt(i);
+        }
+    }
+
     // Toggle post-recompute replay. Enables the hook only while active (like TimeFreezeService) to avoid overhead.
     public string SetReplay(bool? on = null)
     {
         if (hook == null) return "[HMSync] wxreplay: UpdateEnvironment hook unavailable (sig scan failed at ctor).";
         if (captured == null) return "[HMSync] wxreplay: nothing captured — run `wxcapture` first.";
         bool want = on ?? !ReplayActive;
+        if (want && !ReplayActive) NoteDoodadBaseline();   // b295
         ReplayActive = want;
         if (want) loggedTarget = false;
-        SyncHookState();   // b136: keep the hook up if a wxtimescan is still armed even when the cram goes off
+        SyncHookState();
+        if (!want) RestoreDoodadWords("replay off");   // b295: OFF = undo, not just stop (see RestoreDoodadWords)   // b136: keep the hook up if a wxtimescan is still armed even when the cram goes off
         return "[HMSync] wxreplay: " + (want ? "ON" : "OFF") + " (captured weather " + capturedWeather + ").";
     }
 
@@ -2704,7 +2813,8 @@ public sealed unsafe class WeatherCramService : IDisposable
         try { if (cycleActive) StopCycleCram(); } catch { }   // b140: restore the swapped EnvSpace handle + DecRef donor
         try { if (hook is { IsEnabled: true }) hook.Disable(); } catch { }
         hook?.Dispose();
-        FreeColdAllocs();   // b119: hook is down (replay stopped) → no live EnvState word points at these; safe to free
+        try { RestoreDoodadWords("dispose"); } catch { }   // b295: point the scene back at its own doodads before freeing ours
+        FreeUnreferencedAllocs(final: true);   // b295: a buffer the live EnvState still points at is leaked, never freed
         // b130 wxdooddiag: tear down the fault VEH + close the forensic log.
         try { if (vehHandle != 0) { RemoveVectoredExceptionHandler(vehHandle); vehHandle = 0; } } catch { }
         vehDelegate = null;

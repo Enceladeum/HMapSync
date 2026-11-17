@@ -1332,6 +1332,8 @@ public unsafe class MapSettingsService
         try
         {
             if (weatherCram.ReplayActive) weatherCram.SetReplay(false);
+            else weatherCram.RestoreDoodadWords("sanitise");   // b295
+            lastAppliedWeather = 0;
             var env = EnvManager.Instance();
             if (env == null) return;
             var scene = env->EnvScene;
@@ -1787,7 +1789,14 @@ public unsafe class MapSettingsService
         return weatherCram.ApplyBlob(blob, id, doodads, strip: StripDoodadIds.Contains(id));
     }
 
-    public string ClearPreset() => weatherCram.SetReplay(false);
+    public string ClearPreset() => weatherCram.SetReplay(false);   // b295: SetReplay(false) now also restores the scene's doodad words
+
+    /// <summary>b295: undo every weather override while the current scene is still loaded (call before it unloads).</summary>
+    public void TeardownWeatherForZoneChange()
+    {
+        weatherCram.TeardownForZoneChange();
+        lastAppliedWeather = 0;
+    }
 
     // b119 Tier-2 experiment (candidate A): re-establish the captured weather's avfx doodads from self-allocated
     // descriptors and re-point the EnvState words at them, then `wxreplay on` to test whether the game spawns doodads
@@ -2056,8 +2065,55 @@ public unsafe class MapSettingsService
     //   • foreign id WITHOUT a preset → refuse with a redirect (bake one on a donor zone first).
     // Returns a user-facing status string. This is the "same lever" the user asked for: tap any chip / type any id and
     // it just works if it possibly can.
+    // ── b296: a cram or graft starts from the scene's OWN weather ──────────────────────────────────────────────────
+    // Avfx-safe foreign weathers (Apocalypse 150) and dropdown picks move the engine's ActiveWeather, and the engine
+    // plays that weather's particles (meteors, ash, snow) for as long as it stays set. Crams and grafts never touch
+    // ActiveWeather, so a preset tapped after Apocalypse was drawn over a game still running Apocalypse: the meteors
+    // stayed. Record the weather the scene had before HMS first moved it (per EnvScene) and put it back before any
+    // cram/graft. In-bank by construction (it is what the scene itself was running), so the write is the safe native path.
+    private nint ownWeatherScene;
+    private byte ownWeather;
+    private bool hmsMovedActiveWeather;
+
+    private unsafe void NoteSceneOwnWeather()
+    {
+        try
+        {
+            var env = EnvManager.Instance();
+            if (env == null) return;
+            nint scene = (nint)env->EnvScene;
+            if (scene == ownWeatherScene) return;
+            ownWeatherScene = scene; ownWeather = env->ActiveWeather; hmsMovedActiveWeather = false;
+        }
+        catch { }
+    }
+
+    private unsafe void MarkActiveWeatherMoved(byte id)
+    {
+        if (id != ownWeather) hmsMovedActiveWeather = true;
+        else hmsMovedActiveWeather = false;
+    }
+
+    private unsafe void RestoreSceneOwnWeather(string why)
+    {
+        try
+        {
+            if (!hmsMovedActiveWeather) return;
+            var env = EnvManager.Instance();
+            if (env == null || (nint)env->EnvScene != ownWeatherScene) return;   // another scene: its own weather is already in place
+            if (env->ActiveWeather != ownWeather && ownWeather != 0 && IsWeatherInLoadedBank(ownWeather))
+            {
+                env->ActiveWeather = ownWeather;
+                log.Information("[HMSync] [WXCRAM] " + why + ": engine weather back to the scene's own " + ownWeather + " (" + WeatherName(ownWeather) + ") so its particles stop.");
+            }
+            hmsMovedActiveWeather = false;
+        }
+        catch { }
+    }
+
     public string SetWeatherUnified(byte id)
     {
+        NoteSceneOwnWeather();   // b296
         lastAppliedWeather = id;   // b226: record the user's pick for GetDisplayWeather (the DTR readout)
         // b172: ALWAYS drop a running day-night graft before applying ANY explicit weather pick. b170 only stopped the
         // graft on the native branch below, so tapping a non-time-marching FOREIGN chip (which routes through the foreign
@@ -2073,7 +2129,9 @@ public unsafe class MapSettingsService
         if (id == 0 || IsWeatherInLoadedBank(id))
         {
             if (weatherCram.ReplayActive) weatherCram.SetReplay(false);
+            else weatherCram.RestoreDoodadWords("native pick");   // b295: a leftover from an earlier cram is undone too
             bool ok = ApplyWeather(id);
+            if (ok) MarkActiveWeatherMoved(id);   // b296
             if (ok) ArmNativeSkyVerify(id);   // b173: verify the resolved sky; rescue if this in-bank id renders black here
             return ok
                 ? "[HMSync] setweather: " + id + " (" + WeatherName(id) + ") applied natively."
@@ -2089,7 +2147,10 @@ public unsafe class MapSettingsService
         // faithful-copy only survives on proven ids (207 CTD'd the file thread). Unproven doodad weathers fall through
         // to the sky-only cram below (ApplyPreset now nulls doodads for them) — full effects light up per-id as proven.
         if (weatherPresets.HasDoodads(id) && DoodadsAllowedFor(id))
+        {
+            RestoreSceneOwnWeather("preset " + id);   // b296: no native particles from an earlier pick under the cram
             return ApplyPreset(id) + " — full effects (crammed sky + re-established doodads).";
+        }
 
         // Foreign & AVFX-SAFE (b109, allow-listed — e.g. 150 Apocalypse) WITHOUT baked doodads: native-apply for the
         // DOODADS (spawns the weather's avfx), then, if a baked preset exists, arm the sky-only cram restamp OVER it.
@@ -2099,6 +2160,7 @@ public unsafe class MapSettingsService
         if (AvfxSafeWeatherIds.Contains(id))
         {
             bool native = ApplyWeather(id);   // spawn the doodads (meteors)
+            if (native) MarkActiveWeatherMoved(id);   // b296: the next cram/graft puts the scene's own weather back
             if (weatherPresets.Has(id))
             {
                 ApplyPreset(id);              // sky-only restamp over the (off-bank/black) native EnvState
@@ -2112,7 +2174,10 @@ public unsafe class MapSettingsService
                 : "[HMSync] setweather: " + id + " (" + WeatherName(id) + ") — native doodad apply failed and no baked preset (see log).";
         }
         if (weatherPresets.Has(id))
+        {
+            RestoreSceneOwnWeather("preset " + id);   // b296
             return ApplyPreset(id);
+        }
         return "[HMSync] setweather: " + id + " (" + WeatherName(id) + ") is not in this zone's env bank and has no "
             + "baked preset. Stand under it on a donor zone and `wxbake " + id + "`, then it renders here.";
     }
@@ -2128,8 +2193,10 @@ public unsafe class MapSettingsService
     {
         lastAppliedWeather = id;   // b226: record the user's pick for GetDisplayWeather (grafts don't move the engine byte)
         pendingVerifyFrames = 0;   // b173: a chip tap supersedes any in-flight native black-verify (don't let it clobber the graft)
+        NoteSceneOwnWeather();   // b296
         if (id != 0 && keyframeSets.IsTimeMarching(id))
         {
+            RestoreSceneOwnWeather("graft " + id);   // b296
             if (weatherCram.ReplayActive) weatherCram.SetReplay(false);   // graft owns the sky floats — don't let the static cram fight it
             string load = LoadKeyframeSet(id);                            // ImportKeyframes: pins the donor weather + skip-mask
             string on = weatherCram.SetKfReplay(true);                    // start the per-frame day-night graft
@@ -2149,8 +2216,10 @@ public unsafe class MapSettingsService
         if (donor == 0) return SetWeatherOrGraft(id);
         lastAppliedWeather = id;   // b226: record the user's pick for GetDisplayWeather (city grafts don't move the engine byte)
         pendingVerifyFrames = 0;   // a chip tap supersedes any in-flight native black-verify
+        NoteSceneOwnWeather();   // b296
         if (id != 0 && keyframeSets.IsTimeMarching(id, donor))
         {
+            RestoreSceneOwnWeather("graft " + id);   // b296
             if (weatherCram.ReplayActive) weatherCram.SetReplay(false);   // graft owns the sky floats — don't let static cram fight it
             string load = LoadKeyframeSet(id, donor);                     // ImportKeyframes: pins the donor's day-set + skip-mask
             string on = weatherCram.SetKfReplay(true);                    // start the per-frame day-night graft
@@ -2172,11 +2241,14 @@ public unsafe class MapSettingsService
     {
         lastAppliedWeather = id;   // b226: record the user's pick for GetDisplayWeather (native picks also move the engine byte, but keep it consistent)
         if (weatherCram.ReplayActive) weatherCram.SetReplay(false);   // never let a promoted state ride on a restamp
+        else weatherCram.RestoreDoodadWords("native pick");           // b295: undo a leftover from an earlier cram
+        NoteSceneOwnWeather();   // b296
         weatherCram.StopKfGraft();   // b170: and never let it ride under a running day-night graft either
         pendingVerifyFrames = 0;     // b173: supersede any in-flight native black-verify from a prior pick
         if (id != 0 && !IsWeatherInLoadedBank(id))
             return "[HMSync] setweather: " + id + " (" + WeatherName(id) + ") is no longer in this zone's env bank — skipped (no cram).";
         bool ok = ApplyWeather(id);
+        if (ok) MarkActiveWeatherMoved(id);   // b296
         if (ok) ArmNativeSkyVerify(id);   // b173: catch the in-bank-but-black case and rescue it with a good sky
         return ok
             ? "[HMSync] setweather: " + id + " (" + WeatherName(id) + ") applied natively."
@@ -3022,6 +3094,7 @@ public unsafe class MapSettingsService
             s0->PreviousBgmId = (ushort)bgmId;          // 0x10
             if (bgmId == 0)
                 *(uint*)((nint)s0 + 0x04) = 0x02;       // Flags = Resume - cancel playback
+            EnsureScene0Playing(s0, "play " + bgmId);   // b299
             return true;
         }
         catch (Exception ex)
@@ -3054,6 +3127,7 @@ public unsafe class MapSettingsService
             s0->BgmId = (ushort)SilenceTrackBgm;
             s0->PlayingBgmId = (ushort)SilenceTrackBgm;
             s0->PreviousBgmId = (ushort)SilenceTrackBgm;
+            EnsureScene0Playing(s0, "orchestrion silence pin");   // b299
         }
 
         StopOrchestrionStream();                         // stop any previous roll before starting the next
@@ -3070,6 +3144,17 @@ public unsafe class MapSettingsService
         if (orchestrionSound == null) { log.Warning("[HMSync] [BGM-PLAY] PlayOrchestrionSound returned null for " + path); return false; }
         currentOrchestrionSel = selection;
         return true;
+    }
+
+    // b299: on some maps (TT 922 The Seat of Sacrifice) scene 0 arrives PAUSED. The game ignores the ids written into
+    // a paused scene, so Play, Stop and Reset did nothing there. Setting the scene to Playing alongside the id write
+    // made all three work in game (b298 test). Harmless where the scene is already Playing.
+    private unsafe void EnsureScene0Playing(FFXIVClientStructs.FFXIV.Client.Game.BGMSystem.Scene* s0, string why)
+    {
+        if (s0->PlayState == FFXIVClientStructs.FFXIV.Client.Game.BGMSystem.PlayState.Playing) return;
+        var before = s0->PlayState;
+        s0->PlayState = FFXIVClientStructs.FFXIV.Client.Game.BGMSystem.PlayState.Playing;
+        log.Information("[HMSync] [BGM-PLAY] " + why + ": scene 0 was " + before + ", set to Playing so the track takes effect.");
     }
 
     private unsafe void StopOrchestrionStream()

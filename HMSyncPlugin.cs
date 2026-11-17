@@ -828,6 +828,15 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // change has no such seam, so a stuck dark donor sky would ride into the new map. Poll clientState.TerritoryType
         // and drop any active replay the moment the real zone changes. Cram is never auto-armed on load (manual/chip
         // only), so clearing here can only prevent a stale override, never cancel an intended one.
+        // b295: undo weather overrides at the START of a real zone change (loading screen), while the old scene and the
+        // baseline recorded in it are still valid. The territory poll below only sees the change after the new scene exists.
+        unsafe
+        {
+            var cond = FFXIVClientStructs.FFXIV.Client.Game.Conditions.Instance();
+            bool between = cond != null && cond->BetweenAreas;
+            if (between && !wasBetweenAreas) mapSettings.TeardownWeatherForZoneChange();
+            wasBetweenAreas = between;
+        }
         {
             uint ttNow = clientState.TerritoryType;
             if (ttNow != lastCramTerritory)
@@ -1090,6 +1099,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
     private uint lastAppliedPeerBgm;   // S327g: guest-side last-applied BGM id (idempotent apply - don't restart music every epoch bump)
     private int lastAppliedPeerWeather = -1;   // b184: guest-side last-applied (weather,donor) — idempotent graft engage so a host time-drag
     private uint lastAppliedPeerDonor = uint.MaxValue;   //       (epoch bump every frame) doesn't re-import the keyframe set / restart the graft each frame
+    private bool wasBetweenAreas;   // b295: rising edge = a real zone change is starting
     private uint lastCramTerritory = uint.MaxValue;   // b105: last-seen real TerritoryType, for the weather-cram auto-disarm on zone change
     private bool wasLoggedIn;   // b113: prior-frame login state, for the session-end weather sanitise on logout
     private bool filterDropHandled;   // S326h: latch so the packet-filter-drop emergency return fires once
@@ -2337,6 +2347,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // change. The restamp hook keeps stamping the captured donor block every frame regardless of zone, so without
         // this the new map loads under the old zone's crammed sky (user report: "not cleared by map change"). Stop the
         // replay on load; the new zone's native recompute then owns the sky. (No-op if nothing was replaying.)
+        mapSettings.TeardownWeatherForZoneChange();   // b295: undo the cram while the departing scene is still loaded
         mapSettings.ClearPreset();
         // b171: the b170 keyframe day-night GRAFT is a SEPARATE per-frame override from the static cram above — ClearPreset
         // only stops ReplayActive (the static restamp), not kfActive (the day-night graft). Like the static cram, the graft
@@ -2453,6 +2464,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         packetFilter.PassSayChatOut = false; // S328k: stop passing outbound chat once the session ends
         relay.SoloMode = false;              // S328f: clear solo flag on any teardown (stop/leave/crash all route here)
         mapSettings.DisableTimeOverride();   // S326v: never leave the player's clock frozen after a session ends
+        mapSettings.TeardownWeatherForZoneChange();   // b295: undo (not just stop) any cram BEFORE the return reload below
         mapSettings.ToggleWxReplay(false);   // WEATHER-CRAM b97: never leave a crammed foreign sky replaying after a session ends
         // b156 AMBIENT-BLEED FIX: the handle-swap crams (wxcyclecram/wxskyswap/wxambswap/wxstarforce, incl. wxcity) are held
         // per-frame by their Tick* holders and are NOT covered by ToggleWxReplay above (that's the OLD b97 restamp cram, a

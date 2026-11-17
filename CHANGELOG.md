@@ -5,6 +5,13 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.9.1] - 2026-11-17
+
+### Fixed
+
+- **Weather controls agree with each other.** Switching weather after an extra preset (from the dropdown, another preset or the default) now gives exactly the new weather, with no leftover tint or particles. A preset no longer follows you out of a session, into a newly loaded map or across a zone change, and Apocalypse's meteors and ash no longer linger under a later preset. The weather dropdown now shows the weather actually applied, including extra presets, marked "(extra)".
+- **Music controls work on every map.** On some maps (for example The Seat of Sacrifice), picking a track, Stop and Reset did nothing. They now work there too.
+
 ## [1.0.9.0] - 2026-11-16
 
 ### Added

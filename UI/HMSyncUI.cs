@@ -1684,10 +1684,15 @@ public class HMSyncUI
         // always matches the sky - even the map's natural weather on load, which the host never explicitly picked.
         // Picking applies LIVE (ApplyWeather writes EnvManager directly). "None - Atmospheric" (0) is a synthetic forced
         // blank the host can choose; it only reads as the selected row when the live weather is actually 0.
-        byte liveW = MapSettings.GetActiveWeather();
-        byte curW = liveW;   // the dropdown mirrors reality, not a stored preference
+        // b295: one truth for every control. GetDisplayWeather = the pick HMS is applying (an extra preset or graft while it
+        // runs), else the engine's weather; the DTR readout uses the same. Before b295 the dropdown showed the engine byte,
+        // which a preset never moves, so it read "Blizzards" under an Annealing Winds sky.
+        byte curW = MapSettings.GetDisplayWeather();
+        bool curIsMapWeather = curW == 0 || curW == mapDefaultWeather || MapSettings.IsWeatherInLoadedBank(curW)
+            || (mapWeatherChoices != null && mapWeatherChoices.Exists(c => c.Item1 == curW));
         string curWName = curW == 0 ? "None - Atmospheric"
-            : (curW == mapDefaultWeather ? MapSettings.WeatherName(curW) + " (native)" : MapSettings.WeatherName(curW));
+            : curW == mapDefaultWeather ? MapSettings.WeatherName(curW) + " (native)"
+            : MapSettings.WeatherName(curW) + (curIsMapWeather ? "" : " (extra)");
         ImGui.TextDisabled("Weather");
         ImGui.SetNextItemWidth(-PanelPad);
         // v0.7.474: HeightLarge. The default combo popup is ~8 rows; 958 has 9 legal weathers once CutScene is

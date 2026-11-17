@@ -378,7 +378,7 @@ public class StateApplyService : IDisposable
             info.WpnStableFrames = 0; info.WpnLastDrawn = "";
             LoadWeaponOverride(character, main, off);
             info.WpnActive = true;
-            log.Debug("[HMSync] Weapon override on " + info.CharacterName + ": main 0x" + main.ToString("X") + " off 0x" + off.ToString("X"));
+            log.Information("[HMSync] Weapon override on " + info.CharacterName + ": main 0x" + main.ToString("X") + " off 0x" + off.ToString("X"));
             return;
         }
         if (!want) return;
@@ -389,7 +389,7 @@ public class StateApplyService : IDisposable
         if (++info.WpnStableFrames != WpnSettleFrames) return;
         if (WeaponOverrideDrawn(character, main, off) || !WeaponSettled(character, main)) return;
         LoadWeaponOverride(character, main, off);
-        log.Debug("[HMSync] Weapon override re-applied on " + info.CharacterName + " (drawn was " + drawn + ")");
+        log.Information("[HMSync] Weapon override re-applied on " + info.CharacterName + " (drawn was " + drawn + ")");
     }
 
     private unsafe void RestoreWeaponOverride(Character* character, PeerInfo info)
@@ -399,7 +399,7 @@ public class StateApplyService : IDisposable
             var dd = &character->DrawData;
             dd->LoadWeapon(DrawDataContainer.WeaponSlot.MainHand, dd->Weapon(DrawDataContainer.WeaponSlot.MainHand).ModelId, 1, 0, 1, 0, false);
             dd->LoadWeapon(DrawDataContainer.WeaponSlot.OffHand, dd->Weapon(DrawDataContainer.WeaponSlot.OffHand).ModelId, 1, 0, 1, 0, false);
-            log.Debug("[HMSync] Weapon override cleared on " + info.CharacterName + " (stored weapon reloaded)");
+            log.Information("[HMSync] Weapon override cleared on " + info.CharacterName + " (stored weapon reloaded)");
         }
         info.WpnActive = false; info.WpnMain = 0; info.WpnOff = 0; info.WpnLastDrawn = ""; info.WpnStableFrames = 0;
     }
