@@ -5,6 +5,18 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0.0] - 2026-11-18
+
+### Added
+
+- **Alexandria (old town, no neon).** A new entry under Alexandria: the medieval town without its purple neon or the holographic sky dome, with Empyreum lamps in place of the neon lamps. Like The For'ard Cabins, it is its own pick and the plain Alexandria load is unchanged.
+
+### Fixed
+
+- **Trial and raid arenas no longer flicker.** Arenas loaded through HMS used to draw every phase of the fight at once, so overlapping floors flickered. Thirteen arenas (about 30 territories, including The Seat of Sacrifice) now show one clean floor.
+- **Arenas that depend on their weather load with it.** Some arenas (for example The Crown of the Immaculate) kept the previous zone's sky and were missing parts of their geometry until the weather changed. They now load with their own weather.
+- **Spawn points.** You no longer arrive under The Limitless Blue's island, in the hole in Sigmascape V4.0's arena ring, or beside the ship deck in Vault Oneiron.
+
 ## [1.0.9.1] - 2026-11-17
 
 ### Fixed

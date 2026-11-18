@@ -335,6 +335,18 @@ public unsafe class ZoneLoadService : IDisposable
         // in a small snow mound at the entrance - the true collision surface is Y=0.3 (the char
         // reasserts to 0.3 on first movement). Curate it so you spawn ON the pile, not in it.
         { 1345, new Vector3(-805.0f, 0.3f, 864.1f) },
+        // b300: 436/447 The Limitless Blue (a2fa). planevent.lgb is empty and every planmap PopRange sits at Y=-99 (the
+        // fight's lower phase), so the resolver dropped you under the clouds. The island stage (sgbg_a2fa_a1_stag1, the
+        // a2fa_t1_stg2a top) is at Y~0.0 over the origin (offline surface probe), so spawn on it.
+        { 436,  new Vector3(0.0f, 0.3f, 0.0f) },
+        { 447,  new Vector3(0.0f, 0.3f, 0.0f) },
+        // b305: 751/755 Sigmascape V4.0 (z3oa). Every planmap marker sits at the origin, which is the HOLE in the arena's
+        // floor ring (z3oa_a0_flo*, Y=0, solid from ~8 m out; offline probe), so the player fell through. On the ring.
+        { 751,  new Vector3(0.0f, 0.3f, 10.0f) },
+        { 755,  new Vector3(0.0f, 0.3f, 10.0f) },
+        // b305: 1279 Vault Oneiron (x6c1). Spawned beside / under the starting platform; the platform is the ship deck
+        // (sgbg_x6c1_p0_stg01 > x6c1_p*_shp01, Y=0.0 across (100, 85..115)). Centre of the deck.
+        { 1279, new Vector3(100.0f, 0.3f, 100.0f) },
         // v0.7.236: flagship / art hand-curates (coords supplied by V in GUI X,Z,Y order → stored X,Y,Z here).
         // v0.7.240: 670 reset to resolver default (the fringes were the wrong map). The royal airship landing is 679.
         { 679,  new Vector3(0.0f, -380.0f, 0.0f) },      // royal airship landing platform - X/Z both 0, Y -380
@@ -355,7 +367,8 @@ public unsafe class ZoneLoadService : IDisposable
         { 774,  new Vector3(244.0f, 0.0f, -181.0f) },     // HoH floor
         { 783,  new Vector3(-300.0f, 0.100f, -300.0f) },  // HoH floor
         // v1.0.0 post-release curates (coords supplied X,Y,Z):
-        { 1279, new Vector3(0.0f, 0.0f, 100.0f) },        // curated spawn
+        // b306: the old 1279 entry (0, 0, 100) was off the ship deck (deck centre is X=100); superseded by the b305 entry above
+        // (a second key here threw in the ctor: b305 failed to load).
         { 389,  new Vector3(476.0f, 16.4f, 449.2f) },     // curated spawn
         // NB-6: Bayside Battleground (PvP). Resolver spot was poor; fast+reliable hardcode beats the smarter
         // LGB alt-spawn read here. Centre-ish flat ground.
@@ -2912,8 +2925,33 @@ public unsafe class ZoneLoadService : IDisposable
     // NB-34/NB-35: a per-venue coplanar STATE the poll suppresses. Assets = GetPrimaryPath substrings; IdRanges = inclusive
     // InstanceKey (==LGB InstanceId) bands. Name is the state SHOWN (we HIDE the twin), used by the `hms stagestate`
     // toggle. A venue with ONE state (x6e6) is a fixed de-flicker; a venue with TWO+ is a togglable A/B (e3e4, u5e2).
-    private sealed record StageHideState(string Name, string[] Assets, (uint Lo, uint Hi)[] IdRanges);
+    // b301: SgChildren = pieces INSIDE a gimmick SharedGroup, by SGB-local instance id. A gimmick floor holds every phase
+    // twin as a child and its states (SGB timelines) toggle them; with no director none plays, so all twins draw. Live
+    // children carry SubId == localId << 24 (b300 test on 922: 3<<24, 12<<24, 4<<24, 13<<24), so the SGB file id
+    // addresses a child exactly, whatever its model (810 reuses kogm4 in two states).
+    private sealed record StageHideState(string Name, string[] Assets, (uint Lo, uint Hi)[] IdRanges, (string Sg, uint[] Ids)[]? SgChildren = null);
+    private static readonly (string, uint[])[] NoSgChildren = System.Array.Empty<(string, uint[])>();
     private static readonly (uint, uint)[] NoIds = System.Array.Empty<(uint, uint)>();
+    private static readonly string[] NoAssets = System.Array.Empty<string>();
+    // b302: x6fb realm layers by LGB InstanceId (event 10857496-10857502 always; a3 = bg_a03, a4 = bg_a02, a6 = bg_a06).
+    private static (uint, uint)[] X6fbHide(bool a3, bool a4, bool a6layer)
+    {
+        var r = new List<(uint, uint)> { (10857496u, 10857502u) };
+        if (a3) { r.Add((10320020u, 10320020u)); r.Add((10637873u, 10637874u)); r.Add((10745756u, 10745756u)); }
+        if (a4) { r.Add((10320019u, 10320019u)); r.Add((10637875u, 10637876u)); }
+        if (a6layer) r.Add((10745761u, 10745761u));
+        return r.ToArray();
+    }
+    // b302: e3fd moon floor (sgbg_e3fd_a2_bsg01: 1 bsg02 on, 2 bsg04 full, 3 bsg05 half, 4 bsg06 quarter, 5 bsg07 3quarter,
+    // 16 bsg03 new; switched by C104 keys) and sky moon (sgbg_e3fd_a2_mon01: 3 mon02 on, 2 mon01 full, 5 mon04 half,
+    // 6 mon05 quarter, 7 mon06 3quarter, 4 mon03 new; C019 keys). A state keeps one floor + its matching moon.
+    private static (string, uint[])[] E3fdMoon(uint floorKeep, uint moonKeep) => new[]
+    {
+        ("sgbg_e3fd_a2_bsg01", new uint[] { 1, 2, 3, 4, 5, 16 }.Where(i => i != floorKeep).ToArray()),
+        ("sgbg_e3fd_a2_mon01", new uint[] { 2, 3, 4, 5, 6, 7 }.Where(i => i != moonKeep).ToArray()),
+    };
+    // stage 1 (castle) floor pieces drawn over the stage-2 moon field: flr1, flr2 (layer e3fd_stage1_boss01) + p1_flo01 SGB.
+    private static readonly (uint, uint)[] E3fdStage1 = { (7327719u, 7327719u), (7352835u, 7352835u), (7393493u, 7393493u) };
     // Keyed by Stage.Bg (== ActiveStageBg for a swap venue). states[0] is the DEFAULT applied on load; each state HIDES the
     // twin(s) so the named state is the one left standing. Ground truth is the offline LGB (xivtool `lgb <bgpath>`).
     private static readonly Dictionary<string, StageHideState[]> StageHideStates = new(StringComparer.Ordinal)
@@ -2948,6 +2986,166 @@ public unsafe class ZoneLoadService : IDisposable
                 new[] { "u5e1_a1_lsa02", "u5e1_a2_lsa03", "u5e1_a2_flor1", "u5e1_a0_gmc01" }, NoIds),
             new StageHideState("battle",
                 new[] { "u5e1_a1_flor1" }, NoIds),
+        },
+        // b300: TRIAL/RAID ARENAS loaded directly by territory (no encounter director). The director normally shows one
+        // phase's floor at a time; without it every phase layer draws and the coplanar floors z-fight (the "race" flicker:
+        // which twin wins depends on stream-in order, so it can look clean on one load and flicker on the next). Keyed by
+        // TerritoryType.Bg (ApplyStageHide now falls back to it on a plain load). Offline-derived: scratchpad coplanar
+        // analyzer (same-plane horizontal triangles shared by two instances) over the LGB. states[0] = the opening phase.
+        // k5fa The Mothercrystal (995/996/1030): Phase1 (a1_stg02/03/11) vs Phase3 (a3_stg02, a2_stg01, a1_stg03 twin)
+        // vs phase4 (a3_stg01): 8891 coplanar cells Phase1/Phase3 at y=-1.31, more at y=-0.05.
+        ["ex4/03_kld_k5/fld/k5fa/level/k5fa"] = new[]
+        {
+            // b301: + 8944346, a second sgbg_k5fa_a1_cry1a placed at exactly the same transform as 8799443 (the residual
+            // "fainter shimmer": the crystal drawn twice). Hidden in every state.
+            new StageHideState("phase1", NoAssets, new[] { (8775249u, 8775249u), (8802248u, 8802248u), (8860635u, 8860635u), (8799508u, 8799508u), (8944346u, 8944346u) }),
+            new StageHideState("phase3", NoAssets, new[] { (8799423u, 8799423u), (8799442u, 8799442u), (8873245u, 8873245u), (8799508u, 8799508u), (8944346u, 8944346u) }),
+            new StageHideState("phase4", NoAssets, new[] { (8799423u, 8799423u), (8799442u, 8799442u), (8873245u, 8873245u), (8775249u, 8775249u), (8802248u, 8802248u), (8860635u, 8860635u), (8944346u, 8944346u) }),
+        },
+        // z5fc The Abyssal Fracture (1168/1169/1181): arena floor arf00 (bg_a01) vs arf02 (bg_cd01) vs a second arf00
+        // (cut_a01) vs arf04 (bg_b01): 3642 coplanar cells at y=-0.01.
+        ["ex4/05_zon_z5/fld/z5fc/level/z5fc"] = new[]
+        {
+            new StageHideState("a", NoAssets, new[] { (10075450u, 10075450u), (10101269u, 10101269u), (10077764u, 10077764u) }),
+            new StageHideState("cd", NoAssets, new[] { (10068503u, 10068503u), (10101269u, 10101269u), (10077764u, 10077764u) }),
+        },
+        // x6fb The Interphos (1202/1221): the x6fb_event layer (10857496..10857502: stage a1_stg01-03 + the u1_emv01/03
+        // backdrop) duplicates the gimmick SGBs' own stage and backdrop (76k / 42k / 4k coplanar cells). Hide the event copy.
+        // x6fb The Interphos (1202/1221), b302: a REALM-SWITCHING arena. Five complete stage sets sit on the same planes:
+        // a1 (x6fb_event layer + gimmick sgbg_x6fb_a0_gmc01 child 2 gmc1a + children 14-16 stg1l/c/r), a3 (layer bg_a03),
+        // a4 (layer bg_a02), a5 (gmc01 child 12 gmc1b), a6 (gmc01 child 13 gmc1c + layer bg_a06). The fight swaps realms; a
+        // director-less load draws all five (b300/b301 in game: the brick wall flashing grey/red and "rearranging its bricks",
+        // the circuitry floor cycling). Offline wall + floor scans: every realm pair overlaps (a4/a1 446 cells on the floor,
+        // a3/a1 305, a5/a6 2554 on the walls). One realm per state; the event layer's stage + backdrop duplicate gmc1a and the
+        // gmc02 backdrop exactly, so it is hidden in every state.
+        ["ex5/01_xkt_x6/fld/x6fb/level/x6fb"] = new[]
+        {
+            new StageHideState("a1", NoAssets, X6fbHide(a3: true, a4: true, a6layer: true), new[] { ("sgbg_x6fb_a0_gmc01", new uint[] { 12, 13 }) }),
+            new StageHideState("a3", NoAssets, X6fbHide(a3: false, a4: true, a6layer: true), new[] { ("sgbg_x6fb_a0_gmc01", new uint[] { 2, 12, 13, 14, 15, 16 }) }),
+            new StageHideState("a4", NoAssets, X6fbHide(a3: true, a4: false, a6layer: true), new[] { ("sgbg_x6fb_a0_gmc01", new uint[] { 2, 12, 13, 14, 15, 16 }) }),
+            new StageHideState("a5", NoAssets, X6fbHide(a3: true, a4: true, a6layer: true), new[] { ("sgbg_x6fb_a0_gmc01", new uint[] { 2, 13, 14, 15, 16 }) }),
+            new StageHideState("a6", NoAssets, X6fbHide(a3: true, a4: true, a6layer: false), new[] { ("sgbg_x6fb_a0_gmc01", new uint[] { 2, 12, 14, 15, 16 }) }),
+        },
+        // b303: RAIDS, generated by scratchpad genstates.py (opening state per gimmick SGB, nested included; see
+        // docs/Trial-Arena-Floors.md). 942 Sphere of Naught, 1008 The Sanguine Limbo, 1087 Stygian Insenescence Cells.
+        // "raw" = nothing hidden, for in-game comparison.
+        // ex3/01_nvt_n4/goe/n4g9/level/n4g9: GENERATED by genstates.py (opening state per gimmick SGB)
+        ["ex3/01_nvt_n4/goe/n4g9/level/n4g9"] = new[]
+        {
+            new StageHideState("auto", NoAssets, NoIds, new[]
+            {
+                ("sgbg_n4g9_a0_gmc01", new uint[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 33, 37, 52, 53 }),   // stg_def_on: sgbg_n4g9_a2_ivy11.sgb, sgbg_n4g9_a2_ivy12.sgb, sgbg_n4g9_a2_ivy13.sgb, sgbg_n4g9_a2_ivy14.sgb, sgbg_n4g9_a2_ivy15.sgb, 
+                ("sgbg_n4g9_a3_stg03", new uint[] { 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 82, 83, 84, 85, 86, 87, 88, 89, 91, 92, 93, 94 }),   // stg_dark2_on: sgbg_n4g9_a3_flo00.sgb, sgbg_n4g9_a3_rub01.sgb
+            }),
+            new StageHideState("raw", NoAssets, NoIds),
+        },
+        // ex4/01_nvt_n5/rad/n5r4/level/n5r4: GENERATED by genstates.py (opening state per gimmick SGB)
+        ["ex4/01_nvt_n5/rad/n5r4/level/n5r4"] = new[]
+        {
+            new StageHideState("auto", NoAssets, NoIds, new[]
+            {
+                ("sgbg_n5r4_a1_gmc02", new uint[] { 2 }),   // around_def: sgbg_n5r4_a1_act02.sgb
+                ("sgbg_n5r4_a1_act01", new uint[] { 138 }),   // befor_: sgbg_n5r4_a1_lsf99.sgb
+                ("sgbg_n5r4_a1_tra01", new uint[] { 1, 2, 3, 4 }),   // befor: n5r4_a1_tra11.mdl, n5r4_a1_tra12.mdl, n5r4_a1_tra21.mdl, n5r4_a1_tra22.mdl
+                // b305: the four hazard SGBs open in their *_off state (all three plates + the base gmcX0 hidden). b303 chose
+                // *_on0 by name; those plates sit ~5 cm over the floor, the "aggressive water-like shimmer" the user saw.
+                ("sgbg_n5r4_a1_gmc03", new uint[] { 1, 2, 3, 24 }),   // lava_off
+                ("sgbg_n5r4_a1_gmc04", new uint[] { 1, 2, 3, 24 }),   // thunder_off
+                ("sgbg_n5r4_a1_gmc05", new uint[] { 1, 2, 3, 24 }),   // poison_off
+                ("sgbg_n5r4_a1_gmc06", new uint[] { 1, 2, 3, 27 }),   // fountain_off   // fountain_on0: sgbg_n5r4_a1_gmc62.sgb, sgbg_n5r4_a1_gmc63.sgb
+            }),
+            new StageHideState("raw", NoAssets, NoIds),
+        },
+        // ex4/01_nvt_n5/rad/n5r8/level/n5r8: GENERATED by genstates.py (opening state per gimmick SGB)
+        ["ex4/01_nvt_n5/rad/n5r8/level/n5r8"] = new[]
+        {
+            new StageHideState("auto", NoAssets, NoIds, new[]
+            {
+                ("sgbg_n5r8_a1_gmc09", new uint[] { 8 }),   // stage_before_on: sgbg_n5r8_a1_lig00.sgb
+                ("sgbg_n5r8_a1_act02", new uint[] { 2, 3, 8, 11 }),   // stage_before_on_: n5r8_a2_flo01.mdl, sgbg_n5r8_a0_flo01.sgb, sgbg_n5r8_a2_lig00.sgb, sgbg_n5r8_a2_zon10.sgb
+                ("sgbg_n5r8_a1_act12", new uint[] { 1, 2 }),   // stage_before_on_3: n5r8_a2_zon01.mdl, sgbg_n5r8_a2_zon00.sgb
+            }),
+            new StageHideState("raw", NoAssets, NoIds),
+        },
+        // b304: TREASURE DUNGEON roll variants (1123 The Shifting Gymnasion Agonon). Each room is authored as normal (a),
+        // rich1 (b), rich2 (c) and end (d) layer sets on the same planes; the live game draws the rolled one, a director-less
+        // load draws all four (user: "a bad flicker of the outlying elements"). Generated by scratchpad genvariants.py from
+        // the layer-name code; default = normal. Same scheme in 924 (n4c2) and 794 (o3c2), not added: 924 tested fine.
+        // n5c1: GENERATED by genvariants.py. Variant layers: a(269), abc(24), abcd(225), b(279), bc(11), c(319)
+        ["ex4/01_nvt_n5/cnt/n5c1/level/n5c1"] = new[]
+        {
+            new StageHideState("normal", NoAssets, new[] { (9414241u, 9414241u), (9414274u, 9414274u), (9422683u, 9422685u), (9442034u, 9442037u), (9442143u, 9442144u), (9442193u, 9442194u), (9442198u, 9442199u), (9442211u, 9442213u), (9442217u, 9442217u), (9442221u, 9442223u), (9442234u, 9442235u), (9442238u, 9442239u), (9442254u, 9442255u), (9442260u, 9442260u), (9442267u, 9442267u), (9442277u, 9442277u), (9442281u, 9442281u), (9442283u, 9442283u), (9442285u, 9442285u), (9442290u, 9442290u), (9442293u, 9442293u), (9442295u, 9442295u), (9442297u, 9442297u), (9442300u, 9442300u), (9442302u, 9442303u), (9442306u, 9442306u), (9442309u, 9442309u), (9442311u, 9442311u), (9442319u, 9442319u), (9442321u, 9442326u), (9442328u, 9442329u), (9442331u, 9442333u), (9442337u, 9442338u), (9442343u, 9442346u), (9442348u, 9442348u), (9442350u, 9442364u), (9442368u, 9442369u), (9442382u, 9442383u), (9442385u, 9442392u), (9442394u, 9442396u), (9442398u, 9442400u), (9442402u, 9442402u), (9442404u, 9442405u), (9442407u, 9442407u), (9442409u, 9442410u), (9442412u, 9442415u), (9442424u, 9442424u), (9442426u, 9442427u), (9442431u, 9442438u), (9442440u, 9442441u), (9442972u, 9442972u), (9443556u, 9443560u), (9443562u, 9443563u), (9443566u, 9443567u), (9443574u, 9443575u), (9443578u, 9443578u), (9443583u, 9443584u), (9443586u, 9443589u), (9443592u, 9443592u), (9443595u, 9443595u), (9443598u, 9443598u), (9443605u, 9443605u), (9443610u, 9443610u), (9443614u, 9443614u), (9443621u, 9443621u), (9443623u, 9443639u), (9443641u, 9443661u), (9443666u, 9443678u), (9443680u, 9443694u), (9443696u, 9443699u), (9443701u, 9443713u), (9443718u, 9443734u), (9443897u, 9443905u), (9443907u, 9443913u), (9443916u, 9443916u), (9443922u, 9443928u), (9443930u, 9443931u), (9443933u, 9443934u), (9443936u, 9443937u), (9443939u, 9443939u), (9443941u, 9443943u), (9443947u, 9443947u), (9443952u, 9443953u), (9443956u, 9443958u), (9443963u, 9443964u), (9443966u, 9443967u), (9443973u, 9443974u), (9443978u, 9443978u), (9443982u, 9443982u), (9444762u, 9444765u), (9444767u, 9444767u), (9444769u, 9444775u), (9444779u, 9444787u), (9444789u, 9444801u), (9444803u, 9444805u), (9444810u, 9444812u), (9444815u, 9444815u), (9444817u, 9444819u), (9444821u, 9444822u), (9444839u, 9444850u), (9444853u, 9444866u), (9444899u, 9444906u), (9445285u, 9445285u), (9445672u, 9445672u), (9445677u, 9445677u), (9445684u, 9445685u), (9445689u, 9445691u), (9445694u, 9445695u), (9445698u, 9445698u), (9445742u, 9445742u), (9445746u, 9445746u), (9453892u, 9453894u), (9453896u, 9453896u), (9564027u, 9564027u), (9564389u, 9564400u), (9564406u, 9564406u), (9564452u, 9564457u), (9565044u, 9565048u), (9566196u, 9566196u), (9576537u, 9576560u), (9576753u, 9576758u), (9577380u, 9577380u), (9595611u, 9595612u), (9595619u, 9595640u), (9596611u, 9596634u), (9602422u, 9602426u), (9602451u, 9602463u), (9611038u, 9611038u), (9611514u, 9611514u), (9611546u, 9611546u), (9611619u, 9611620u), (9612026u, 9612027u), (9612029u, 9612038u), (9612040u, 9612047u), (9612266u, 9612277u), (9614641u, 9614647u), (9614649u, 9614654u), (9614717u, 9614727u), (9615746u, 9615751u), (9616627u, 9616631u), (9616676u, 9616699u) }),
+            new StageHideState("rich1", NoAssets, new[] { (9414181u, 9414181u), (9414274u, 9414274u), (9427438u, 9427449u), (9431604u, 9431604u), (9431614u, 9431615u), (9431617u, 9431617u), (9431636u, 9431644u), (9431646u, 9431646u), (9431648u, 9431652u), (9431654u, 9431655u), (9431658u, 9431658u), (9431660u, 9431660u), (9431662u, 9431666u), (9431668u, 9431668u), (9431671u, 9431677u), (9431680u, 9431683u), (9431685u, 9431686u), (9431688u, 9431688u), (9431691u, 9431691u), (9431693u, 9431693u), (9431699u, 9431699u), (9431710u, 9431711u), (9431713u, 9431718u), (9431726u, 9431726u), (9431734u, 9431735u), (9431743u, 9431743u), (9431752u, 9431752u), (9431757u, 9431759u), (9431766u, 9431769u), (9431779u, 9431780u), (9431782u, 9431782u), (9431794u, 9431794u), (9431809u, 9431810u), (9431826u, 9431826u), (9431839u, 9431841u), (9431844u, 9431850u), (9431864u, 9431864u), (9431870u, 9431870u), (9431879u, 9431879u), (9431903u, 9431906u), (9431909u, 9431911u), (9431920u, 9431920u), (9431923u, 9431925u), (9431934u, 9431935u), (9431939u, 9431941u), (9431949u, 9431950u), (9431952u, 9431952u), (9431954u, 9431954u), (9431960u, 9431962u), (9431967u, 9431970u), (9431973u, 9431973u), (9431993u, 9431993u), (9431998u, 9431998u), (9432000u, 9432000u), (9432010u, 9432010u), (9432017u, 9432017u), (9442034u, 9442037u), (9442143u, 9442144u), (9443556u, 9443560u), (9443562u, 9443563u), (9443566u, 9443567u), (9443574u, 9443575u), (9443578u, 9443578u), (9443583u, 9443584u), (9443586u, 9443589u), (9443592u, 9443592u), (9443595u, 9443595u), (9443598u, 9443598u), (9443605u, 9443605u), (9443610u, 9443610u), (9443614u, 9443614u), (9443621u, 9443621u), (9443623u, 9443639u), (9443641u, 9443661u), (9443666u, 9443678u), (9443680u, 9443694u), (9443696u, 9443699u), (9443701u, 9443713u), (9443718u, 9443734u), (9443860u, 9443860u), (9444762u, 9444765u), (9444767u, 9444767u), (9444769u, 9444775u), (9444779u, 9444787u), (9444789u, 9444801u), (9444803u, 9444805u), (9444810u, 9444812u), (9444815u, 9444815u), (9444817u, 9444819u), (9444821u, 9444822u), (9444839u, 9444850u), (9444899u, 9444906u), (9445285u, 9445285u), (9445672u, 9445672u), (9445677u, 9445677u), (9445684u, 9445685u), (9445689u, 9445691u), (9445694u, 9445695u), (9445698u, 9445698u), (9445742u, 9445742u), (9445746u, 9445746u), (9453892u, 9453894u), (9453896u, 9453896u), (9551792u, 9551792u), (9552971u, 9552993u), (9552995u, 9552996u), (9552998u, 9552998u), (9553000u, 9553005u), (9553007u, 9553011u), (9553013u, 9553018u), (9553023u, 9553023u), (9553026u, 9553026u), (9553028u, 9553031u), (9553033u, 9553034u), (9553037u, 9553037u), (9553608u, 9553608u), (9555248u, 9555248u), (9555250u, 9555251u), (9556777u, 9556777u), (9557093u, 9557093u), (9557095u, 9557096u), (9557276u, 9557276u), (9558327u, 9558327u), (9558346u, 9558346u), (9559623u, 9559623u), (9559631u, 9559633u), (9562410u, 9562411u), (9562649u, 9562650u), (9562662u, 9562662u), (9562666u, 9562667u), (9562669u, 9562669u), (9562697u, 9562702u), (9562716u, 9562719u), (9562721u, 9562728u), (9562730u, 9562733u), (9562735u, 9562742u), (9577454u, 9577454u), (9590741u, 9590746u), (9595611u, 9595612u), (9595619u, 9595635u), (9596611u, 9596634u), (9602422u, 9602426u), (9602451u, 9602463u), (9611038u, 9611038u), (9611514u, 9611514u), (9611546u, 9611546u), (9611619u, 9611620u), (9612026u, 9612027u), (9612029u, 9612038u), (9612040u, 9612047u), (9612266u, 9612277u), (9614436u, 9614436u), (9614444u, 9614444u), (9614448u, 9614451u), (9614473u, 9614474u), (9614561u, 9614561u), (9614565u, 9614565u), (9614572u, 9614572u), (9614575u, 9614575u), (9614577u, 9614581u), (9614592u, 9614592u), (9614608u, 9614608u), (9614611u, 9614612u), (9614626u, 9614626u), (9614648u, 9614648u), (9615746u, 9615751u) }),
+            new StageHideState("rich2", NoAssets, new[] { (9414181u, 9414181u), (9414241u, 9414241u), (9422683u, 9422685u), (9427438u, 9427449u), (9431604u, 9431604u), (9431614u, 9431615u), (9431617u, 9431617u), (9431636u, 9431644u), (9431646u, 9431646u), (9431648u, 9431652u), (9431654u, 9431655u), (9431658u, 9431658u), (9431660u, 9431660u), (9431662u, 9431666u), (9431668u, 9431668u), (9431671u, 9431677u), (9431680u, 9431683u), (9431685u, 9431686u), (9431688u, 9431688u), (9431691u, 9431691u), (9431693u, 9431693u), (9431699u, 9431699u), (9431710u, 9431711u), (9431713u, 9431718u), (9431726u, 9431726u), (9431734u, 9431735u), (9431743u, 9431743u), (9431752u, 9431752u), (9431757u, 9431759u), (9431766u, 9431769u), (9431779u, 9431780u), (9431782u, 9431782u), (9431794u, 9431794u), (9431809u, 9431810u), (9431826u, 9431826u), (9431839u, 9431841u), (9431844u, 9431850u), (9431864u, 9431864u), (9431870u, 9431870u), (9431879u, 9431879u), (9431903u, 9431906u), (9431909u, 9431911u), (9431920u, 9431920u), (9431923u, 9431925u), (9431934u, 9431935u), (9431939u, 9431941u), (9431949u, 9431950u), (9431952u, 9431952u), (9431954u, 9431954u), (9431960u, 9431962u), (9431967u, 9431970u), (9431973u, 9431973u), (9431993u, 9431993u), (9431998u, 9431998u), (9432000u, 9432000u), (9432010u, 9432010u), (9432017u, 9432017u), (9442193u, 9442194u), (9442198u, 9442199u), (9442211u, 9442213u), (9442217u, 9442217u), (9442221u, 9442223u), (9442234u, 9442235u), (9442238u, 9442239u), (9442254u, 9442255u), (9442260u, 9442260u), (9442267u, 9442267u), (9442277u, 9442277u), (9442281u, 9442281u), (9442283u, 9442283u), (9442285u, 9442285u), (9442290u, 9442290u), (9442293u, 9442293u), (9442295u, 9442295u), (9442297u, 9442297u), (9442300u, 9442300u), (9442302u, 9442303u), (9442306u, 9442306u), (9442309u, 9442309u), (9442311u, 9442311u), (9442319u, 9442319u), (9442321u, 9442326u), (9442328u, 9442329u), (9442331u, 9442333u), (9442337u, 9442338u), (9442343u, 9442346u), (9442348u, 9442348u), (9442350u, 9442364u), (9442368u, 9442369u), (9442382u, 9442383u), (9442385u, 9442392u), (9442394u, 9442396u), (9442398u, 9442400u), (9442402u, 9442402u), (9442404u, 9442405u), (9442407u, 9442407u), (9442409u, 9442410u), (9442412u, 9442415u), (9442424u, 9442424u), (9442426u, 9442427u), (9442431u, 9442438u), (9442440u, 9442441u), (9442972u, 9442972u), (9443860u, 9443860u), (9443897u, 9443905u), (9443907u, 9443913u), (9443916u, 9443916u), (9443922u, 9443928u), (9443930u, 9443931u), (9443933u, 9443934u), (9443936u, 9443937u), (9443939u, 9443939u), (9443941u, 9443943u), (9443947u, 9443947u), (9443952u, 9443953u), (9443956u, 9443958u), (9443963u, 9443964u), (9443966u, 9443967u), (9443973u, 9443974u), (9443978u, 9443978u), (9443982u, 9443982u), (9444853u, 9444866u), (9551792u, 9551792u), (9552971u, 9552993u), (9552995u, 9552996u), (9552998u, 9552998u), (9553000u, 9553005u), (9553007u, 9553011u), (9553013u, 9553018u), (9553023u, 9553023u), (9553026u, 9553026u), (9553028u, 9553031u), (9553033u, 9553034u), (9553037u, 9553037u), (9553608u, 9553608u), (9555248u, 9555248u), (9555250u, 9555251u), (9556777u, 9556777u), (9557093u, 9557093u), (9557095u, 9557096u), (9557276u, 9557276u), (9558327u, 9558327u), (9558346u, 9558346u), (9559623u, 9559623u), (9559631u, 9559633u), (9562410u, 9562411u), (9562649u, 9562650u), (9562662u, 9562662u), (9562666u, 9562667u), (9562669u, 9562669u), (9562697u, 9562702u), (9562716u, 9562719u), (9562721u, 9562728u), (9562730u, 9562733u), (9562735u, 9562742u), (9564027u, 9564027u), (9564389u, 9564400u), (9564406u, 9564406u), (9564452u, 9564457u), (9565044u, 9565048u), (9566196u, 9566196u), (9576537u, 9576560u), (9577380u, 9577380u), (9577454u, 9577454u), (9590741u, 9590746u), (9614436u, 9614436u), (9614444u, 9614444u), (9614448u, 9614451u), (9614473u, 9614474u), (9614561u, 9614561u), (9614565u, 9614565u), (9614572u, 9614572u), (9614575u, 9614575u), (9614577u, 9614581u), (9614592u, 9614592u), (9614608u, 9614608u), (9614611u, 9614612u), (9614626u, 9614626u), (9614641u, 9614654u), (9614717u, 9614727u), (9616627u, 9616631u), (9616676u, 9616699u) }),
+            new StageHideState("end", NoAssets, new[] { (9414011u, 9414022u), (9414181u, 9414181u), (9414241u, 9414241u), (9414274u, 9414274u), (9422683u, 9422685u), (9427438u, 9427449u), (9431604u, 9431604u), (9431614u, 9431615u), (9431617u, 9431617u), (9431636u, 9431644u), (9431646u, 9431646u), (9431648u, 9431652u), (9431654u, 9431655u), (9431658u, 9431658u), (9431660u, 9431660u), (9431662u, 9431666u), (9431668u, 9431668u), (9431671u, 9431677u), (9431680u, 9431683u), (9431685u, 9431686u), (9431688u, 9431688u), (9431691u, 9431691u), (9431693u, 9431693u), (9431699u, 9431699u), (9431710u, 9431711u), (9431713u, 9431718u), (9431726u, 9431726u), (9431734u, 9431735u), (9431743u, 9431743u), (9431752u, 9431752u), (9431757u, 9431759u), (9431766u, 9431769u), (9431779u, 9431780u), (9431782u, 9431782u), (9431794u, 9431794u), (9431809u, 9431810u), (9431826u, 9431826u), (9431839u, 9431841u), (9431844u, 9431850u), (9431864u, 9431864u), (9431870u, 9431870u), (9431879u, 9431879u), (9431903u, 9431906u), (9431909u, 9431911u), (9431920u, 9431920u), (9431923u, 9431925u), (9431934u, 9431935u), (9431939u, 9431941u), (9431949u, 9431950u), (9431952u, 9431952u), (9431954u, 9431954u), (9431960u, 9431962u), (9431967u, 9431970u), (9431973u, 9431973u), (9431993u, 9431993u), (9431998u, 9431998u), (9432000u, 9432000u), (9432010u, 9432010u), (9432017u, 9432017u), (9442034u, 9442037u), (9442143u, 9442144u), (9442193u, 9442194u), (9442198u, 9442199u), (9442211u, 9442213u), (9442217u, 9442217u), (9442221u, 9442223u), (9442234u, 9442235u), (9442238u, 9442239u), (9442254u, 9442255u), (9442260u, 9442260u), (9442267u, 9442267u), (9442277u, 9442277u), (9442281u, 9442281u), (9442283u, 9442283u), (9442285u, 9442285u), (9442290u, 9442290u), (9442293u, 9442293u), (9442295u, 9442295u), (9442297u, 9442297u), (9442300u, 9442300u), (9442302u, 9442303u), (9442306u, 9442306u), (9442309u, 9442309u), (9442311u, 9442311u), (9442319u, 9442319u), (9442321u, 9442326u), (9442328u, 9442329u), (9442331u, 9442333u), (9442337u, 9442338u), (9442343u, 9442346u), (9442348u, 9442348u), (9442350u, 9442364u), (9442368u, 9442369u), (9442382u, 9442383u), (9442385u, 9442392u), (9442394u, 9442396u), (9442398u, 9442400u), (9442402u, 9442402u), (9442404u, 9442405u), (9442407u, 9442407u), (9442409u, 9442410u), (9442412u, 9442415u), (9442424u, 9442424u), (9442426u, 9442427u), (9442431u, 9442438u), (9442440u, 9442441u), (9442972u, 9442972u), (9443556u, 9443560u), (9443562u, 9443563u), (9443566u, 9443567u), (9443574u, 9443575u), (9443578u, 9443578u), (9443583u, 9443584u), (9443586u, 9443589u), (9443592u, 9443592u), (9443595u, 9443595u), (9443598u, 9443598u), (9443605u, 9443605u), (9443610u, 9443610u), (9443614u, 9443614u), (9443621u, 9443621u), (9443623u, 9443639u), (9443641u, 9443661u), (9443666u, 9443678u), (9443680u, 9443694u), (9443696u, 9443699u), (9443701u, 9443713u), (9443718u, 9443734u), (9443860u, 9443860u), (9443897u, 9443905u), (9443907u, 9443913u), (9443916u, 9443916u), (9443922u, 9443928u), (9443930u, 9443931u), (9443933u, 9443934u), (9443936u, 9443937u), (9443939u, 9443939u), (9443941u, 9443943u), (9443947u, 9443947u), (9443952u, 9443953u), (9443956u, 9443958u), (9443963u, 9443964u), (9443966u, 9443967u), (9443973u, 9443974u), (9443978u, 9443978u), (9443982u, 9443982u), (9444472u, 9444472u), (9444488u, 9444488u), (9444490u, 9444490u), (9444492u, 9444492u), (9444762u, 9444765u), (9444767u, 9444767u), (9444769u, 9444775u), (9444779u, 9444787u), (9444789u, 9444801u), (9444803u, 9444805u), (9444810u, 9444812u), (9444815u, 9444815u), (9444817u, 9444819u), (9444821u, 9444822u), (9444839u, 9444850u), (9444853u, 9444866u), (9444899u, 9444906u), (9445285u, 9445285u), (9445672u, 9445672u), (9445677u, 9445677u), (9445684u, 9445685u), (9445689u, 9445691u), (9445694u, 9445695u), (9445698u, 9445698u), (9445742u, 9445742u), (9445746u, 9445746u), (9453892u, 9453894u), (9453896u, 9453896u), (9453946u, 9453946u), (9551792u, 9551792u), (9552971u, 9552993u), (9552995u, 9552996u), (9552998u, 9552998u), (9553000u, 9553005u), (9553007u, 9553011u), (9553013u, 9553018u), (9553023u, 9553023u), (9553026u, 9553026u), (9553028u, 9553031u), (9553033u, 9553034u), (9553037u, 9553037u), (9553608u, 9553608u), (9555248u, 9555248u), (9555250u, 9555251u), (9556777u, 9556777u), (9557093u, 9557093u), (9557095u, 9557096u), (9557276u, 9557276u), (9558327u, 9558327u), (9558346u, 9558346u), (9559623u, 9559623u), (9559631u, 9559633u), (9559652u, 9559652u), (9562410u, 9562411u), (9562649u, 9562650u), (9562662u, 9562662u), (9562666u, 9562667u), (9562669u, 9562669u), (9562697u, 9562702u), (9562716u, 9562719u), (9562721u, 9562728u), (9562730u, 9562733u), (9562735u, 9562742u), (9564027u, 9564027u), (9564389u, 9564400u), (9564406u, 9564406u), (9564452u, 9564457u), (9565044u, 9565048u), (9566196u, 9566196u), (9576537u, 9576560u), (9576753u, 9576758u), (9577380u, 9577380u), (9577454u, 9577454u), (9590741u, 9590746u), (9595611u, 9595612u), (9595619u, 9595640u), (9596611u, 9596634u), (9602422u, 9602426u), (9602451u, 9602463u), (9611038u, 9611038u), (9611514u, 9611514u), (9611546u, 9611546u), (9611619u, 9611620u), (9612026u, 9612027u), (9612029u, 9612038u), (9612040u, 9612047u), (9612266u, 9612277u), (9614436u, 9614436u), (9614444u, 9614444u), (9614448u, 9614451u), (9614473u, 9614474u), (9614561u, 9614561u), (9614565u, 9614565u), (9614572u, 9614572u), (9614575u, 9614575u), (9614577u, 9614581u), (9614592u, 9614592u), (9614608u, 9614608u), (9614611u, 9614612u), (9614626u, 9614626u), (9614641u, 9614654u), (9614717u, 9614727u), (9615746u, 9615751u), (9616627u, 9616631u), (9616676u, 9616699u), (9617063u, 9617063u), (9617087u, 9617087u), (9617151u, 9617151u), (9617159u, 9617159u), (9617179u, 9617179u), (9617186u, 9617186u) }),
+            new StageHideState("raw", NoAssets, NoIds),
+        },
+        // b304: 945 The Garden of Nowhere: five stage floors (a1-a5) + backdrops in sgbg_n4gc_a1_gmc05, all drawn. Generated.
+        // ex3/01_nvt_n4/goe/n4gc/level/n4gc: GENERATED by genstates.py (opening state per gimmick SGB)
+        ["ex3/01_nvt_n4/goe/n4gc/level/n4gc"] = new[]
+        {
+            new StageHideState("auto", NoAssets, NoIds, new[]
+            {
+                ("sgbg_n4gc_a1_gmc02", new uint[] { 2, 13, 14, 25 }),   // land_a_on1: n4gc_a0_flo20.mdl, sgbg_n4gc_a1_fnt01.sgb, sgbg_n4gc_a1_mon2a.sgb, sgbg_n4gc_a6_flo20.sgb
+                ("sgbg_n4gc_a1_gmc03", new uint[] { 2, 13, 14 }),   // land_b_on1: n4gc_a0_flo20.mdl, sgbg_n4gc_a1_mon2b.sgb, sgbg_n4gc_a6_flo20.sgb
+                ("sgbg_n4gc_a1_gmc04", new uint[] { 2, 13, 14 }),   // land_c_on1: n4gc_a0_flo20.mdl, sgbg_n4gc_a1_mon2c.sgb, sgbg_n4gc_a7_flo20.sgb
+                ("sgbg_n4gc_a1_gmc05", new uint[] { 3, 4, 5, 6, 8, 9, 10, 11, 16, 30 }),   // stg_on1: n4gc_a0_flo00.mdl, sgbg_n4gc_a2_dst00.sgb, sgbg_n4gc_a2_flo00_.sgb, sgbg_n4gc_a3_dst00.sgb, sgbg_n4gc_a3_flo00.sgb, sgbg
+                ("sgbg_n4gc_a2_gmc19", new uint[] { 2 }),   // circle_on1: n4gc_a2_ome02.mdl
+            }),
+            new StageHideState("raw", NoAssets, NoIds),
+        },
+        // n4ff The Seat of Sacrifice (922/923/931): sgbg_n4ff_d1_floor01 holds d1_boss7 (ids 3, 12) and d2_boss7 (4, 13).
+        // Its states: gmc15_def shows 3 only, gmc15_dark shows 4 only (sgbstate.py C019 keys). b300 sgstate: all four vis=1
+        // = the blue/black flicker. Default = gmc15_def.
+        ["ex3/01_nvt_n4/fld/n4ff/level/n4ff"] = new[]
+        {
+            new StageHideState("def",  NoAssets, NoIds, new[] { ("sgbg_n4ff_d1_floor01", new uint[] { 12, 4, 13 }) }),
+            new StageHideState("dark", NoAssets, NoIds, new[] { ("sgbg_n4ff_d1_floor01", new uint[] { 3, 12, 13 }) }),
+        },
+        // e3fe Hells' Kier (810/811): sgbg_e3fe_a2_gmc02 overlays the base floor (e3fe_pha01 bmon*) with three sets:
+        // koha2 x4 (ids 9-12, txtf1_off), kogm1-4 (13-16, txtf1_on), kogm4 x4 (19,20,21,25, txtf2_on); txtf2_out hides all.
+        // b300 in game: the quarter panels settled but the ring and the square frame near the centre still flicker. Offline,
+        // even the kogm1-4 set alone is coplanar with the bmon base (150-160 cells each), so default = no overlay (the
+        // authored txtf2_out state); the others stay selectable.
+        ["ex2/02_est_e3/fld/e3fe/level/e3fe"] = new[]
+        {
+            new StageHideState("base",      NoAssets, NoIds, new[] { ("sgbg_e3fe_a2_gmc02", new uint[] { 9, 10, 11, 12, 13, 14, 15, 16, 19, 20, 21, 25 }) }),
+            new StageHideState("txtf1_on",  NoAssets, NoIds, new[] { ("sgbg_e3fe_a2_gmc02", new uint[] { 9, 10, 11, 12, 19, 20, 21, 25 }) }),
+            new StageHideState("txtf1_off", NoAssets, NoIds, new[] { ("sgbg_e3fe_a2_gmc02", new uint[] { 13, 14, 15, 16, 19, 20, 21, 25 }) }),
+            new StageHideState("txtf2_on",  NoAssets, NoIds, new[] { ("sgbg_e3fe_a2_gmc02", new uint[] { 9, 10, 11, 12, 13, 14, 15, 16 }) }),
+        },
+        // e3fd Castrum Fluminis (778/779), b302: three overlaps. Stage 1 (castle floor flr1/flr2 + p1_flo01) under the stage-2
+        // moon field (688 cells); the moon floor sgbg_e3fd_a2_bsg01 with SIX phase floors (C104 keys, all six vis=1 in the
+        // b301 sgstate dump); the sky moon sgbg_e3fd_a2_mon01 with six phase discs on one plane. Default = stage 2, moon on
+        // (flr_on + moon_on). 786 (the hangar) is a different bg and untouched. User 779 note: some Moonlight weathers
+        // loaded clean, i.e. the weather can drive these SGB states natively.
+        ["ex2/02_est_e3/fld/e3fd/level/e3fd"] = new[]
+        {
+            new StageHideState("moon-on",       NoAssets, E3fdStage1, E3fdMoon(1, 3)),
+            new StageHideState("moon-full",     NoAssets, E3fdStage1, E3fdMoon(2, 2)),
+            new StageHideState("moon-half",     NoAssets, E3fdStage1, E3fdMoon(3, 5)),
+            new StageHideState("moon-quarter",  NoAssets, E3fdStage1, E3fdMoon(4, 6)),
+            new StageHideState("moon-3quarter", NoAssets, E3fdStage1, E3fdMoon(5, 7)),
+            new StageHideState("moon-new",      NoAssets, E3fdStage1, E3fdMoon(16, 4)),
+            new StageHideState("castle", new[] { "e3fd_a2_bsg01" }, NoIds, new[] { ("sgbg_e3fd_a2_bsg01", new uint[] { 1, 2, 3, 4, 5, 16 }), ("sgbg_e3fd_a2_mon01", new uint[] { 2, 4, 5, 6, 7 }) }),
+        },
+        // x6fa Everkeep (1200/1201/1220), b302: sgbg_x6fa_a1_gimc3 places five copies of the platform SGB yuka1 (children
+        // 1-5; 1 and 2 at the identical transform, 3-5 rotated 90/180/270). Each yuka1 has its own yuka_hide/yuka_show
+        // states (the fight raises them); on a director-less load all five draw. The visible overlap is where they meet the
+        // boss floor x6fa_a0_stc00 at y=0 (~110 cells each); the rest is stacked underground. Default hides all five.
+        ["ex5/01_xkt_x6/fld/x6fa/level/x6fa"] = new[]
+        {
+            new StageHideState("floor",     NoAssets, NoIds, new[] { ("sgbg_x6fa_a1_gimc3", new uint[] { 1, 2, 3, 4, 5 }) }),
+            new StageHideState("platforms", NoAssets, NoIds, new[] { ("sgbg_x6fa_a1_gimc3", new uint[] { 2 }) }),
+        },
+        // m5fa Mount Ordeals (1095/1096): sgbg_m5fa_a0_gmc08 carries the arena floor m5fa_a1_stg01 (id 10) AND a nested
+        // cutscene SGB sgbg_m5e6_a0_evt00 (id 19) whose m5e6_a0_tra01 sits on the same plane (419 cells). Hide the event SGB.
+        ["ex4/02_mid_m5/fld/m5fa/level/m5fa"] = new[]
+        {
+            // b302: with C104 keys read too, gmc08's states are clear: g08_on_yama shows children 2,3 (gmc08b/c) and hides
+            // 4 (gmc08d) + 19 (the cutscene SGB); g08_on_ren swaps 2,3 for 4. b301 hid only 19, leaving b/c and d overlapping.
+            new StageHideState("yama", NoAssets, NoIds, new[] { ("sgbg_m5fa_a0_gmc08", new uint[] { 4, 19 }) }),
+            new StageHideState("ren",  NoAssets, NoIds, new[] { ("sgbg_m5fa_a0_gmc08", new uint[] { 2, 3, 19 }) }),
         },
         // r1fd "Steps of Faith" — REMOVED b80. The offline survey flagged 33 coplanar-dup groups (gareki rubble over the
         // intact bridge), but in-game the venue NEVER flickers: the rubble and bridge occupy different space, so the doubled
@@ -3263,6 +3461,15 @@ public unsafe class ZoneLoadService : IDisposable
     // (never stores pointers) and flips all their slots hidden. Cheap: one layout walk, small held set.
     private void PollHeldHide(IFramework fw)
     {
+        if (heldSgChildren.Count > 0)   // b301
+        {
+            try
+            {
+                ApplySgChildHides(heldSgChildren, false, true);
+                if (appliedSgChildren.Count == 0) appliedSgChildren.AddRange(heldSgChildren);
+            }
+            catch { }
+        }
         if (heldHideKeys.Count == 0 && heldHideAssets.Count == 0 && heldHideIdRanges.Count == 0) return;
         try
         {
@@ -3318,13 +3525,99 @@ public unsafe class ZoneLoadService : IDisposable
         heldHideKeys.Clear();
         heldHideAssets.Clear();       // NB-34: drop the venue state-pair criteria too
         heldHideIdRanges.Clear();
+        heldSgChildren.Clear();       // b301
+        sgMatchCache.Clear();
         if (heldHideArmed) { heldHideArmed = false; framework.Update -= PollHeldHide; }
+    }
+
+    // b301: SG-child hide (StageHideState.SgChildren). Walks only the SharedGroup type-map of both layouts; per-SG match is
+    // cached by InstanceKey (path compare once). Children are addressed by SubId>>24 (= SGB-local id). Each frame re-hides
+    // (a SharedGroup re-streamed in comes back drawn). Nested SG children are hidden recursively. visible=true re-shows.
+    private readonly List<(string Sg, uint[] Ids)> heldSgChildren = new();
+    private readonly Dictionary<nint, int> sgMatchCache = new();   // b303: live SG pointer -> index into heldSgChildren, -1 = none
+    private readonly List<(string Sg, uint[] Ids)> appliedSgChildren = new();   // what is currently hidden, for restore
+
+    private void ApplySgChildHides(List<(string Sg, uint[] Ids)> criteria, bool visible, bool useCache)
+    {
+        if (criteria.Count == 0) return;
+        var lw = LayoutWorld.Instance();
+        if (lw == null) return;
+        foreach (var layout in new[] { lw->ActiveLayout, lw->GlobalLayout })
+        {
+            if (layout == null) continue;
+            if (!layout->InstancesByType.TryGetValuePointer(InstanceType.SharedGroup, out var mapPtrPtr) || mapPtrPtr == null) continue;
+            var innerMap = mapPtrPtr->Value;
+            if (innerMap == null) continue;
+            foreach (var kv in *innerMap)
+            {
+                var inst = kv.Item2.Value;
+                if (inst == null) continue;
+                ProcessSgForHides((SharedGroupLayoutInstance*)inst, criteria, visible, useCache, 0);
+            }
+        }
+    }
+
+    // b303: match this SG and, recursively, every SG nested in it (raid gimmicks keep their states 2-3 levels down: 1008
+    // act01 > tra01, 1087 gmc09 > act02 > act12). The match cache is keyed by the live pointer (a re-streamed SG gets a new
+    // pointer and is simply re-matched); pointers are only compared, never dereferenced from the cache.
+    private void ProcessSgForHides(SharedGroupLayoutInstance* sg, List<(string Sg, uint[] Ids)> criteria, bool visible, bool useCache, int depth)
+    {
+        if (sg == null || depth > 4) return;
+        nint key = (nint)sg;
+        int ci;
+        if (!useCache || !sgMatchCache.TryGetValue(key, out ci))
+        {
+            ci = -1;
+            string path = "";
+            try { var pp = sg->ILayoutInstance.GetPrimaryPath(); if (pp.HasValue) path = pp.ToString() ?? ""; } catch { }
+            if (path.Length > 0)
+                for (int i = 0; i < criteria.Count; i++)
+                    if (path.Contains(criteria[i].Sg, StringComparison.OrdinalIgnoreCase)) { ci = i; break; }
+            if (useCache) sgMatchCache[key] = ci;
+        }
+        var ids = ci >= 0 ? criteria[ci].Ids : null;
+        var vec = sg->Instances.Instances;
+        for (long i = 0; i < vec.LongCount; i++)
+        {
+            var child = vec[i].Value;
+            if (child == null || child->Instance == null) continue;
+            var c = child->Instance;
+            if (ids != null && System.Array.IndexOf(ids, c->SubId >> 24) >= 0) { SetSgTreeVisible(c, visible, 0); continue; }
+            if (c->Id.Type == InstanceType.SharedGroup) ProcessSgForHides((SharedGroupLayoutInstance*)c, criteria, visible, useCache, depth + 1);
+        }
+    }
+
+    private void SetSgTreeVisible(ILayoutInstance* inst, bool visible, int depth)
+    {
+        if (inst == null || depth > 4) return;
+        var gfx = GetEffectiveGraphics(inst);
+        if (gfx != null) gfx->IsVisible = visible;
+        SetAllSlotsVisible(inst, visible);
+        if (inst->Id.Type != InstanceType.SharedGroup) return;
+        var vec = ((SharedGroupLayoutInstance*)inst)->Instances.Instances;
+        for (long i = 0; i < vec.LongCount; i++)
+        {
+            var child = vec[i].Value;
+            if (child != null && child->Instance != null) SetSgTreeVisible(child->Instance, visible, depth + 1);
+        }
     }
 
     // NB-34: arm the per-venue coplanar state-pair suppression for a swap cutscene stage. No-op for a plain zone or a
     // venue with no spec. Loads the venue's hide criteria into the shared heldHide poll; PollHeldHide discovers + holds
     // the matching instances as they stream in. Reversible via /hms stop (RestoreHiddenObjects → ClearHeldHide). Called
     // from LoadZone right after the native load is kicked off (ActiveStageBg is set by LoadStage before the load).
+    // b300: TerritoryType.Bg (e.g. "ex3/01_nvt_n4/fld/n4ff/level/n4ff"), the same form as a cutscene Stage.Bg.
+    private string? TerritoryBg(uint territoryId)
+    {
+        try
+        {
+            var row = dataManager.GetExcelSheet<TerritoryType>()?.GetRowOrDefault(territoryId);
+            var bg = row?.Bg.ToString();
+            return string.IsNullOrEmpty(bg) ? null : bg;
+        }
+        catch { return null; }
+    }
+
     public void ApplyStageHide(string? stageBg)
     {
         activeStageHideBg = null;
@@ -3344,6 +3637,8 @@ public unsafe class ZoneLoadService : IDisposable
         var st = states[idx];
         foreach (var a in st.Assets) heldHideAssets.Add(a);
         foreach (var r in st.IdRanges) heldHideIdRanges.Add(r);
+        if (st.SgChildren != null) foreach (var c in st.SgChildren) heldSgChildren.Add(c);   // b301
+        sgMatchCache.Clear();
         if (!heldHideArmed) { heldHideArmed = true; framework.Update += PollHeldHide; }
         log.Information("[HMSync] [STAGEHIDE] state '" + st.Name + "' armed for " + activeStageHideBg
             + ": hiding assets=[" + string.Join(",", st.Assets) + "] idRanges=" + st.IdRanges.Length
@@ -5513,7 +5808,7 @@ public unsafe class ZoneLoadService : IDisposable
         // set by LoadStage before this call; a plain zone leaves it null → cleared, no hide.
         heldHideAssets.Clear();
         heldHideIdRanges.Clear();
-        ApplyStageHide(ActiveStageBg);
+        ApplyStageHide(ActiveStageBg ?? TerritoryBg(territoryId));   // b300: a plain load keys by its own bg (trial arenas)
 
         // v0.7.263: 1345 wreck-de-draw PURGED. The Meddle-era hand-picked wreck-hiding is gone; 1345 now
         // loads with native geometry (wrecks present, all collision intact). Cleaner identity-based suppression
@@ -5628,6 +5923,12 @@ public unsafe class ZoneLoadService : IDisposable
         // b48: disarm the 759 per-frame hold FIRST, so PollHeldHide can't re-hide the very instances
         // this sweep is about to re-show (it re-resolves the same keys each frame). Idempotent.
         ClearHeldHide();
+        // b301: re-show gimmick SharedGroup children hidden by a stage state (fresh walk, never a saved pointer).
+        if (appliedSgChildren.Count > 0)
+        {
+            try { ApplySgChildHides(appliedSgChildren, true, false); } catch { }
+            appliedSgChildren.Clear();
+        }
         int restored = 0;
         foreach (var idx in hiddenObjectIndices)
         {

@@ -3257,7 +3257,16 @@ public unsafe class MapSettingsService
             if (stageWeather == 0 && loadedZoneId != 0)
             {
                 byte rendered = GetActiveWeather();   // EnvManager+0x26 = the sky the host is actually showing (settled)
-                if (rendered != 0 && rendered != nativeWeather)
+                // b300: only a SAME-NAMED variant is the scripted case NB-42 was written for (1010: a gloomy "Fair Skies"
+                // under rate default 2 "Fair Skies"). A differently-named rendered weather on a fixed-weather arena is a
+                // leftover from the previous zone (846 The Crown of the Immaculate: rate 104 = Brilliance only, loaded with
+                // the wrong sky and missing weather-gated geometry until a manual change). Engage the native one there.
+                if (rendered != 0 && rendered != nativeWeather && nativeWeather != 0 && WeatherName(rendered) != WeatherName(nativeWeather))
+                {
+                    log.Information("[HMSync] [WX-SCRIPTED] zone " + loadedZoneId + " renders " + rendered + " (" + WeatherName(rendered)
+                        + ") but its native weather is " + nativeWeather + " (" + WeatherName(nativeWeather) + "), a different weather: engaging the native one.");
+                }
+                else if (rendered != 0 && rendered != nativeWeather)
                 {
                     log.Information("[HMSync] [WX-SCRIPTED] zone " + loadedZoneId + " renders " + rendered + " ("
                         + WeatherName(rendered) + ") but WeatherRate default is " + nativeWeather + " ("

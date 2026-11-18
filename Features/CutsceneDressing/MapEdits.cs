@@ -55,7 +55,130 @@ public static class MapEdits
             try { var d = DeriveOne(data, s, log); if (d != null) outList.Add(d); }
             catch (Exception ex) { log.Warning("[MapEdits] " + s.Row + " failed: " + ex.Message); }
         }
+        foreach (var r in Restyles)   // b305
+        {
+            try { var d = DeriveRestyle(data, r, log); if (d != null) outList.Add(d); }
+            catch (Exception ex) { log.Warning("[MapEdits] " + r.Row + " failed: " + ex.Message); }
+        }
         return outList;
+    }
+
+    // ── b305: RESTYLE edits ─────────────────────────────────────────────────────────────────────────────────────────────
+    // A level's own look with one style removed, as its own pickable entry (the plain load is untouched). Within the layers
+    // whose name starts with LayerPrefix: hide every BG part whose file name matches HidePattern AND that carries a purple
+    // glow material (g_EmissiveColor brightest channel > 0.2 and blue >= 1.4 x green: the neon, not the warm or white
+    // lights); hide every part named in Swap and place the replacement model at the same transform (the replacement's own
+    // collision, read from the level it ships in). Everything is read from the installed game at ingest time.
+    //
+    // First (b305, 900002): Alexandria (TT 1199, x6d3), the phase-1 medieval town, without its purple neon. The gates
+    // x6d3_a1_arf11 / arf16 go too (user: "remove the arf gates too for now"); lamps become Mist housing lamps (shape match
+    // by LOD0 bounds across every level: lmp01 1.55 x 3.60 m -> s1h1_a0_lamp2, lmp02 2.39 x 6.21 m flat -> s1h1_a0_lamp5).
+    private sealed record Restyle(uint Row, uint Tt, string Level, string LayerPrefix, string Suffix, string HidePattern, (string From, string To, float Scale)[] Swap, string[]? HideModels = null);
+
+    private static readonly Restyle[] Restyles =
+    {
+        new(900002, 1199, "ex5/01_xkt_x6/dun/x6d3", "phs01", "old town, no neon", @"_arf\d+\.mdl$",
+            new[]
+            {
+                // b307: Empyreum lamps (user picked them from the render sheet: dark Victorian iron, like the originals).
+                // Empyreum has no short standing lamp, so the short lmp01 (3.6 m) gets the same 7.5 m post at half scale.
+                ("x6d3_a1_lmp01.mdl", "bg/ffxiv/roc_r1/hou/common/bgparts/r1h0_a1_lmp2a.mdl", 0.5f),
+                ("x6d3_a1_lmp02.mdl", "bg/ffxiv/roc_r1/hou/common/bgparts/r1h0_a1_lmp2a.mdl", 1.0f),
+            },
+            // b309: the holographic "sky" over the town is a MODEL, not the env: x6d3_a0_sha01 (529 x 1948 x 1948 m shell at
+            // (-117, 613, -247), layer phs01_props, lightshaft shader, textures x6d3_a0_sha01_d/sha02_d). User found it with
+            // the collider tool ("found it. it's x6d3 a0 sha01"). Hidden outright, like the neon.
+            new[] { "x6d3_a0_sha01.mdl" }),
+    };
+
+    private static DressingDto? DeriveRestyle(IDataManager data, Restyle r, IPluginLog log)
+    {
+        var level = Level(data, r.Level);
+        if (level.Count == 0) { log.Warning("[MapEdits] " + r.Row + ": level data missing"); return null; }
+        var rx = new System.Text.RegularExpressions.Regex(r.HidePattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var area = level.Where(x => x.Type == 1 && x.File == "bg" && x.Layer.StartsWith(r.LayerPrefix, StringComparison.OrdinalIgnoreCase)).ToList();
+        var glow = new Dictionary<string, bool>();
+        var swap = r.Swap.ToDictionary(w => w.From, w => (w.To, w.Scale), StringComparer.OrdinalIgnoreCase);
+        var hides = new List<uint[]>();
+        var props = new List<PropDto>();
+        var collOf = new Dictionary<string, string>();
+        int neon = 0;
+        foreach (var x in area)
+        {
+            string fn = FileName(x.Asset);
+            if (swap.TryGetValue(fn, out var sw))
+            {
+                var to = sw.To;
+                hides.Add(new[] { x.Id, x.LayerId & 0xFFFF, (uint)x.Type });
+                if (!collOf.TryGetValue(to, out var coll)) collOf[to] = coll = HomeCollision(data, to);
+                props.Add(new PropDto { Path = to, Pos = A(x.Pos), Rot = A(x.Rot), Scale = A(x.Scale * sw.Scale), Coll = coll.Length > 0 ? coll : null });
+                continue;
+            }
+            if (r.HideModels != null && r.HideModels.Contains(fn, StringComparer.OrdinalIgnoreCase))
+            {
+                hides.Add(new[] { x.Id, x.LayerId & 0xFFFF, (uint)x.Type });
+                log.Information($"[MapEdits] {r.Row}: {fn} id {x.Id} hidden (listed)");
+                continue;
+            }
+            if (!rx.IsMatch(fn)) continue;
+            if (!glow.TryGetValue(x.Asset, out var g)) glow[x.Asset] = g = PurpleGlow(data, x.Asset);
+            if (!g) continue;
+            hides.Add(new[] { x.Id, x.LayerId & 0xFFFF, (uint)x.Type });
+            neon++;
+            if (fn.EndsWith("_arf11.mdl", StringComparison.OrdinalIgnoreCase) || fn.EndsWith("_arf16.mdl", StringComparison.OrdinalIgnoreCase))
+                log.Information($"[MapEdits] {r.Row}: gate {fn} id {x.Id} at ({x.Pos.X:F2}, {x.Pos.Y:F2}, {x.Pos.Z:F2}) rot ({x.Rot.X:F3}, {x.Rot.Y:F3}, {x.Rot.Z:F3}) hidden");
+        }
+        string place = data.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>()?.GetRowOrDefault(r.Tt)?.PlaceName.ValueNullable?.Name.ExtractText() ?? "";
+        string seg = FileName(r.Level);
+        log.Information($"[MapEdits] {r.Row} '{place}': {neon} neon part(s) hidden ({glow.Count(kv => kv.Value)} glowing model(s) of {glow.Count} checked), " +
+                        $"{props.Count} lamp(s) replaced");
+        return new DressingDto
+        {
+            Row = r.Row, Name = (place.Length > 0 ? place : seg) + " (" + r.Suffix + ")", Cutb = "", Quest = Quest,
+            Bg = r.Level + "/level/" + seg, Tt = r.Tt, Hides = hides, Props = props, HidesFromCutb = false, ExactHides = true,
+        };
+    }
+
+    // The collision mesh a model ships with in its own level (first placement that has one), "" if none.
+    private static string HomeCollision(IDataManager data, string mdl)
+    {
+        int i = mdl.IndexOf("/bgparts/", StringComparison.Ordinal);
+        if (!mdl.StartsWith("bg/") || i < 0) return "";
+        string home = mdl[3..i];
+        if (home.Contains("/common", StringComparison.Ordinal)) return "";
+        try { return Level(data, home).FirstOrDefault(x => x.Type == 1 && x.Asset == mdl && x.Collision.Length > 0).Collision ?? ""; }
+        catch { return ""; }
+    }
+
+    // True when any of the model's materials glows purple: g_EmissiveColor (0x38A64362) brightest channel > 0.2 and
+    // blue >= 1.4 x green. Alexandria: emv02a (3.41,3.24,9.00), emv06a, a3_emv01a, a0_mtl03a (3.24,0,3.24), stn16a; not
+    // the grey window glass g0001a (0.30,0.30,0.30) or the green/white emv03c/emv05a.
+    private static bool PurpleGlow(IDataManager data, string mdl)
+    {
+        try
+        {
+            var f = data.GetFile<MdlFile>(mdl);
+            if (f == null) return false;
+            foreach (var off in f.MaterialNameOffsets)
+            {
+                int end = Array.IndexOf(f.Strings, (byte)0, (int)off);
+                string n = System.Text.Encoding.ASCII.GetString(f.Strings, (int)off, end - (int)off);
+                string full = n.StartsWith("/") ? n[1..] : n;
+                if (!full.Contains('/')) { int b = mdl.LastIndexOf("/bgparts/", StringComparison.Ordinal); if (b < 0) continue; full = mdl[..b] + "/material/" + full; }
+                var mt = data.GetFile<Lumina.Data.Files.MtrlFile>(full);
+                if (mt == null) continue;
+                foreach (var c in mt.Constants)
+                {
+                    if (c.ConstantId != 0x38A64362 || c.ValueSize < 12) continue;
+                    int o = c.ValueOffset / 4;
+                    if (o + 2 >= mt.ShaderValues.Length) continue;
+                    float er = mt.ShaderValues[o], eg = mt.ShaderValues[o + 1], eb = mt.ShaderValues[o + 2];
+                    if (MathF.Max(er, MathF.Max(eg, eb)) > 0.2f && eb >= 1.4f * eg) return true;
+                }
+            }
+        }
+        catch { }
+        return false;
     }
 
     private static List<LgbFile.Instance> Level(IDataManager data, string level)
