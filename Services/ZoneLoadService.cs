@@ -1798,9 +1798,11 @@ public unsafe class ZoneLoadService : IDisposable
     // InstanceType.CollisionBox (type 57, "generic collider" = invisible gameplay blockers: boss-arena fences,
     // dungeon section gates, quest-phase walls, NPC pens). Same proven vfunc-37 SetColliderActive(false) lever the
     // S228 ring-drop uses (physics off-switch with the game's own bookkeeping - NOT a PrefabFlags2 write, which
-    // corrupts SGs; see S312). CollisionBoxes are NEVER floors (walkable geometry is BgPart/terrain Mesh collision,
-    // a separate type + never in this bucket), so this can't drop the ground out from under the player. It does NOT
-    // touch SharedGroups, so timeline lifts/platforms (whose collider IS the floor) are never affected - the one
+    // corrupts SGs; see S312). b220 CORRECTION: the original premise that "CollisionBoxes are NEVER floors" is FALSE -
+    // m5d2/969 authors its spawn platform + stair-top pads as analytic Box CollisionBoxes the player walks on, so the
+    // blanket drop deleted the floor there. The drop is now gated by IsWalkableFloorBox (thin flat/ramp slabs are kept,
+    // only wall/barrier boxes are dropped), so it no longer takes the ground out from under the player. It still does
+    // NOT touch SharedGroups, so timeline lifts/platforms (whose collider IS the floor) are never affected - the one
     // hazard the brief flags belongs to Tier 2 (visible-mesh removal), not this.
     //
     // Pure client scene state: nothing persists, no file writes, no server-visible state (same out-of-bounds
@@ -1815,6 +1817,34 @@ public unsafe class ZoneLoadService : IDisposable
     private readonly HashSet<uint> droppedSectionColliderKeys = new();  // boxes WE flipped off (for exact restore)
     private bool sectionDropPollArmed;
     private int sectionDropPollFrames;
+    internal int lastFloorsKept;   // b220: walkable-floor boxes the last drop skipped (diag/telemetry)
+
+    // b220: floor-vs-wall classifier for the universal section-collider drop. The b181 drop flips EVERY CollisionBox
+    // off on the premise that CollisionBoxes are never walkable floors - FALSE on some maps (m5d2/969: the spawn
+    // platform + stair-top pads are analytic Box CollisionBoxes the player stands on, so the blanket drop deletes the
+    // floor). Per-triangle material can't discriminate (969: invis/unland tris = 0 - the barrier signature is
+    // instance-level, not on the mesh) and instance material is OVERLAP (floors and walls share 0x2400/0x7000/0x7006/
+    // ...), so material alone can't separate them. Geometry can: an analytic box is a walkable FLOOR when it's a thin
+    // slab whose thinnest axis is local-Y AND that axis points up in world (a flat pad or a ramp) - a wall/fence's thin
+    // axis is horizontal, and a chunky blocker isn't thin at all. This is the usual wall threshold (0.5), applied to
+    // the box instead of a mesh face. Returns true = KEEP this box active (skip the drop). Validated offline against
+    // 969's collision dump: keeps 19 floor pads (incl. the y=-1 start-area slabs), drops 76 wall
+    // boxes; agreed with the world-AABB classification on 93/95 boxes.
+    private static unsafe bool IsWalkableFloorBox(ILayoutInstance* inst)
+    {
+        var tb = (FFXIVClientStructs.FFXIV.Client.LayoutEngine.Layer.TriggerBoxLayoutInstance*)inst;
+        var coll = tb->Collider;
+        if (coll == null) return false;                                        // no collider (not loaded) -> nothing to keep
+        var ct = coll->GetColliderType();
+        if (ct != BGColliderType.Box && ct != BGColliderType.Cylinder) return false;  // only analytic slabs have scale-geometry; Mesh/Plane/Board barriers still drop
+        System.Numerics.Vector3 sc; inst->GetScale(&sc);
+        float sx = MathF.Abs(sc.X), sy = MathF.Abs(sc.Y), sz = MathF.Abs(sc.Z);
+        if (sy >= sx || sy >= sz) return false;                                // thinnest axis must be local-Y (else vertical panel / fence / cube -> drop)
+        if (sy >= 0.5f * MathF.Min(sx, sz)) return false;                      // and genuinely thin vs BOTH horizontal extents (a low fence isn't a floor)
+        System.Numerics.Quaternion q; inst->GetRotation(&q);
+        float upY = 1f - 2f * (q.X * q.X + q.Z * q.Z);                         // world-Y of the box's local +Y axis (quaternion middle column)
+        return MathF.Abs(upY) >= 0.5f;                                         // lies roughly flat (walkable ramp/floor) -> KEEP; stood on edge -> drop
+    }
 
     // Sweep the active + global layout's CollisionBox bucket and set each box's collider active state. When dropping
     // (active=false) only boxes currently active are flipped and recorded; when restoring (active=true) only the
@@ -1846,6 +1876,7 @@ public unsafe class ZoneLoadService : IDisposable
             return toggled;
         }
         // Drop: deactivate every currently-active CollisionBox, recording its key so restore is exact.
+        int keptFloors = 0;
         foreach (var layout in new[] { lw->ActiveLayout, lw->GlobalLayout })
         {
             if (layout == null) continue;
@@ -1856,11 +1887,13 @@ public unsafe class ZoneLoadService : IDisposable
                 var inst = kv.Item2.Value;
                 if (inst == null) continue;
                 if (!inst->IsColliderActive()) continue;      // leave natively-inactive boxes untouched
+                if (IsWalkableFloorBox(inst)) { keptFloors++; continue; }  // b220: keep walkable-floor slabs (drop only walls/barriers)
                 inst->SetColliderActive(false);
                 droppedSectionColliderKeys.Add(inst->Id.InstanceKey);
                 toggled++;
             }
         }
+        lastFloorsKept = keptFloors;
         return toggled;
     }
 
@@ -1883,7 +1916,8 @@ public unsafe class ZoneLoadService : IDisposable
         AutoDropColliders = true;   // b185: a manual "on" re-enables auto-engage on later loads (plugin persists to config)
         int dropped = SweepSectionColliders(false);
         log.Information("[HMSync] [DROPCOLLIDERS] ON - dropped " + dropped + " section CollisionBox collider(s) (boss-arena fences / "
-            + "section gates / phase walls / NPC pens). Meshes remain (ghost-through). `hms dropcolliders off` restores.");
+            + "section gates / phase walls / NPC pens); kept " + lastFloorsKept + " walkable-floor box(es) (b220). "
+            + "Meshes remain (ghost-through). `hms dropcolliders off` restores.");
         // Colliders can still be streaming in; keep sweeping for a few seconds so late boxes get caught too.
         ArmSectionDropPoll();
     }

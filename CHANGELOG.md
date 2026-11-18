@@ -5,6 +5,13 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0.1] - 2026-11-18
+
+### Fixed
+
+- **Alexandria (old town, no neon): no more purple light on the walls.** The neon's own lights are now switched off too, so the purple glow it cast on nearby walls is gone. The town's sky lighting is unchanged.
+- **Floors made of collision boxes stay walkable.** When HMS removes a map's section walls and barriers, it now keeps the thin flat boxes some maps use as floors. On The Tower of Babil, for example, the spawn platform and the stair tops are solid again.
+
 ## [1.1.0.0] - 2026-11-18
 
 ### Added

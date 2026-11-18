@@ -128,9 +128,34 @@ public static class MapEdits
             if (fn.EndsWith("_arf11.mdl", StringComparison.OrdinalIgnoreCase) || fn.EndsWith("_arf16.mdl", StringComparison.OrdinalIgnoreCase))
                 log.Information($"[MapEdits] {r.Row}: gate {fn} id {x.Id} at ({x.Pos.X:F2}, {x.Pos.Y:F2}, {x.Pos.Z:F2}) rot ({x.Rot.X:F3}, {x.Rot.Y:F3}, {x.Rot.Z:F3}) hidden");
         }
+        // b310: the neon's own spill lights. Street-level POINT lights in the same layers with a purple colour (blue >= 1.4 x
+        // green and red <= 0.7 x blue): Alexandria's town has 41 at (164,102,255) that leave purple pools on the walls once the
+        // neon is gone (user screenshot). The two lavender (194,179,255) SPOT lights 170-290 m up and the white PLANE light are
+        // the town's sky lighting and fail the test (red/blue 0.76). Colour is read from the level's bg.lgb via Lumina.
+        int lightsOff = 0;
+        try
+        {
+            var lgb = data.GetFile<Lumina.Data.Files.LgbFile>("bg/" + r.Level + "/level/bg.lgb");
+            if (lgb != null)
+                foreach (var layer in lgb.Layers)
+                {
+                    if (!layer.Name.StartsWith(r.LayerPrefix, StringComparison.OrdinalIgnoreCase)) continue;
+                    foreach (var o in layer.InstanceObjects)
+                    {
+                        if (o.Object is not Lumina.Data.Parsing.Layer.LayerCommon.LightInstanceObject li) continue;
+                        if (li.LightType != Lumina.Data.Parsing.Layer.LightType.Point) continue;
+                        var c = li.DiffuseColorHDRI;
+                        if (c.Blue < 60 || c.Blue < 1.4f * c.Green || c.Red > 0.7f * c.Blue) continue;
+                        hides.Add(new[] { o.InstanceId, layer.LayerId & 0xFFFF, (uint)Lumina.Data.Parsing.Layer.LayerEntryType.LayLight });
+                        lightsOff++;
+                    }
+                }
+        }
+        catch (Exception ex) { log.Warning("[MapEdits] " + r.Row + ": light read failed: " + ex.Message); }
+
         string place = data.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>()?.GetRowOrDefault(r.Tt)?.PlaceName.ValueNullable?.Name.ExtractText() ?? "";
         string seg = FileName(r.Level);
-        log.Information($"[MapEdits] {r.Row} '{place}': {neon} neon part(s) hidden ({glow.Count(kv => kv.Value)} glowing model(s) of {glow.Count} checked), " +
+        log.Information($"[MapEdits] {r.Row} '{place}': {lightsOff} purple spill light(s) off, {neon} neon part(s) hidden ({glow.Count(kv => kv.Value)} glowing model(s) of {glow.Count} checked), " +
                         $"{props.Count} lamp(s) replaced");
         return new DressingDto
         {
