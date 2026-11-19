@@ -61,8 +61,8 @@ public static class StructDumper
         if (seen.Count == 0)
         {
             sb.AppendLine("NONE of the candidate type names resolved. Either the namespaces");
-            sb.AppendLine("differ in this CS version, or the assembly isn't loaded yet. Tell");
-            sb.AppendLine("Claude the build error from the IntelliSense probe instead.");
+            sb.AppendLine("differ in this CS version, or the assembly isn't loaded yet. Check");
+            sb.AppendLine("the build error from the IntelliSense probe instead.");
         }
 
         Directory.CreateDirectory(outputDirectory);
