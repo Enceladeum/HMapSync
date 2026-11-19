@@ -467,7 +467,12 @@ public unsafe class MapSettingsService
 
     // LGB names that can carry MapRange BGM triggers, in probe order. (bg = geometry+ranges, planmap = dungeon/instance
     // ranges, planevent = event-instance ranges; the rest are scanned defensively.) All are unioned + deduped by BGM id.
-    private static readonly string[] BgmLgbNames = { "bg", "planmap", "planevent", "planlive", "sound", "planner" };
+    // b311: ONLY the three that ever carry them. Measured over all 596 level paths (offline Lumina scan): bg = 0 levels with a
+    // BGM MapRange but 216.6 MB of the 241 MB the World parse read (and decoded into objects: the whole geometry layout of
+    // ~900 territories); planlive 0 / 1.6 MB; sound 0 / 4.5 MB. planmap 52 levels (138 ids found nowhere else), planevent 40
+    // (114), planner 5 (13). Dropping the three empty kinds keeps every track and cuts ~93% of the read + allocation: the
+    // prime suspect for the user-reported "slow freeze" on a first World parse inside a memory-tight trial (Seat of Sacrifice).
+    private static readonly string[] BgmLgbNames = { "planmap", "planevent", "planner" };
 
     // Every distinct MapRange BGM trigger in a territory's LGBs. First-seen order across the probe list, deduped by BGM
     // id. `layer` is the LGB layer name; `enabled`/`weather`/`inOnly` are the raw trigger gates for diagnostics.
