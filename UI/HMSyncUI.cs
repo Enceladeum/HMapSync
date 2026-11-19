@@ -1962,6 +1962,15 @@ public class HMSyncUI
     public void DrawBgmPickerWindow()
     {
         if (!bgmPickerOpen || MapSettings == null) return;
+        var swDraw = System.Diagnostics.Stopwatch.StartNew();   // b312: slow-frame instrument (reported once per chip)
+        try { DrawBgmPickerWindowBody(); }
+        finally { MapSettings?.NotePickerDraw(bgmPickerCat ?? "", lastPickerRows, swDraw.Elapsed.TotalMilliseconds); }
+    }
+
+    private int lastPickerRows;
+    private void DrawBgmPickerWindowBody()
+    {
+        if (MapSettings == null) return;
         uint loadedZone = CurrentLoadedZone?.Invoke() ?? 0;
         bool live = (CanLoad?.Invoke() ?? false) && loadedZone != 0;
         uint tt = live ? loadedZone : (CurrentRealTerritory?.Invoke() ?? 0);
@@ -2026,10 +2035,12 @@ public class HMSyncUI
                 MapSettings.EnsureCategoryParsed(bgmPickerCat, BgmChipTerritories(bgmPickerCat));
                 if (!MapSettings.IsCategoryReady(bgmPickerCat))
                     ImGui.TextDisabled("Loading " + bgmPickerCat + " tracks…");
+                lastPickerRows = 0;   // b312
                 foreach (var kv in MapSettings.GetCategoryTracks(bgmPickerCat)
                              .Where(kv => kv.Key != zoneDefault)
                              .OrderBy(kv => kv.Value, StringComparer.OrdinalIgnoreCase))
                 {
+                    lastPickerRows++;
                     if (searching && !kv.Value.Contains(q, StringComparison.OrdinalIgnoreCase)) continue;
                     BgmPickerRow(kv.Key, kv.Value, activeSel, tt, local);
                 }

@@ -5,6 +5,12 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0.3] - 2026-11-19
+
+### Added
+
+- **Music browser diagnostics.** If the game freezes while you browse music, `dalamud.log` now records what HMS was doing and how long the game stalled. Nothing changes in game. If you hit the freeze, please send your whole `dalamud.log`.
+
 ## [1.1.0.2] - 2026-11-19
 
 ### Fixed

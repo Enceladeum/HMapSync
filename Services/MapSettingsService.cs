@@ -497,7 +497,11 @@ public unsafe class MapSettingsService
                 var path = "bg/" + levelPath + "/" + name + ".lgb";
                 Lumina.Data.Files.LgbFile? f;
                 long t0 = throttleRatio > 0 ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+                BgmStep("tt " + territoryId + " " + name + ".lgb");   // b312
+                long tRead = System.Diagnostics.Stopwatch.GetTimestamp();
                 try { f = dataManager.GetFile<Lumina.Data.Files.LgbFile>(path); } catch { continue; }
+                double readMsDiag = MsSince(tRead);
+                if (readMsDiag > 1000) log.Warning($"[HMSync] [BGMDIAG] slow read {readMsDiag:F0} ms: {path} ({Mem()})");   // b312
                 // b244: adaptive duty-cycle back-off - sleep proportional to how long THIS read actually took, so an
                 // expensive read is followed by a proportional pause (the render thread gets the lock back), while cheap
                 // reads barely pause. Capped so a pathological read can't stall the parse forever.
@@ -902,19 +906,100 @@ public unsafe class MapSettingsService
     // World/City field zones do real scanning, and even then only their own slice. Idempotent per category key.
     //   `cat` is the chip key (also the disk-cache section + the categoryTracks bucket key). `ttIds` are the territories the
     //   UI classified into that chip (from its Zones clusters). Runs on a BelowNormal background thread with a per-dir yield.
+    // ── b312: music-browser freeze instrument (prod-safe, always on, quiet) ─────────────────────────────────────────────
+    // A user freezes the game opening the World music chip (Seat of Sacrifice, then an inn on 1.1.0.2); it never reproduces
+    // here. This makes the next report carry facts, in dalamud.log, with no command and no setting:
+    //   * [BGMDIAG] parse start/end per category: duration, territories, tracks, working set, managed heap, gen-2 GCs;
+    //   * a breadcrumb of what the parse thread is doing (`bgmParseStep`), and any single level-file read over 1 s;
+    //   * a WATCHDOG thread (while a parse runs or the browser was drawn in the last 10 s): if the framework heartbeat is
+    //     older than 2 s it logs once per stall, FROM THE BACKGROUND, so the line is written even if the game never recovers;
+    //   * when a stall ends, the next frame logs its length (`NoteFrame`); the browser logs a slow frame (> 250 ms) once.
+    // Lines only on events/anomalies; nothing per frame in the normal case.
+    private long frameHeartbeat;                 // Stopwatch timestamp of the last framework tick
+    private long pickerDrawnAt;                  // Stopwatch timestamp of the last browser draw
+    private volatile string bgmParseStep = "";
+    private int bgmParsesRunning;
+    private int watchdogStarted;
+    private bool stallLogged;
+    private static double MsSince(long ts) => ts == 0 ? 0 : (System.Diagnostics.Stopwatch.GetTimestamp() - ts) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+    // b313: + total GC pause time (all plugins share one runtime; a full GC pauses Dalamud's framework tick too). The b312
+    // run on 922 showed World triggering 7 gen-2 GCs in 3 s with a ~1 GB shared managed heap: the pause per GC grows with
+    // that heap, so a heavier plugin load can turn the same parse into a multi-second freeze. `pause` makes that measurable.
+    private static string Mem() => $"ws={System.Environment.WorkingSet / 1048576}MB managed={GC.GetTotalMemory(false) / 1048576}MB gen2={GC.CollectionCount(2)} pause={GC.GetTotalPauseDuration().TotalMilliseconds:F0}ms";
+
+    /// <summary>b312: called once per framework tick. Logs the length of a stall that just ended while the music browser
+    /// was in use (a loading screen is not that case, so ordinary zone changes stay silent).</summary>
+    public void NoteFrame()
+    {
+        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+        long prev = System.Threading.Interlocked.Exchange(ref frameHeartbeat, now);
+        if (prev == 0) return;
+        double gap = (now - prev) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        bool musicActive = System.Threading.Volatile.Read(ref bgmParsesRunning) > 0 || MsSince(pickerDrawnAt) < 10000;
+        if (gap > 1500 && musicActive)
+            log.Warning($"[HMSync] [BGMDIAG] game thread was stalled {gap:F0} ms (music parses running: {bgmParsesRunning}, step: '{bgmParseStep}', {Mem()})");
+        stallLogged = false;
+    }
+
+    /// <summary>b312: the browser reports each frame it drew and how long that took.</summary>
+    public void NotePickerDraw(string cat, int rows, double ms)
+    {
+        pickerDrawnAt = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (ms > 250 && slowPickerLogged.Add(cat))
+            log.Warning($"[HMSync] [BGMDIAG] music browser frame took {ms:F0} ms (chip '{cat}', {rows} rows, ready={IsCategoryReady(cat)}, {Mem()})");
+        EnsureBgmWatchdog();
+    }
+    private readonly System.Collections.Generic.HashSet<string> slowPickerLogged = new();   // UI thread only
+
+    private void BgmStep(string step) => bgmParseStep = step;
+
+    private void EnsureBgmWatchdog()
+    {
+        if (System.Threading.Interlocked.Exchange(ref watchdogStarted, 1) == 1) return;
+        var w = new System.Threading.Thread(() =>
+        {
+            while (true)
+            {
+                System.Threading.Thread.Sleep(1000);
+                try
+                {
+                    bool musicActive = System.Threading.Volatile.Read(ref bgmParsesRunning) > 0 || MsSince(pickerDrawnAt) < 10000;
+                    double age = MsSince(System.Threading.Interlocked.Read(ref frameHeartbeat));
+                    if (musicActive && age > 2000 && !stallLogged)
+                    {
+                        stallLogged = true;
+                        log.Warning($"[HMSync] [BGMDIAG] game thread not ticking for {age / 1000:F1} s while the music browser is in use " +
+                                    $"(parses running: {bgmParsesRunning}, step: '{bgmParseStep}', {Mem()})");
+                    }
+                }
+                catch { }
+            }
+        })
+        { IsBackground = true, Priority = System.Threading.ThreadPriority.BelowNormal, Name = "HMSync-BgmWatchdog" };
+        w.Start();
+    }
+
     public void EnsureCategoryParsed(string cat, IReadOnlyList<uint> ttIds)
     {
         if (string.IsNullOrEmpty(cat)) return;
         if (!categoryParseStarted.TryAdd(cat, 1)) return;   // already parsing / parsed this session
         var idsCopy = ttIds.ToArray();                       // snapshot: the UI list may change; the thread owns this copy
+        EnsureBgmWatchdog();   // b312
         var t = new System.Threading.Thread(() =>
         {
+            System.Threading.Interlocked.Increment(ref bgmParsesRunning);   // b312
+            var swParse = System.Diagnostics.Stopwatch.StartNew();
+            int gen2At = GC.CollectionCount(2);
+            var pauseAt = GC.GetTotalPauseDuration();   // b313
             try
             {
+                log.Information($"[HMSync] [BGMDIAG] '{cat}': start ({idsCopy.Length} territories, {Mem()})");   // b312
                 // b242: the sheet-name catalog now builds on its own background thread; wait briefly for it so a fresh
                 // parse names sheet-known tracks by their real place/duty name (and caches THAT), not a zone-derived fallback.
+                BgmStep(cat + ": waiting for the name catalogue");
                 EnsureBgmNames();
                 for (int spins = 0; bgmZoneName == null && spins < 500; spins++) System.Threading.Thread.Sleep(10);
+                BgmStep(cat + ": reading the disk cache");
                 var cached = LoadCategoryCache(cat);
                 var bucket = cached ?? ParseTerritoryTracks(idsCopy);
                 // b238: the alliance-raid series packs have empty LGBs + placeholder primaries, so ParseTerritoryTracks can't
@@ -929,11 +1014,18 @@ public unsafe class MapSettingsService
                 if (cached == null) SaveCategoryCache(cat, bucket);
                 log.Information("[HMSync] BGM category '" + cat + "': " + bucket.Count + " tracks "
                     + (cached != null ? "from cache." : "parsed from " + idsCopy.Length + " territories."));
+                log.Information($"[HMSync] [BGMDIAG] '{cat}': done in {swParse.ElapsedMilliseconds} ms ({(cached != null ? "cache" : "parsed")}, " +
+                                $"{bucket.Count} tracks, gen2 +{GC.CollectionCount(2) - gen2At}, GC pause +{(GC.GetTotalPauseDuration() - pauseAt).TotalMilliseconds:F0} ms, {Mem()})");   // b312/b313
             }
             catch (Exception ex)
             {
                 categoryParseStarted.TryRemove(cat, out _);   // allow a retry after a failure
                 log.Warning("[HMSync] BGM category parse '" + cat + "' failed: " + ex.Message);
+            }
+            finally
+            {
+                System.Threading.Interlocked.Decrement(ref bgmParsesRunning);   // b312
+                BgmStep("");
             }
         })
         {
