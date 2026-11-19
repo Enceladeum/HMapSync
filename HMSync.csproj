@@ -3,7 +3,7 @@
         <TargetFramework>net10.0-windows</TargetFramework>
         <LangVersion>latest</LangVersion>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-        <Version>1.1.0.4</Version>
+        <Version>1.1.0.5</Version>
         <AssemblyName>HMSync</AssemblyName>
         <RootNamespace>HMSync</RootNamespace>
         <Nullable>enable</Nullable>
@@ -60,6 +60,9 @@
              feature. Byte-identical for every peer so a fresh install's picker is fully populated and a future
              graft-sync only needs to send (weather, donor). -->
         <EmbeddedResource Include="keyframe-sets.json" />
+        <!-- b315: track titles + duty attribution, derived from the Orchestrion Plugin's community BGM list (credit in the
+             file's "source" block, MapSettingsService and the README). Regenerated offline when the list updates. -->
+        <EmbeddedResource Include="bgm-attribution.json" />
     </ItemGroup>
 
     <ItemGroup>

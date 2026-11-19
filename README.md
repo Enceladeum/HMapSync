@@ -236,4 +236,7 @@ HMapSync is distributed through a custom Dalamud plugin repository.
 - Author: The Enceladeum
 - Built on Dalamud, FFXIVClientStructs, Glamourer.Api, and MessagePack
 - Inspired by Hyperborea. We stand on the shoulders of giants.
+- Music titles, and which duty plays each boss-phase track, come from the community-maintained FFXIV BGM list
+  distributed with the [Orchestrion Plugin](https://github.com/perchbirdd/OrchestrionPlugin) by perchbird (originally
+  Meli). Thank you to everyone who keeps that list up to date.
 - License: GNU AGPL-3.0. See [LICENSE](LICENSE).

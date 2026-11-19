@@ -1033,6 +1033,7 @@ public unsafe class MapSettingsService
                     var taken = new HashSet<string>(bucket.Values, StringComparer.OrdinalIgnoreCase);
                     AddRaidSeriesPacks(bucket, taken);
                 }
+                AddAttributedTracks(cat, idsCopy, bucket);   // b315: script-only tracks for these territories (or the Other chip)
                 categoryTracks[cat] = bucket;                // publish the whole bucket at once
                 MergeIntoLearned(bucket);                    // so BgmName + "All" see these ids too
                 if (cached == null) SaveCategoryCache(cat, bucket);
@@ -1127,6 +1128,111 @@ public unsafe class MapSettingsService
     // b238: add one resolved track to a category bucket. Skips silence/placeholder + already-claimed ids. A track a sheet
     // names keeps the SHEET name (so the chip lists it under its real place/duty name); an LGB-only extra is named
     // "<Zone>" / "<Zone> - <label>" with a " #N" collision suffix.
+    // ── b315: track TITLES and the duty a script-only track plays in ─────────────────────────────────────────────────
+    // The game carries no track titles, and tracks only an encounter script plays (boss phases: 769 "Echoes in the Dark"
+    // in The Seat of Sacrifice) are referenced by no client sheet, so the catalogue above cannot see them. Both come from
+    // the embedded bgm-attribution.json, DERIVED from the community-maintained FFXIV BGM list (xiv_bgm_{en,ja,de,fr}.csv)
+    // distributed with the Orchestrion Plugin by perchbird (originally Meli), https://github.com/perchbirdd/OrchestrionPlugin.
+    // Credit: that list and everyone who maintains it. It states no licence; HMS ships only a derived subset (id -> title
+    // per language, and id -> the territories a script-only track plays in) and credits it here, in the file's "source"
+    // block and in the README. Regenerated offline from that list when it updates.
+    //   Names become "Title (Place)". Script-only tracks join the chip whose territories they
+    //   play in; tracks with no duty or zone go to one of three chips by the list's location text (generator group "g"):
+    //   mount riding themes, cutscene/title/credits themes, and events + everything else. The chip names are distinct
+    //   from the zone categories (the Zones tab already has an "Other" category: sharing that key merged two chips).
+    private sealed record BgmAttribution(Dictionary<uint, string> Titles, Dictionary<uint, uint[]> Territories, Dictionary<uint, (string Where, string Group)> Other);
+    private BgmAttribution? bgmAttribution;
+    private readonly object bgmAttributionLock = new();
+    public static readonly string[] AttributedBgmChips = { "Cutscene themes", "Mount themes", "Event & misc" };
+    private static string? AttributedGroup(string cat) => cat switch
+    {
+        "Cutscene themes" => "c",
+        "Mount themes" => "m",
+        "Event & misc" => "e",
+        _ => null,
+    };
+
+    private BgmAttribution Attribution()
+    {
+        if (bgmAttribution != null) return bgmAttribution;
+        lock (bgmAttributionLock)
+        {
+            if (bgmAttribution != null) return bgmAttribution;
+            var titles = new Dictionary<uint, string>(); var tts = new Dictionary<uint, uint[]>(); var other = new Dictionary<uint, (string, string)>();
+            try
+            {
+                string lang = dataManager.Language switch
+                {
+                    Dalamud.Game.ClientLanguage.Japanese => "ja",
+                    Dalamud.Game.ClientLanguage.German => "de",
+                    Dalamud.Game.ClientLanguage.French => "fr",
+                    _ => "en",
+                };
+                var asm = System.Reflection.Assembly.GetExecutingAssembly();
+                var res = Array.Find(asm.GetManifestResourceNames(), n => n.EndsWith("bgm-attribution.json", StringComparison.OrdinalIgnoreCase));
+                if (res != null)
+                {
+                    using var st = asm.GetManifestResourceStream(res);
+                    using var doc = System.Text.Json.JsonDocument.Parse(st!);
+                    foreach (var e in doc.RootElement.GetProperty("tracks").EnumerateArray())
+                    {
+                        uint id = e.GetProperty("id").GetUInt32();
+                        if (e.TryGetProperty("t", out var t))
+                        {
+                            string? title = t.TryGetProperty(lang, out var tl) ? tl.GetString() : null;
+                            if (string.IsNullOrWhiteSpace(title) && t.TryGetProperty("en", out var te)) title = te.GetString();
+                            if (!string.IsNullOrWhiteSpace(title)) titles[id] = title!;
+                        }
+                        if (e.TryGetProperty("tt", out var tt)) tts[id] = tt.EnumerateArray().Select(x => x.GetUInt32()).ToArray();
+                        if (e.TryGetProperty("other", out var o) && o.GetString() is { Length: > 0 } os)
+                            other[id] = (os, e.TryGetProperty("g", out var gr) ? gr.GetString() ?? "e" : "e");
+                    }
+                }
+                log.Information($"[HMSync] BGM attribution: {titles.Count} titles ({lang}), {tts.Count} script-only tracks attached, {other.Count} in the cutscene/mount/event chips");
+            }
+            catch (Exception ex) { log.Warning("[HMSync] BGM attribution load failed: " + ex.Message); }
+            bgmAttribution = new BgmAttribution(titles, tts, other);
+            return bgmAttribution;
+        }
+    }
+
+    // "Title (Place)" when the list titles this track; the place alone otherwise; the title alone when there is no place.
+    private string DualName(uint id, string place)
+    {
+        if (!Attribution().Titles.TryGetValue(id, out var title)) return place;
+        if (string.IsNullOrWhiteSpace(place) || place.StartsWith("Track ", StringComparison.Ordinal)) return title;
+        if (string.Equals(title, place, StringComparison.OrdinalIgnoreCase)) return title;
+        return title + " (" + place + ")";
+    }
+
+    // Script-only tracks that play in any of these territories, plus (for the Other chip) every track with no duty or zone.
+    private void AddAttributedTracks(string cat, IReadOnlyList<uint> ttIds, Dictionary<uint, string> bucket)
+    {
+        var a = Attribution();
+        var taken = new HashSet<string>(bucket.Values, StringComparer.OrdinalIgnoreCase);
+        void Put(uint id, string name)
+        {
+            if (bucket.ContainsKey(id)) return;
+            string n = name;
+            for (int k = 2; taken.Contains(n); k++) n = name + " #" + k;
+            taken.Add(n); bucket[id] = n;
+        }
+        if (AttributedGroup(cat) is { } group)
+        {
+            foreach (var (id, (where, g)) in a.Other)
+                if (g == group && a.Titles.TryGetValue(id, out var title)) Put(id, title + " (" + where + ")");
+            return;
+        }
+        if (ttIds.Count == 0 || a.Territories.Count == 0) return;
+        var set = new HashSet<uint>(ttIds);
+        foreach (var (id, tts) in a.Territories)
+        {
+            uint hit = tts.FirstOrDefault(set.Contains);
+            if (hit == 0) continue;
+            Put(id, DualName(id, GetZoneName(hit)));
+        }
+    }
+
     private void ClaimTrack(Dictionary<uint, string> map, HashSet<string> taken, HashSet<uint> seen, uint trackId, string zone, string label)
     {
         if (trackId == 0 || trackId == SilenceTrackBgm || trackId == SilencePlaceholderBgm) return;
@@ -1144,6 +1250,8 @@ public unsafe class MapSettingsService
             name = baseName;
             for (int n = 2; taken.Contains(name); n++) name = baseName + " #" + n;
         }
+        string dual = DualName(trackId, name);   // b315: "Title (Place)"
+        if (!ReferenceEquals(dual, name)) { name = dual; for (int n = 2; taken.Contains(name); n++) name = dual + " #" + n; }
         taken.Add(name);
         map[trackId] = name;
     }
@@ -1284,11 +1392,11 @@ public unsafe class MapSettingsService
         }
         EnsureBgmNames();
         if (bgmZoneName != null && bgmZoneName.TryGetValue(id, out var place) && !string.IsNullOrWhiteSpace(place))
-            return place;
-        if (learnedTrackName.TryGetValue(id, out var learned)) return learned;   // b234: LGB-derived positional track
+            return DualName(id, place);                                           // b315: "Title (Place)"
+        if (learnedTrackName.TryGetValue(id, out var learned)) return learned;   // b234: LGB-derived positional track (already dual-named)
         var fileName = BgmFileDerivedName(id);                                    // b236: name from the track's own .scd file
-        if (!string.IsNullOrEmpty(fileName)) return fileName;
-        return "Track " + id;
+        if (!string.IsNullOrEmpty(fileName)) return DualName(id, fileName);
+        return DualName(id, "Track " + id);
     }
 
     /// <summary>

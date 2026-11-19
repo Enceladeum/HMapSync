@@ -5,6 +5,17 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0.5] - 2026-11-19
+
+### Added
+
+- **531 more tracks in Browse music.** 190 join the duties they play in, and 341 fill three new categories (below).
+- **Music titles.** Tracks in Browse music now show their title and where they play, for example "Echoes in the Dark (The Seat of Sacrifice)", in your game language.
+- **Boss-phase tracks.** Tracks that only play during an encounter, such as a boss's second phase, are now listed under the duty they belong to. Before, they were missing.
+- **Three new music categories:** Cutscene themes (118), Mount themes (101), and Event & misc (122).
+
+Track titles and duty information come from the community FFXIV music list distributed with the Orchestrion Plugin. Thank you to everyone who maintains it.
+
 ## [1.1.0.4] - 2026-11-19
 
 ### Fixed

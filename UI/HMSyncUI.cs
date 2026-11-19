@@ -1933,6 +1933,7 @@ public class HMSyncUI
         // scene, not bound to a browsable territory). b242: no "All" chip - it built the whole flat catalog on open (the
         // launch-stutter path); every chip is now a bounded lazy category. Orchestrion appended as its own chip.
         foreach (var c in Categories) { if (c == "All" || c == "Cutscenes") continue; list.Add(c); }
+        list.AddRange(Services.MapSettingsService.AttributedBgmChips);   // b315/b316: titled tracks with no duty or zone, by kind
         list.Add("Orchestrion");
         return list.ToArray();
     }
