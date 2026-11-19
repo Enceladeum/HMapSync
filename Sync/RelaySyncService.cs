@@ -479,7 +479,7 @@ public class RelaySyncService : IDisposable
         // S328ak: reassemble multi-frame messages. A WebSocket message may arrive as several frames (EndOfMessage
         // false until the last), regardless of size - the old code assumed one frame == one message and used
         // result.Count directly, so a roster/burst/large payload would truncate and silently fail to parse (the
-        // catch{continue} swallowed it). Accumulate until EndOfMessage, with a cap. Relay Claude fixed the mirror
+        // catch{continue} swallowed it). Accumulate until EndOfMessage, with a cap. The relay fixed the mirror
         // bug server-side; this is the client half. 64KB cap matches the relay's.
         const int MaxMessageBytes = 64 * 1024;
         using var assembly = new System.IO.MemoryStream();
