@@ -5,6 +5,12 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0.4] - 2026-11-19
+
+### Fixed
+
+- **Music browser freeze.** Opening a music category, World in particular, could freeze the game for minutes on some PCs. A few of the game's level files are empty stubs, and reading one of them could make HMS reserve tens of gigabytes of memory. HMS now checks each file first and skips the stubs. You get the same tracks as before.
+
 ## [1.1.0.3] - 2026-11-19
 
 ### Added

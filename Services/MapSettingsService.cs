@@ -480,6 +480,16 @@ public unsafe class MapSettingsService
     // (readTime × throttleRatio), capped, so the parser holds the lock for at most 1/(1+ratio) of wall time - the render
     // thread is guaranteed the rest. This is what makes a big World/City LGB read stop hitching FPS: the cost of one read
     // is followed by a proportional pause, spacing contention out instead of bursting. 0 = no throttle (the diagnostic path).
+    // b314: an .lgb Lumina can parse safely: the LGP1 chunk is present and the layer table fits inside the file.
+    private static bool IsWellFormedLgb(byte[] b)
+    {
+        if (b.Length < 36 || b[12] != (byte)'L' || b[13] != (byte)'G' || b[14] != (byte)'P' || b[15] != (byte)'1') return false;
+        int layOff = BitConverter.ToInt32(b, 28), layCnt = BitConverter.ToInt32(b, 32);
+        if (layCnt < 0 || layOff < 0) return false;
+        return 20L + layOff + 4L * layCnt <= b.Length;
+    }
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> skippedLgbStubs = new();   // log each stub once
+
     private List<(uint bgm, byte enabled, uint weather, byte inOnly, string layer)> ScanZoneMapRangeBgm(uint territoryId, int throttleRatio = 0)
     {
         var outp = new List<(uint, byte, uint, byte, string)>();
@@ -499,6 +509,20 @@ public unsafe class MapSettingsService
                 long t0 = throttleRatio > 0 ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
                 BgmStep("tt " + territoryId + " " + name + ".lgb");   // b312
                 long tRead = System.Diagnostics.Stopwatch.GetTimestamp();
+                // b314: THE FREEZE. 17 of the game's 174 planner.lgb files are stubs with no LGP1 layer chunk (w1f1 = Western
+                // Thanalan is 312 bytes). Lumina reads the bytes after the header as the layer count (827,344,716 for w1f1) and
+                // allocates an array that size. Usually that throws at once and the file is skipped; on a machine with enough
+                // RAM + page file it SUCCEEDS: the reporter's 1.1.0.3 log shows the managed heap 3.6 GB -> 84 GB, a 142 s read
+                // of that file and a 220 s game freeze. So check the raw bytes first and only hand a well-formed file to Lumina.
+                // (Every bg/planmap/planevent/planlive/sound/vfx .lgb in all 596 levels is well-formed; only planner has stubs.)
+                byte[]? rawLgb;
+                try { rawLgb = dataManager.GetFile(path)?.Data; } catch { continue; }
+                if (rawLgb == null) continue;
+                if (!IsWellFormedLgb(rawLgb))
+                {
+                    if (skippedLgbStubs.TryAdd(path, 0)) log.Information($"[HMSync] [BGMDIAG] skipped {path}: {rawLgb.Length} B stub, no layer chunk");
+                    continue;
+                }
                 try { f = dataManager.GetFile<Lumina.Data.Files.LgbFile>(path); } catch { continue; }
                 double readMsDiag = MsSince(tRead);
                 if (readMsDiag > 1000) log.Warning($"[HMSync] [BGMDIAG] slow read {readMsDiag:F0} ms: {path} ({Mem()})");   // b312
