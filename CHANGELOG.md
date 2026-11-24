@@ -5,6 +5,17 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0.6] - 2026-11-24
+
+### Added
+
+- **Poses from HDM show for other players.** With HDM 1.0.6.0, a pose held on an undisguised character now shows for other HMS players, with its intro and hand prop, including for players who arrive later.
+- **Ready for future HDM updates.** HMS now passes HDM's disguise data to other players unchanged, so new HDM features can reach them without waiting for an HMS update.
+
+### Fixed
+
+- **Ending a session releases held poses.** Ending a session now also releases a held pose HMS applied to another player. Before, only disguises were released.
+
 ## [1.1.0.5] - 2026-11-19
 
 ### Added

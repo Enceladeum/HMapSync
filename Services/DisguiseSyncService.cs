@@ -188,7 +188,7 @@ public sealed class DisguiseSyncService : IDisposable
         {
             var self = RefreshSelfCid();
             var own = hdm.GetDisguise();
-            if (own != null && own.Kind != 0)
+            if (own != null && HasState(own))   // b317 (HDM Q-0044): an undisguised body holding a pose / prop is state too
                 _ = relay.SendDisguiseUpdate(BuildDisguise("", self, own));
             foreach (var p in hdm.GetPuppets())
             {
@@ -228,7 +228,7 @@ public sealed class DisguiseSyncService : IDisposable
                 lastOwnBody[d.SenderContentId] = d;
                 var idx = ResolveObjectIndex(d.SenderContentId);
                 if (idx < 0) return;   // not in render range yet → applied on OnPeerBound from the cache above
-                if (d.Kind == 0) hdm.RevertDisguise(idx);
+                if (!HasState(d)) hdm.RevertDisguise(idx);   // b317: Kind 0 + LoopId/Hand = real body holding a pose -> apply
                 else hdm.ApplyDisguise(idx, ToAtom(d));
             }
             else
@@ -252,7 +252,7 @@ public sealed class DisguiseSyncService : IDisposable
                 }
                 if (mirrorPuppets.TryGetValue(d.SubjectId, out var li))
                 {
-                    if (d.Kind == 0) hdm.RevertDisguise(li);   // puppet un-guised but still spawned - keep the mirror
+                    if (!HasState(d)) hdm.RevertDisguise(li);   // puppet un-guised but still spawned - keep the mirror (b317: unless it holds a pose)
                     else hdm.ApplyDisguise(li, ToAtom(d));
                 }
                 else
@@ -339,7 +339,7 @@ public sealed class DisguiseSyncService : IDisposable
     {
         var cid = ContentIdForObjectIndex(objectIndex);
         if (cid == 0) return;
-        if (lastOwnBody.TryGetValue(cid, out var d) && d.Kind != 0)
+        if (lastOwnBody.TryGetValue(cid, out var d) && HasState(d))   // b317: late join sees a held pose too
             hdm.ApplyDisguise(objectIndex, ToAtom(d));
         // Freeze-anim: re-assert a cached own-body freeze the moment the peer binds (unfrozen is the default, so only true).
         if (lastFrozenOwnBody.TryGetValue(cid, out var fr) && fr)
@@ -400,7 +400,7 @@ public sealed class DisguiseSyncService : IDisposable
         {
             var idx = ResolveObjectIndex(kv.Key);
             if (idx < 0) continue;                       // peer not in render range → nothing applied to revert
-            if (kv.Value.Kind != 0) { hdm.RevertDisguise(idx); reverted.Add(idx); }
+            if (HasState(kv.Value)) { hdm.RevertDisguise(idx); reverted.Add(idx); }   // b319: a held pose / prop on an undisguised body is released too
             hdm.SetFrozen(idx, false);                   // Freeze-anim: unpin any own-body freeze we drove
         }
         // Freeze edge that arrived without a cached disguise (rare) still gets unpinned on its bound body.
@@ -472,7 +472,17 @@ public sealed class DisguiseSyncService : IDisposable
         return 0;
     }
 
-    private static DisguiseUpdatePayload BuildDisguise(string subject, ulong self, HdmDisguiseAtom atom) => new()
+    // b318 (Q-0047): today's atom is about 200 bytes; anything far larger is not passed through (typed keys still go).
+    private const int MaxAtomJson = 2048;
+    private bool atomJsonCapLogged;
+    private string? CappedAtomJson(string? raw)
+    {
+        if (raw == null || raw.Length <= MaxAtomJson) return raw;
+        if (!atomJsonCapLogged) { atomJsonCapLogged = true; log.Debug($"[HMSync] HDM atom JSON is {raw.Length} chars (cap {MaxAtomJson}); sending typed fields only."); }
+        return null;
+    }
+
+    private DisguiseUpdatePayload BuildDisguise(string subject, ulong self, HdmDisguiseAtom atom) => new()
     {
         SubjectId = subject,
         SenderContentId = self,
@@ -483,7 +493,18 @@ public sealed class DisguiseSyncService : IDisposable
         Scale = atom.Scale,
         VOffset = atom.VOffset,
         LoopId = atom.LoopId,
+        IntroId = atom.IntroId,       // b317 (HDM IPC minor 6): intro played once before LoopId is held
+        Hand = atom.Hand,             // 0 own weapon / 1 empty hands / 2 prop
+        HandModel = atom.HandModel,   // the prop's packed weapon-slot model
+        AtomJson = CappedAtomJson(atom.RawJson),   // b318 (Q-0047): HDM's own JSON, passed through to the peer's HDM
     };
+
+    // b317 (HDM Q-0044): an atom has something to show when it carries a disguise, a held pose or a hand prop. HDM 1.0.6.0
+    // sends Kind 0 + LoopId for "real body, holding this pose"; before this, every Kind-0 branch here reverted or skipped,
+    // so undisguised held poses never reached peers. Safe in every mix: an old HDM sends Kind 0 with LoopId 0 / Hand 0
+    // (-> revert, as before); an old HDM receiving Kind 0 via ApplyDisguise runs its own revert path (same as before).
+    private static bool HasState(DisguiseUpdatePayload d) => d.Kind != 0 || d.LoopId != 0 || d.Hand != 0;
+    private static bool HasState(HdmDisguiseAtom a) => a.Kind != 0 || a.LoopId != 0 || a.Hand != 0;
 
     private static HdmDisguiseAtom ToAtom(DisguiseUpdatePayload d) => new()
     {
@@ -494,6 +515,12 @@ public sealed class DisguiseSyncService : IDisposable
         Scale = d.Scale,
         VOffset = d.VOffset,
         LoopId = d.LoopId,
+        IntroId = d.IntroId,       // b317
+        Hand = d.Hand,
+        HandModel = d.HandModel,
+        // b318 (Q-0047): when the sender carried HDM's JSON, HdmIpc hands THAT to our HDM (fields HMS doesn't name survive).
+        // Absent (an older sender): null -> the typed fields above are serialised, as before. Cap re-checked on receive.
+        RawJson = d.AtomJson is { Length: > 0 and <= MaxAtomJson } j ? j : null,
     };
 
     public void Dispose()

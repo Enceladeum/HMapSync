@@ -328,6 +328,16 @@ public class DisguiseUpdatePayload
     // sets it. New key index → old peers ignore it and a missing key decodes to false (safe: pre-b189 wire had no
     // despawn atoms in flight, blank spawns were simply dropped). Not a TransformData render field → LaneCensus-exempt.
     [Key(10)] public bool Despawn { get; set; }            // true = remove the mirror puppet; false = spawn/apply/revert-guise
+    // b317 (HDM Q-0044, HDM IPC minor 6): a held pose's intro + the hand prop. Additive keys like b189's Despawn: old peers
+    // ignore them, a missing key decodes to 0 (no intro, own weapon). Not TransformData render fields -> LaneCensus-exempt.
+    [Key(11)] public ushort IntroId { get; set; }          // intro timeline played once before LoopId is held; 0 = none
+    [Key(12)] public byte Hand { get; set; }               // 0 = own weapon, 1 = empty hands, 2 = prop (HandModel)
+    [Key(13)] public ulong HandModel { get; set; }         // the prop's packed weapon-slot model (Hand == 2)
+    // b318 (Q-0047): HDM's atom JSON exactly as the sender's HDM produced it. The receiver hands it to its own HDM unchanged,
+    // so an additive atom field HDM adds reaches peers with no HMS release. HMS's own routing (Epoch, Kind, Despawn, HasState)
+    // still reads the typed keys above, never this. New key: older peers ignore it, a missing key decodes to null (-> the
+    // typed path, as before). Capped by the sender. Not a TransformData render field -> LaneCensus-exempt.
+    [Key(14)] public string? AtomJson { get; set; }
 }
 
 /// <summary>ActionPulse (0x51): a one-shot action replay on a subject. Immediate, one per fire, NEVER snapshotted or

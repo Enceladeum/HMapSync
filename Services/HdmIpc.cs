@@ -37,6 +37,13 @@ public sealed class HdmDisguiseAtom
     public float Scale { get; set; }        // resolved absolute multiplier
     public float VOffset { get; set; }      // vertical draw offset, world units (F2: apply-time only, no per-frame emit)
     public ushort LoopId { get; set; }      // held animation timeline (Timeline.BaseOverride); 0 = none
+    // b317 (HDM IPC minor 6): same names as HDM's JSON. Kind 0 + LoopId = the real body holding a pose (HDM minor 5).
+    public ushort IntroId { get; set; }     // intro played once before LoopId is held (HDM plays it on a live change only)
+    public byte Hand { get; set; }          // 0 = own weapon, 1 = empty hands, 2 = prop
+    public ulong HandModel { get; set; }    // the prop's packed weapon-slot model
+    // b318 (Q-0047): the atom's JSON exactly as HDM produced it (sender), or as it arrived on the wire (receiver). Carried
+    // through untouched so fields HMS does not name still reach the peer's HDM. Never part of the JSON itself.
+    [JsonIgnore] public string? RawJson { get; set; }
 }
 
 /// <summary>HMS mirror of HDM's DisguiseChanged payload — a subject discriminator + the atom. Slot null = the DM's
@@ -202,7 +209,12 @@ public sealed class HdmIpc : IDisposable
         try
         {
             var d = JsonConvert.DeserializeObject<HdmDisguiseChange>(json);
-            if (d != null) OnDisguiseChanged?.Invoke(d.Slot, d.Atom ?? new HdmDisguiseAtom());
+            if (d != null)
+            {
+                d.Atom ??= new HdmDisguiseAtom();
+                d.Atom.RawJson = RawAtom(json, "Atom");   // b318 (Q-0047)
+                OnDisguiseChanged?.Invoke(d.Slot, d.Atom);
+            }
         }
         catch (Exception ex) { log.Debug("[HMSync] HDM DisguiseChanged decode failed: " + ex.Message); }
     }
@@ -218,7 +230,7 @@ public sealed class HdmIpc : IDisposable
         try
         {
             var p = JsonConvert.DeserializeObject<HdmPuppetInfo>(json);
-            if (p != null) OnPuppetSpawned?.Invoke(p);
+            if (p != null) { p.Atom ??= new HdmDisguiseAtom(); p.Atom.RawJson = RawAtom(json, "Atom"); OnPuppetSpawned?.Invoke(p); }   // b318
         }
         catch (Exception ex) { log.Debug("[HMSync] HDM PuppetSpawned decode failed: " + ex.Message); }
     }
@@ -238,7 +250,9 @@ public sealed class HdmIpc : IDisposable
         {
             var json = getDisguise.InvokeFunc();
             if (string.IsNullOrEmpty(json)) return null;
-            return JsonConvert.DeserializeObject<HdmDisguiseAtom>(json);
+            var a = JsonConvert.DeserializeObject<HdmDisguiseAtom>(json);
+            if (a != null) a.RawJson = RawAtom(json, null);   // b318 (Q-0047): the whole reply is the atom
+            return a;
         }
         catch (Exception ex) { log.Debug("[HMSync] HDM GetDisguise failed: " + ex.Message); return null; }
     }
@@ -269,9 +283,32 @@ public sealed class HdmIpc : IDisposable
         {
             var json = getPuppets.InvokeFunc();
             if (string.IsNullOrEmpty(json)) return new List<HdmPuppetInfo>();
-            return JsonConvert.DeserializeObject<List<HdmPuppetInfo>>(json) ?? new List<HdmPuppetInfo>();
+            var list = JsonConvert.DeserializeObject<List<HdmPuppetInfo>>(json) ?? new List<HdmPuppetInfo>();
+            // b318 (Q-0047): keep each puppet's raw atom (late-join snapshots carry HDM's fields too). Same order as the list.
+            try
+            {
+                var arr = Newtonsoft.Json.Linq.JArray.Parse(json);
+                for (int i = 0; i < list.Count && i < arr.Count; i++)
+                    if (list[i].Atom != null && arr[i] is Newtonsoft.Json.Linq.JObject o && o["Atom"] is Newtonsoft.Json.Linq.JObject ao)
+                        list[i].Atom.RawJson = ao.ToString(Formatting.None);
+            }
+            catch { /* typed path only */ }
+            return list;
         }
         catch (Exception ex) { log.Debug("[HMSync] HDM GetPuppets failed: " + ex.Message); return new List<HdmPuppetInfo>(); }
+    }
+
+    // b318 (Q-0047): the atom object as compact JSON, from the whole payload (prop null) or one property of it. Null on
+    // any surprise, which just means the typed path is used.
+    private static string? RawAtom(string json, string? prop)
+    {
+        try
+        {
+            var o = Newtonsoft.Json.Linq.JObject.Parse(json);
+            var a = prop == null ? o : o[prop] as Newtonsoft.Json.Linq.JObject;
+            return a?.ToString(Formatting.None);
+        }
+        catch { return null; }
     }
 
     // ── Receiver methods (drive a local peer/puppet mirroring a remote DM). All no-op-safe: HDM's side is
@@ -281,7 +318,7 @@ public sealed class HdmIpc : IDisposable
     public void ApplyDisguise(int objectIndex, HdmDisguiseAtom atom)
     {
         if (!Available || applyDisguise == null) return;
-        try { applyDisguise.InvokeAction(objectIndex, JsonConvert.SerializeObject(atom)); }
+        try { applyDisguise.InvokeAction(objectIndex, atom.RawJson ?? JsonConvert.SerializeObject(atom)); }   // b318: sender's HDM JSON when carried
         catch (Exception ex) { log.Debug("[HMSync] HDM ApplyDisguise failed: " + ex.Message); }
     }
 
@@ -333,7 +370,7 @@ public sealed class HdmIpc : IDisposable
     public int SpawnPuppet(HdmDisguiseAtom atom)
     {
         if (!Available || spawnPuppet == null) return -1;
-        try { return spawnPuppet.InvokeFunc(JsonConvert.SerializeObject(atom)); }
+        try { return spawnPuppet.InvokeFunc(atom.RawJson ?? JsonConvert.SerializeObject(atom)); }   // b318: sender's HDM JSON when carried
         catch (Exception ex) { log.Debug("[HMSync] HDM SpawnPuppet failed: " + ex.Message); return -1; }
     }
 
