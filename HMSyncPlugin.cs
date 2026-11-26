@@ -128,6 +128,13 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         config.MigrateRecentZones();   // v0.7.231: forward-migrate legacy RecentZones → RecentPlaces (idempotent)
         config.MigrateRelayKeys();     // v0.7.248: split baked-in ?k= keys into the Key field (fixes stale-master-key bug)
         config.Initialize(pluginInterface);
+        // b321/b323 (Q-0020): struct drift check (reflection only, no game memory). A failed check disables the dependent
+        // feature and says so in chat in EVERY build (user: offset-dependent features break loudly).
+        try
+        {
+            DriftCheckService.Run(log, config, s => chat.Print(s));
+        }
+        catch (Exception ex) { log.Debug("[HMSync] [DRIFT] check failed: " + ex.Message); }
         config.EnsureRelayServicesSeeded();   // S328am: populate built-in relay services on first run
         config.EnforceRelayServiceForMode(config.ShowDebugCommands);   // v0.7.338: keep non-debug users off the localhost dev endpoint
 

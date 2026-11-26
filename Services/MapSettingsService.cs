@@ -1558,6 +1558,7 @@ public unsafe class MapSettingsService
     // tearing down at logout. Called on the logged-in→out transition and from Dispose.
     public void SanitiseWeather()
     {
+        if (DriftCheckService.IsDisabled(DriftFeature.WeatherTables)) return;   // b323: layout moved, leave the sky alone
         try
         {
             if (weatherCram.ReplayActive) weatherCram.SetReplay(false);
@@ -1567,7 +1568,7 @@ public unsafe class MapSettingsService
             if (env == null) return;
             var scene = env->EnvScene;
             if (scene == null) return;
-            byte* idTable = (byte*)((nint)scene + 0x30);
+            byte* idTable = (byte*)System.Runtime.CompilerServices.Unsafe.AsPointer(ref scene->WeatherIds[0]);
             byte natural = idTable[0];                 // first bank id = a weather this zone can always back
             if (natural != 0 && env->ActiveWeather != natural)
             {
@@ -1587,13 +1588,15 @@ public unsafe class MapSettingsService
     // Fail-OPEN: null EnvManager/EnvScene (mid-load) returns true so legitimate applies are never spuriously blocked.
     public bool IsWeatherInLoadedBank(byte id)
     {
+        // b323: this is the crash guard for weather applies; with the layout in doubt, refuse the apply (loudly).
+        if (DriftCheckService.Refuse(DriftFeature.WeatherTables)) return false;
         try
         {
             var env = EnvManager.Instance();
             if (env == null) return true;
             var scene = env->EnvScene;
             if (scene == null) return true;
-            byte* idTable = (byte*)((nint)scene + 0x30);
+            byte* idTable = (byte*)System.Runtime.CompilerServices.Unsafe.AsPointer(ref scene->WeatherIds[0]);
             for (int i = 0; i < 32; i++)
                 if (idTable[i] == id) return true;
             return false;
@@ -1614,12 +1617,18 @@ public unsafe class MapSettingsService
         {
             var env = EnvManager.Instance();
             if (env == null) return 0;
-            byte displayed = *((byte*)((nint)env + 0x26));   // current/displayed weather
+            byte displayed = DisplayedWeather(env);   // current/displayed weather
             if (displayed != 0) return displayed;
             return env->ActiveWeather;                        // fall back to the target (0x27)
         }
         catch { return 0; }
     }
+
+    // b323 (Q-0020): the displayed-weather byte has no named field in ClientStructs, so it stays a raw read at +0x26,
+    // checked against its neighbour ActiveWeather (0x27). If that neighbour moved, the drift check disables this read
+    // (returns 0, and callers fall back to ActiveWeather) instead of reading whatever now sits at 0x26.
+    private static byte DisplayedWeather(EnvManager* env)
+        => DriftCheckService.IsDisabled(DriftFeature.DisplayedWeather) ? (byte)0 : *((byte*)((nint)env + 0x26));
 
     // b226: the LAST weather id an explicit user apply pushed (SetWeatherUnified / SetWeatherOrGraft(×2) /
     // SetWeatherNativeOnly all funnel through here). It exists because a keyframe GRAFT or a foreign-cram RESTAMP
@@ -1653,20 +1662,20 @@ public unsafe class MapSettingsService
     // resolver hunt: it confirms the data path and the format before any resolver hook is designed.
     public void DumpEnvbProbe()
     {
+        if (DriftCheckService.Refuse(DriftFeature.WeatherTables)) return;   // b323
         try
         {
             var env = EnvManager.Instance();
             if (env == null) { log.Information("[HMSync] [ENVB-PROBE] EnvManager null."); return; }
             byte active = env->ActiveWeather;
-            byte displayed = *((byte*)((nint)env + 0x26));
+            byte displayed = DisplayedWeather(env);
             var scene = env->EnvScene;
             log.Information("[HMSync] [ENVB-PROBE] ActiveWeather=" + active + " (" + WeatherName(active) + ")  displayed="
                 + displayed + " (" + WeatherName(displayed) + ")  EnvScene=0x" + ((nint)scene).ToString("X"));
             if (scene == null) return;
 
-            // The parsed per-set weather-id table (FixedSizeArray32<byte> @0x30). Read via raw offset so this
-            // doesn't depend on a generated accessor name - it's a diagnostic, robustness first.
-            byte* idTable = (byte*)((nint)scene + 0x30);
+            // The parsed per-set weather-id table (FixedSizeArray32<byte>), via its named accessor (b323).
+            byte* idTable = (byte*)System.Runtime.CompilerServices.Unsafe.AsPointer(ref scene->WeatherIds[0]);
             var sb = new System.Text.StringBuilder();
             bool activePresent = false;
             for (int i = 0; i < 32; i++)
@@ -1679,15 +1688,15 @@ public unsafe class MapSettingsService
             log.Information("[HMSync] [ENVB-PROBE] ActiveWeather " + active + " present in runtime set? " + activePresent
                 + (activePresent ? "" : "  ← MISS (a foreign weather forced here renders blank without donor injection)"));
 
-            uint locCount = *((uint*)((nint)scene + 0x888));   // EnvScene.LocationCount
+            uint locCount = scene->LocationCount;   // EnvScene.LocationCount
             log.Information("[HMSync] [ENVB-PROBE] LocationCount=" + locCount);
 
             // EnvSpaces: FixedSizeArray8<EnvSpace> @0xF0, stride = sizeof(EnvSpace) = 0xF0; the loaded .envb
             // resource handle sits at EnvSpace+0x90. Walk all 8 slots; report each non-null resource + parse it.
             for (int s = 0; s < 8; s++)
             {
-                nint spaceBase = (nint)scene + 0xF0 + s * 0xF0;
-                var handle = *((FFXIVClientStructs.FFXIV.Client.System.Resource.Handle.ResourceHandle**)(spaceBase + 0x90));
+                nint spaceBase = (nint)System.Runtime.CompilerServices.Unsafe.AsPointer(ref scene->EnvSpaces[s]);
+                var handle = (FFXIVClientStructs.FFXIV.Client.System.Resource.Handle.ResourceHandle*)((FFXIVClientStructs.FFXIV.Client.Graphics.Scene.EnvSpace*)spaceBase)->EnvSetResourceHandle;
                 if (handle == null) continue;
                 string name = handle->FileName.ToString();
                 uint fileSize = handle->FileSize;
@@ -1741,6 +1750,7 @@ public unsafe class MapSettingsService
     // PURE READ, every deref plausibility-guarded (internal env-set dump; logs [ENVSET] to /xllog).
     public void DumpEnvSet()
     {
+        if (DriftCheckService.Refuse(DriftFeature.WeatherTables)) return;   // b323
         try
         {
             var env = EnvManager.Instance();
@@ -1750,14 +1760,14 @@ public unsafe class MapSettingsService
             int slot = -1;
             if (scene != null)
             {
-                byte* idTable = (byte*)((nint)scene + 0x30);
+                byte* idTable = (byte*)System.Runtime.CompilerServices.Unsafe.AsPointer(ref scene->WeatherIds[0]);
                 for (int i = 0; i < 32; i++) if (idTable[i] == active) { slot = i; break; }
             }
             log.Information("[HMSync] [ENVSET] ActiveWeather=" + active + " (" + WeatherName(active) + ")  resolvedSlot="
                 + (slot >= 0 ? slot.ToString() : "MISS") + "  EnvMgr=0x" + ((nint)env).ToString("X"));
 
             // (a) EnvState live blended params — filtered float window. Diff two weathers to map param offsets.
-            nint esBase = (nint)env + 0x58;
+            nint esBase = (nint)(&env->EnvState);
             log.Information("[HMSync] [ENVSET] EnvState @0x" + esBase.ToString("X") + " (offset 0x58, size 0x2F8) — plausible floats:");
             DumpFloatsFiltered(esBase, 0x2F8, "EnvState");
 
@@ -1765,8 +1775,8 @@ public unsafe class MapSettingsService
             // (b) Follow each EnvSpace's EnvSetResourceHandle tail to the parsed param block.
             for (int s = 0; s < 8; s++)
             {
-                nint spaceBase = (nint)scene + 0xF0 + s * 0xF0;
-                var handle = *((nint*)(spaceBase + 0x90));
+                nint spaceBase = (nint)System.Runtime.CompilerServices.Unsafe.AsPointer(ref scene->EnvSpaces[s]);
+                var handle = (nint)((FFXIVClientStructs.FFXIV.Client.Graphics.Scene.EnvSpace*)spaceBase)->EnvSetResourceHandle;
                 if (!PlausiblePtr(handle)) continue;
                 // The env-set container hangs off the handle's own tail (past the 0xB0 base ResourceHandle). +0xC0
                 // was the live one: a vtable'd object with count@+0x20, resolvedSlot@+0x22, and two heap pointers
@@ -1803,7 +1813,7 @@ public unsafe class MapSettingsService
                 }
             }
             // Live EnvState signature for cross-matching the source sets above (sky/fog color block @+0x20..+0x34).
-            float* sig = (float*)((nint)env + 0x58);
+            float* sig = (float*)(&env->EnvState);
             log.Information("[HMSync] [ENVSET] EnvState signature @+0x20: "
                 + sig[0x20 / 4].ToString("0.####") + " " + sig[0x24 / 4].ToString("0.####") + " "
                 + sig[0x28 / 4].ToString("0.####") + " " + sig[0x2C / 4].ToString("0.####")
@@ -2514,6 +2524,7 @@ public unsafe class MapSettingsService
     // reads black and we hold a good sky for the id, upgrade: graft when the set travels the sun, else the static cram.
     public void TickNativeSkyVerify()
     {
+        if (DriftCheckService.IsDisabled(DriftFeature.WeatherTables)) return;   // b323
         if (pendingVerifyFrames <= 0) return;
         if (--pendingVerifyFrames > 0) return;
         byte id = pendingVerifyId;
@@ -2521,7 +2532,7 @@ public unsafe class MapSettingsService
         {
             var env = EnvManager.Instance();
             if (env == null) return;
-            nint es = (nint)env + 0x58;
+            nint es = (nint)(&env->EnvState);
             int lanes = 0x2F8 / 4;
             int live = 0; float maxAbs = 0f;
             var head = new System.Text.StringBuilder();
@@ -2594,6 +2605,7 @@ public unsafe class MapSettingsService
     // natively here and is therefore safe to setweather + capture. Deduped, zero-skipped, order preserved.
     public List<byte> GetLoadedBankWeatherIds()
     {
+        if (DriftCheckService.Refuse(DriftFeature.WeatherTables)) return new List<byte>();   // b323
         var result = new List<byte>();
         try
         {
@@ -2601,7 +2613,7 @@ public unsafe class MapSettingsService
             if (env == null) return result;
             var scene = env->EnvScene;
             if (scene == null) return result;
-            byte* idTable = (byte*)((nint)scene + 0x30);
+            byte* idTable = (byte*)System.Runtime.CompilerServices.Unsafe.AsPointer(ref scene->WeatherIds[0]);
             var seen = new HashSet<byte>();
             for (int i = 0; i < 32; i++)
             {
@@ -3317,11 +3329,15 @@ public unsafe class MapSettingsService
             var bgm = FFXIVClientStructs.FFXIV.Client.Game.BGMSystem.Instance();
             if (bgm == null) { log.Warning("[HMSync] [BGM-PLAY] BGMSystem null"); return false; }
             if (bgm->Scenes.LongCount <= 0) { log.Warning("[HMSync] [BGM-PLAY] no scenes"); return false; }
+            // b323 (Q-0020): a stop needs the raw SceneFlags write below; refuse the whole stop up front if it is disabled.
+            if (bgmId == 0 && DriftCheckService.Refuse(DriftFeature.MusicStop)) return false;
             var s0 = bgm->Scenes.First;                 // priority 0
             s0->BgmId = (ushort)bgmId;                  // 0x0C - the target the game plays
             s0->PlayingBgmId = (ushort)bgmId;           // 0x0E
             s0->PreviousBgmId = (ushort)bgmId;          // 0x10
             if (bgmId == 0)
+                // b323 (Q-0020): SceneFlags is commented out in ClientStructs, so this stays a raw write, checked against
+                // its named neighbours (refused above if they moved).
                 *(uint*)((nint)s0 + 0x04) = 0x02;       // Flags = Resume - cancel playback
             EnsureScene0Playing(s0, "play " + bgmId);   // b299
             return true;

@@ -106,6 +106,7 @@ public sealed class HdmIpc : IDisposable
     private ICallGateSubscriber<int, bool, object?>? setFrozen;                             // (objectIndex, frozen) freeze-anim pin, minor>=4
     private ICallGateSubscriber<int, uint, object?>? playAction;                            // (objectIndex, playId)
     private ICallGateSubscriber<string, int>? spawnPuppet;                                  // (atomJson) -> objectIndex, -1 fail
+    private ICallGateSubscriber<string, float, float, float, float, int>? spawnPuppetAt;    // b320 (Q-0052): (atomJson,x,y,z,rot) -> objectIndex, minor>=2
     private ICallGateSubscriber<int, float, float, float, float, object?>? movePuppet;      // (idx,x,y,z,rot)
     private ICallGateSubscriber<int, object?>? despawnPuppet;                               // (objectIndex)
 
@@ -126,6 +127,9 @@ public sealed class HdmIpc : IDisposable
     public event Action<int, bool>? OnFreezeChanged;   // (slot: -1 = own body, frozen)
     // Fired when HDM (re)announces itself, so the sync layer can re-pull snapshots / re-broadcast own state.
     public event Action? OnHdmReady;
+    // b320 (Q-0052): HDM is unloading. Its puppets go with it, so the sync layer drops its mirror table and tells
+    // peers our puppets are gone (an HDM reload restarts slot numbering).
+    public event Action? OnHdmGone;
 
     public HdmIpc(IDalamudPluginInterface pi, IPluginLog log)
     {
@@ -167,7 +171,7 @@ public sealed class HdmIpc : IDisposable
 
     // ── Lifecycle re-probe (either load order) ──
     private void OnHdmReadyRaw() { TryConnect(); if (Available) { log.Information("[HMSync] HDM detected - disguise sync active."); OnHdmReady?.Invoke(); } }
-    private void OnHdmDisposingRaw() { Available = false; log.Information("[HMSync] HDM went away - disguise sync inert."); }
+    private void OnHdmDisposingRaw() { Available = false; log.Information("[HMSync] HDM went away - disguise sync inert."); OnHdmGone?.Invoke(); }
 
     private void TryConnect()
     {
@@ -192,6 +196,7 @@ public sealed class HdmIpc : IDisposable
             setFrozen = pi.GetIpcSubscriber<int, bool, object?>("HDM.SetFrozen");    // minor>=4; guarded at call site
             playAction = pi.GetIpcSubscriber<int, uint, object?>("HDM.PlayAction");
             spawnPuppet = pi.GetIpcSubscriber<string, int>("HDM.SpawnPuppet");
+            spawnPuppetAt = pi.GetIpcSubscriber<string, float, float, float, float, int>("HDM.SpawnPuppetAt");   // minor>=2; guarded at call site
             movePuppet = pi.GetIpcSubscriber<int, float, float, float, float, object?>("HDM.MovePuppet");
             despawnPuppet = pi.GetIpcSubscriber<int, object?>("HDM.DespawnPuppet");
             Available = true;
@@ -372,6 +377,16 @@ public sealed class HdmIpc : IDisposable
         if (!Available || spawnPuppet == null) return -1;
         try { return spawnPuppet.InvokeFunc(atom.RawJson ?? JsonConvert.SerializeObject(atom)); }   // b318: sender's HDM JSON when carried
         catch (Exception ex) { log.Debug("[HMSync] HDM SpawnPuppet failed: " + ex.Message); return -1; }
+    }
+
+    /// <summary>b320 (Q-0052): spawn a mirror puppet AT the sender's position in one call, so it is never placed a step
+    /// ahead of the receiver first. Falls back to <see cref="SpawnPuppet"/> on an HDM older than minor 2.</summary>
+    public int SpawnPuppetAt(HdmDisguiseAtom atom, float x, float y, float z, float rot)
+    {
+        if (!Available) return -1;
+        if (minor < 2 || spawnPuppetAt == null) return SpawnPuppet(atom);
+        try { return spawnPuppetAt.InvokeFunc(atom.RawJson ?? JsonConvert.SerializeObject(atom), x, y, z, rot); }
+        catch (Exception ex) { log.Debug("[HMSync] HDM SpawnPuppetAt failed: " + ex.Message); return -1; }
     }
 
     public void MovePuppet(int objectIndex, float x, float y, float z, float rot)

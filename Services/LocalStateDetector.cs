@@ -470,11 +470,11 @@ public unsafe class LocalStateDetector
                     // clients how to render this actor's resting pose.
                     // ModelState @ TimelineContainer 0x2C0, AnimationState @ 0x2C1
                     // (2 bytes, documented as "4 bits each").
-                    byte* tlBase = (byte*)System.Runtime.CompilerServices.Unsafe.AsPointer(
-                        ref character->Timeline);
-                    byte modelState = *(tlBase + 0x2C0);
-                    byte animState0 = *(tlBase + 0x2C1);
-                    byte animState1 = *(tlBase + 0x2C2);
+                    // b323 (Q-0020): named fields, so the offsets follow the loaded ClientStructs (were raw 0x2C0-0x2C2).
+                    bool tlOk = !DriftCheckService.Refuse(DriftFeature.TimelineState);   // b323: 0 when the layout is in doubt
+                    byte modelState = tlOk ? character->Timeline.ModelState : (byte)0;
+                    byte animState0 = tlOk ? character->Timeline.AnimationState[0] : (byte)0;
+                    byte animState1 = tlOk ? character->Timeline.AnimationState[1] : (byte)0;
 
                     // Break AnimationState into its two nibbles
                     int as0lo = animState0 & 0x0F;
@@ -515,10 +515,10 @@ public unsafe class LocalStateDetector
             ushort ornBaseOv = (ushort)character->Timeline.BaseOverride;
             ushort ornEmoteId = character->EmoteController.EmoteId;
             var ornStance = character->EmoteController.Stance;
-            byte* ornTlBase = (byte*)System.Runtime.CompilerServices.Unsafe.AsPointer(ref character->Timeline);
-            byte ornModelState = *(ornTlBase + 0x2C0);
-            byte ornAnimState0 = *(ornTlBase + 0x2C1);
-            byte ornAnimState1 = *(ornTlBase + 0x2C2);
+            bool ornTlOk = !DriftCheckService.IsDisabled(DriftFeature.TimelineState);   // b323: named fields (were raw 0x2C0-0x2C2)
+            byte ornModelState = ornTlOk ? character->Timeline.ModelState : (byte)0;
+            byte ornAnimState0 = ornTlOk ? character->Timeline.AnimationState[0] : (byte)0;
+            byte ornAnimState1 = ornTlOk ? character->Timeline.AnimationState[1] : (byte)0;
             byte ornAttach = 0;
             var ornObjTrace = character->OrnamentData.OrnamentObject;
             if (ornObjTrace != null) ornAttach = (byte)ornObjTrace->CustomizeGroupId;

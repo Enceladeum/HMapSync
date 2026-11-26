@@ -275,6 +275,11 @@ public class HMSyncConfig : IPluginConfiguration
     // HMS-load scoped, never touches natural play. Default ON.
     public bool AutoDropColliders { get; set; } = true;
 
+    // b321 (Q-0020): game and ClientStructs versions seen at the last load, so the drift check logs its full report
+    // when either changes (patch day). Bookkeeping only; no user-facing setting.
+    public string DriftLastGameVersion { get; set; } = "";
+    public string DriftLastCsVersion { get; set; } = "";
+
     // Action-button / active-toggle accent, user-set in the Config tab. Gold by default. Neutral and Danger are fixed
     // in the UI; hover and text-on-accent are derived so any accent stays legible.
     public float[] AccentColor { get; set; } = { 0.83f, 0.62f, 0.20f, 1f };

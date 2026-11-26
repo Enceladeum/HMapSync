@@ -3818,11 +3818,12 @@ public unsafe class ZoneLoadService : IDisposable
                 catch { }
                 if (tlCount > 0) withTimelines++;
 
-                // Active-state lookup table (_timelineIndices[16] @0x14C) + prefab flags + child count.
+                // Active-state lookup table (_timelineIndices[16] @0x154; b321: was 0x14C, drift-check MOVED) + prefab flags + child count.
                 string idxBytes = "";
                 try
                 {
-                    byte* ti = (byte*)sg + 0x14C;
+                    if (DriftCheckService.Refuse(DriftFeature.SharedGroupDump)) throw new InvalidOperationException("disabled");   // caught below
+                    byte* ti = (byte*)System.Runtime.CompilerServices.Unsafe.AsPointer(ref sg->TimelineIndices[0]);   // b323: named field
                     var sb2 = new System.Text.StringBuilder();
                     for (int i = 0; i < 16; i++) { if (i > 0) sb2.Append(' '); sb2.Append(ti[i].ToString("X2")); }
                     idxBytes = sb2.ToString();
@@ -4386,11 +4387,7 @@ public unsafe class ZoneLoadService : IDisposable
             var ts = FFXIVClientStructs.FFXIV.Client.Game.Control.TargetSystem.Instance();
             if (ts != null)
             {
-                byte* tsb = (byte*)ts;
-                *(int*)(tsb + 0x148) = 0;
-                *(int*)(tsb + 0x2178) = 0;
-                *(int*)(tsb + 0x3B18) = 0;
-                *(int*)(tsb + 0x54B8) = 0;
+                ClearTargetScanArrays(ts);   // b323: named fields
             }
         }
         catch { /* transient during teardown; ignore */ }
@@ -4462,12 +4459,8 @@ public unsafe class ZoneLoadService : IDisposable
             ts->TargetObjectId = default;
 
             // THE FIX: empty the scan arrays so TargetSystem.Update's walk has nothing to deref
-            // during the reload. Length is the first field (0x00) of each GameObjectArray.
-            byte* tsb = (byte*)ts;
-            *(int*)(tsb + 0x148) = 0;   // TargetableObjectsOnScreen.Length
-            *(int*)(tsb + 0x2178) = 0;  // ObjectFilterArray1.Length
-            *(int*)(tsb + 0x3B18) = 0;  // ObjectFilterArray2.Length
-            *(int*)(tsb + 0x54B8) = 0;  // ObjectFilterArray3.Length
+            // during the reload.
+            ClearTargetScanArrays(ts);
 
             DiagLog("[HMSync] [SANITIZE] target scan arrays emptied + targets cleared (pre-reload)");
         }
@@ -5052,11 +5045,30 @@ public unsafe class ZoneLoadService : IDisposable
     /// <summary>LineStyle @0x70 (Red=1, Blue=2, RedFar=3). RAW OFFSET READ - LineVfxLayoutInstance may not be
     /// bound in the installed FFXIVClientStructs, and an unproven type cast is worse than a documented offset.
     /// If this returns nonsense, the offset is wrong; it is reported, never acted on.</summary>
-    private static unsafe int LineVfxStyle(ILayoutInstance* inst) => *(int*)((byte*)inst + 0x70);
+    private static unsafe int LineVfxStyle(ILayoutInstance* inst)
+        => DriftCheckService.IsDisabled(DriftFeature.LineVfx) ? 0
+         : (int)((FFXIVClientStructs.FFXIV.Client.LayoutEngine.Layer.LineVfxLayoutInstance*)inst)->LineStyle;   // b323: named field (was raw 0x70)
+
+    // b323 (Q-0020): empty the four target scan arrays by their named Length fields, so the writes follow the loaded
+    // ClientStructs after a patch. They were raw writes at 0x148/0x2178/0x3B18/0x54B8; a stale raw write would corrupt
+    // whatever moved into those slots.
+    private static unsafe void ClearTargetScanArrays(FFXIVClientStructs.FFXIV.Client.Game.Control.TargetSystem* ts)
+    {
+        if (DriftCheckService.Refuse(DriftFeature.TargetScanClear)) return;
+        ts->TargetableObjectsOnScreen.Length = 0;
+        ts->ObjectFilterArray1.Length = 0;
+        ts->ObjectFilterArray2.Length = 0;
+        ts->ObjectFilterArray3.Length = 0;
+    }
 
     /// <summary>Transform.Translation - RangeLayoutInstance.Transform @0x30, translation first. Also a raw read,
     /// and also only ever REPORTED, so a bad offset shows up as absurd coordinates instead of a silent lie.</summary>
-    private static unsafe Vector3 LineVfxPos(ILayoutInstance* inst) => *(Vector3*)((byte*)inst + 0x30);
+    private static unsafe Vector3 LineVfxPos(ILayoutInstance* inst)
+    {
+        // b323: named field (was raw 0x30). Disabled = throw, which every caller already treats as "skip this instance".
+        if (DriftCheckService.Refuse(DriftFeature.LineVfx)) throw new InvalidOperationException("LineVfx layout disabled by the drift check");
+        return ((FFXIVClientStructs.FFXIV.Client.LayoutEngine.Layer.RangeLayoutInstance*)inst)->Transform.Translation;
+    }
 
     /// <summary>Count type-59 instances in one layout, for the enumeration cross-check.</summary>
     private unsafe int CountLineVfxIn(LayoutManager* layout)

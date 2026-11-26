@@ -51,11 +51,32 @@ public sealed class DisguiseSyncService : IDisposable
     // edge arrived before the puppet existed. Cleared when the owning peer departs.
     private readonly Dictionary<string, bool> lastFrozenPuppet = new();
 
+    // b320 (Q-0052) mirror ordering. A late or reordered update for a puppet must never bring a despawned mirror back,
+    // and a mirror must be born where the sender put it, not a step ahead of the receiver.
+    // Last disguise-lane Seq applied per puppet subject (despawns included). An update with an older Seq arrived out of
+    // order and is dropped. Seq is per sender connection; a sender restart (Seq far below its max) clears the sender's rows.
+    private readonly Dictionary<string, uint> lastPuppetSeq = new();
+    private readonly Dictionary<ulong, uint> senderMaxSeq = new();
+    private const uint SeqRestartGap = 1000;
+    // Latest atom + move per live remote puppet, so mirrors can be rebuilt after OUR HDM reloads, and a first-sight
+    // spawn can use a move that arrived before the update.
+    private readonly Dictionary<string, DisguiseUpdatePayload> lastPuppetAtom = new();
+    private readonly Dictionary<string, PuppetMovePayload> lastPuppetMove = new();
+    // First-sight updates waiting (briefly) for the sender's position. The sender sends the move right after the update.
+    private readonly Dictionary<string, DisguiseUpdatePayload> pendingSpawn = new();
+    private static readonly TimeSpan PendingSpawnWait = TimeSpan.FromMilliseconds(400);
+    // Subjects despawned in the last few seconds: a move that trails the despawn is not cached as a future spawn spot.
+    private readonly Dictionary<string, DateTime> recentlyDespawned = new();
+    private static readonly TimeSpan DespawnQuiet = TimeSpan.FromSeconds(3);
+
     // ── SENDER state (framework-thread only) ──
     // Our OWN live puppets' slot → local object index, so the per-frame move handler (which only carries a slot) can
     // read the puppet's live resolved locomotion timeline to broadcast in PuppetMove.Anim. Populated on spawn,
     // dropped on despawn. HdmPuppetInfo carries ObjectIndex on spawn/broadcast; the move event does not, hence this map.
     private readonly Dictionary<int, int> localPuppets = new();
+    // b320 (Q-0052): slots HDM has despawned and not respawned. HDM can report a change for a puppet after it is gone
+    // (b50's "mods: none"); sending that would resurrect the puppet on every peer, so it is dropped here.
+    private readonly HashSet<int> despawnedLocalSlots = new();
 
     public DisguiseSyncService(HdmIpc hdm, RelaySyncService relay, StateApplyService stateApply,
         IFramework framework, IPluginLog log, Func<ulong> localContentId)
@@ -77,6 +98,8 @@ public sealed class DisguiseSyncService : IDisposable
         hdm.OnFreezeChanged += OnLocalFrozen;          // Freeze-anim: mirror the DM's per-actor freeze edge to peers
         // HDM (re)appeared mid-session → re-offer our full current state so peers catch up.
         hdm.OnHdmReady += BroadcastFullState;
+        hdm.OnHdmReady += RebuildMirrorsAfterHdmReload;   // b320 (Q-0052)
+        hdm.OnHdmGone += OnHdmGone;                       // b320 (Q-0052)
 
         // RECEIVER: wire → HDM drive.
         relay.OnDisguiseReceived += OnDisguiseReceived;
@@ -91,6 +114,7 @@ public sealed class DisguiseSyncService : IDisposable
 
     private void OnLocalDisguiseChanged(int? slot, HdmDisguiseAtom atom)
     {
+        if (slot.HasValue && despawnedLocalSlots.Contains(slot.Value)) return;   // b320: change for a puppet that is gone
         var self = RefreshSelfCid();
         var subject = slot.HasValue ? PuppetSubject(self, slot.Value) : "";
         _ = relay.SendDisguiseUpdate(BuildDisguise(subject, self, atom));
@@ -113,6 +137,7 @@ public sealed class DisguiseSyncService : IDisposable
         var self = RefreshSelfCid();
         var subject = PuppetSubject(self, info.Slot);
         localPuppets[info.Slot] = info.ObjectIndex;   // track for the per-frame move handler's Anim read
+        despawnedLocalSlots.Remove(info.Slot);        // b320: the slot is live again
         // The disguise (spawn-or-apply on the receiver) and the initial pose ride two opcodes; send them in order.
         _ = relay.SendDisguiseUpdate(BuildDisguise(subject, self, info.Atom));
         _ = relay.SendPuppetMove(new PuppetMovePayload
@@ -130,6 +155,7 @@ public sealed class DisguiseSyncService : IDisposable
     {
         var self = RefreshSelfCid();
         localPuppets.Remove(slot);
+        despawnedLocalSlots.Add(slot);   // b320: drop any later change HDM reports for this slot until it respawns
         // b189: despawn is now EXPLICIT (Despawn flag), not inferred from Kind==0 - a blank spawn and a guise-revert
         // are also Kind 0 on a puppet subject, and neither is a despawn. Only this path sets the flag.
         var payload = BuildDisguise(PuppetSubject(self, slot), self, new HdmDisguiseAtom { Kind = 0 });
@@ -139,6 +165,7 @@ public sealed class DisguiseSyncService : IDisposable
 
     private void OnLocalPuppetMoved(int slot, float x, float y, float z, float rot)
     {
+        if (despawnedLocalSlots.Contains(slot)) return;   // b320: a move for a puppet that is gone
         var self = RefreshSelfCid();
         // Read the puppet's live resolved locomotion timeline so peers animate the mirror instead of sliding it.
         // slot→objectIndex from the spawn map; 0 (idle) if not yet tracked (self-corrects once the spawn registers).
@@ -194,6 +221,7 @@ public sealed class DisguiseSyncService : IDisposable
             {
                 var subject = PuppetSubject(self, p.Slot);
                 localPuppets[p.Slot] = p.ObjectIndex;   // keep the sender map authoritative on re-broadcast
+                despawnedLocalSlots.Remove(p.Slot);
                 _ = relay.SendDisguiseUpdate(BuildDisguise(subject, self, p.Atom));
                 _ = relay.SendPuppetMove(new PuppetMovePayload
                 {
@@ -240,8 +268,13 @@ public sealed class DisguiseSyncService : IDisposable
                 //                                     SpawnPuppet honours Kind 0 (spawns the actor, skips the guise),
                 //                                     so a summoned-but-undisguised puppet now mirrors + tracks position.
                 //   not despawn, mirror exists      → Kind 0 = un-guise (keep the actor); else re-apply the disguise.
+                if (!AcceptPuppetSeq(d)) return;   // b320: older than what we already applied for this subject
                 if (d.Despawn)
                 {
+                    pendingSpawn.Remove(d.SubjectId);
+                    lastPuppetAtom.Remove(d.SubjectId);
+                    lastPuppetMove.Remove(d.SubjectId);
+                    recentlyDespawned[d.SubjectId] = DateTime.UtcNow;
                     if (mirrorPuppets.TryGetValue(d.SubjectId, out var gone))
                     {
                         hdm.DespawnPuppet(gone);
@@ -250,22 +283,28 @@ public sealed class DisguiseSyncService : IDisposable
                     }
                     return;
                 }
+                recentlyDespawned.Remove(d.SubjectId);
+                lastPuppetAtom[d.SubjectId] = d;
                 if (mirrorPuppets.TryGetValue(d.SubjectId, out var li))
                 {
                     if (!HasState(d)) hdm.RevertDisguise(li);   // puppet un-guised but still spawned - keep the mirror (b317: unless it holds a pose)
                     else hdm.ApplyDisguise(li, ToAtom(d));
                 }
+                else if (lastPuppetMove.TryGetValue(d.SubjectId, out var mv))
+                {
+                    SpawnMirror(d.SubjectId, d, mv);   // b320: the position is already here, spawn there
+                }
                 else
                 {
-                    var spawned = hdm.SpawnPuppet(ToAtom(d));   // Kind 0 → blank mirror; Kind 1/2/3 → spawned + guised
-                    if (spawned >= 0)
+                    // b320: first sight with no position yet. The sender's move follows this update, so wait briefly
+                    // for it instead of spawning a step ahead of US. A newer update while waiting replaces this one.
+                    var first = !pendingSpawn.ContainsKey(d.SubjectId);
+                    pendingSpawn[d.SubjectId] = d;
+                    if (first)
                     {
-                        mirrorPuppets[d.SubjectId] = spawned;
-                        // Freeze-anim: if a freeze edge for this subject arrived before the mirror existed, apply it now.
-                        if (lastFrozenPuppet.TryGetValue(d.SubjectId, out var fr) && fr)
-                            hdm.SetFrozen(spawned, true);
+                        var subject = d.SubjectId;
+                        _ = framework.RunOnTick(() => FlushPendingSpawn(subject), PendingSpawnWait);
                     }
-                    else log.Debug("[HMSync] disguise-sync: mirror puppet spawn failed for " + d.SubjectId);
                 }
             }
         });
@@ -290,10 +329,21 @@ public sealed class DisguiseSyncService : IDisposable
         {
             if (mirrorPuppets.TryGetValue(p.SubjectId, out var li))
             {
+                lastPuppetMove[p.SubjectId] = p;
                 hdm.MovePuppet(li, p.X, p.Y, p.Z, p.Rot);
                 stateApply.DriveMirrorLocomotion(li, p.Anim);   // animate the mirror so it walks/runs instead of sliding
+                return;
             }
-            // unknown subject (move before spawn) → drop; self-corrects on the next move after the DisguiseUpdate lands
+            // b320 (Q-0052): no mirror yet. Before, this move was dropped, and a parked puppet never moves again, so its
+            // copy stayed in front of the receiver for good.
+            if (pendingSpawn.Remove(p.SubjectId, out var waiting))
+            {
+                SpawnMirror(p.SubjectId, waiting, p);   // the update was waiting for exactly this
+                return;
+            }
+            // Move before its update: keep it for the spawn. A move trailing a despawn is not a future spawn spot.
+            if (recentlyDespawned.TryGetValue(p.SubjectId, out var at) && DateTime.UtcNow - at < DespawnQuiet) return;
+            lastPuppetMove[p.SubjectId] = p;
         });
     }
 
@@ -376,6 +426,8 @@ public sealed class DisguiseSyncService : IDisposable
         foreach (var kv in lastFrozenPuppet)
             if (kv.Key.StartsWith(prefix, StringComparison.Ordinal)) staleFrozen.Add(kv.Key);
         foreach (var key in staleFrozen) lastFrozenPuppet.Remove(key);
+        ForgetSubjects(prefix);   // b320
+        senderMaxSeq.Remove(contentId);
     }
 
     // b211 — SESSION-TEARDOWN own-body revert. The single-peer-left path (OnPeerLeft → OnPeerDeparted) reverts a
@@ -439,6 +491,115 @@ public sealed class DisguiseSyncService : IDisposable
             lastFrozenOwnBody.Clear();
             lastFrozenPuppet.Clear();
             localPuppets.Clear();
+            despawnedLocalSlots.Clear();
+            lastPuppetSeq.Clear();
+            senderMaxSeq.Clear();
+            lastPuppetAtom.Clear();
+            lastPuppetMove.Clear();
+            pendingSpawn.Clear();
+            recentlyDespawned.Clear();
+        });
+    }
+
+    // ═══════════════════════════ b320 (Q-0052): mirror ordering + HDM reload ═══════════════════════════
+
+    // Drop a puppet update that is older than the last one applied for its subject (reordered in transit). Seq is the
+    // sender's disguise-lane counter, monotonic per connection. A Seq far below the sender's max means the sender
+    // restarted (plugin reload), so its rows are forgotten instead of everything it sends being dropped.
+    private bool AcceptPuppetSeq(DisguiseUpdatePayload d)
+    {
+        if (d.Seq == 0) return true;   // unstamped (should not happen; never block on it)
+        var cid = d.SenderContentId;
+        if (senderMaxSeq.TryGetValue(cid, out var max) && d.Seq + SeqRestartGap < max)
+        {
+            log.Information($"[HMSync] disguise-sync: sender {cid} restarted its Seq ({max} -> {d.Seq}); resetting its order table.");
+            var prefix = cid.ToString() + ":";
+            var rows = new List<string>();
+            foreach (var k in lastPuppetSeq.Keys) if (k.StartsWith(prefix, StringComparison.Ordinal)) rows.Add(k);
+            foreach (var k in rows) lastPuppetSeq.Remove(k);
+            max = 0;
+        }
+        if (d.Seq > max) senderMaxSeq[cid] = d.Seq;
+        if (lastPuppetSeq.TryGetValue(d.SubjectId, out var last) && d.Seq <= last)
+        {
+            log.Debug($"[HMSync] disguise-sync: dropped stale update for {d.SubjectId} (seq {d.Seq} <= {last}, despawn={d.Despawn}).");
+            return false;
+        }
+        lastPuppetSeq[d.SubjectId] = d.Seq;
+        return true;
+    }
+
+    private void SpawnMirror(string subject, DisguiseUpdatePayload d, PuppetMovePayload? at)
+    {
+        pendingSpawn.Remove(subject);
+        var spawned = at != null ? hdm.SpawnPuppetAt(ToAtom(d), at.X, at.Y, at.Z, at.Rot) : hdm.SpawnPuppet(ToAtom(d));
+        if (spawned < 0) { log.Debug("[HMSync] disguise-sync: mirror puppet spawn failed for " + subject); return; }
+        mirrorPuppets[subject] = spawned;
+        if (at != null)
+        {
+            lastPuppetMove[subject] = at;
+            stateApply.DriveMirrorLocomotion(spawned, at.Anim);
+        }
+        // Freeze-anim: if a freeze edge for this subject arrived before the mirror existed, apply it now.
+        if (lastFrozenPuppet.TryGetValue(subject, out var fr) && fr)
+            hdm.SetFrozen(spawned, true);
+    }
+
+    // No move arrived in time: spawn without a position (old behaviour); the next move places it.
+    private void FlushPendingSpawn(string subject)
+    {
+        if (!pendingSpawn.Remove(subject, out var d) || mirrorPuppets.ContainsKey(subject)) return;
+        log.Debug("[HMSync] disguise-sync: no position for " + subject + " after " + PendingSpawnWait.TotalMilliseconds + " ms; spawning at the default spot.");
+        SpawnMirror(subject, d, lastPuppetMove.TryGetValue(subject, out var mv) ? mv : null);
+    }
+
+    private void ForgetSubjects(string prefix)
+    {
+        void Drop<T>(Dictionary<string, T> map)
+        {
+            var rows = new List<string>();
+            foreach (var k in map.Keys) if (k.StartsWith(prefix, StringComparison.Ordinal)) rows.Add(k);
+            foreach (var k in rows) map.Remove(k);
+        }
+        Drop(lastPuppetSeq); Drop(lastPuppetAtom); Drop(lastPuppetMove); Drop(pendingSpawn); Drop(recentlyDespawned);
+    }
+
+    // HDM is unloading (HDM's dispose). SENDER: our puppets vanish without a despawn event, and HDM restarts slot
+    // numbering on reload, so tell peers they are gone. RECEIVER: our mirrors go with HDM; forget the indices (their
+    // atoms + moves stay cached for the rebuild).
+    private void OnHdmGone() => _ = framework.RunOnFrameworkThread(OnHdmGoneCore);   // the IPC edge may not be on the framework thread
+
+    private void OnHdmGoneCore()
+    {
+        var self = RefreshSelfCid();
+        foreach (var slot in localPuppets.Keys)
+        {
+            var payload = BuildDisguise(PuppetSubject(self, slot), self, new HdmDisguiseAtom { Kind = 0 });
+            payload.Despawn = true;
+            _ = relay.SendDisguiseUpdate(payload);
+        }
+        localPuppets.Clear();
+        despawnedLocalSlots.Clear();
+        if (mirrorPuppets.Count > 0)
+            log.Information($"[HMSync] disguise-sync: HDM went away; dropped {mirrorPuppets.Count} mirror index(es), will rebuild when it returns.");
+        foreach (var li in mirrorPuppets.Values) stateApply.ForgetMirrorLocomotion(li);
+        mirrorPuppets.Clear();
+        pendingSpawn.Clear();
+    }
+
+    // HDM came back. Respawn every remote puppet we still know about, where it last stood.
+    private void RebuildMirrorsAfterHdmReload()
+    {
+        _ = framework.RunOnFrameworkThread(() =>
+        {
+            var rebuilt = 0;
+            foreach (var kv in new List<KeyValuePair<string, DisguiseUpdatePayload>>(lastPuppetAtom))
+            {
+                if (mirrorPuppets.ContainsKey(kv.Key)) continue;
+                SpawnMirror(kv.Key, kv.Value, lastPuppetMove.TryGetValue(kv.Key, out var mv) ? mv : null);
+                if (mirrorPuppets.ContainsKey(kv.Key)) rebuilt++;
+            }
+            if (rebuilt > 0) log.Information($"[HMSync] disguise-sync: HDM is back; rebuilt {rebuilt} mirror puppet(s).");
         });
     }
 
@@ -536,6 +697,7 @@ public sealed class DisguiseSyncService : IDisposable
         try { relay.OnDisguiseReceived -= OnDisguiseReceived; } catch { }
         try { relay.OnActionPulseReceived -= OnActionPulseReceived; } catch { }
         try { relay.OnPuppetMoveReceived -= OnPuppetMoveReceived; } catch { }
+        try { hdm.OnHdmReady -= RebuildMirrorsAfterHdmReload; hdm.OnHdmGone -= OnHdmGone; } catch { }
         try { relay.OnOwnBodyHiddenReceived -= OnOwnBodyHiddenReceived; } catch { }
         try { relay.OnFreezeReceived -= OnFreezeReceived; } catch { }
     }

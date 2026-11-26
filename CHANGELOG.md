@@ -5,6 +5,16 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0.7] - 2026-11-26
+
+### Fixed
+
+- **Puppets other players see now stay right.** Despawning all of them leaves none behind, a new copy appears where its owner placed it, and copies come back after HDM is reloaded.
+
+### Added
+
+- **Safety check after game updates.** After every game or Dalamud update, HMS checks that the game structures it relies on have not moved. If one has, HMS turns off the feature that depends on it and tells you in chat, until a fix ships, instead of risking a crash.
+
 ## [1.1.0.6] - 2026-11-24
 
 ### Added
