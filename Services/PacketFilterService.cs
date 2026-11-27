@@ -102,6 +102,58 @@ public unsafe class PacketFilterService : IDisposable
         }
     }
 
+    // ── b327: heartbeat position pin ──
+    // Measured 2026-11-27 (two clients, inn + Magna Glacies): the heartbeat (the one outbound packet a session lets
+    // through, every 10 s) carries the player's live position and heading. Layout from the send buffer: +0x08 payload
+    // size (0x30), payload at +0x10: +0x20 timestamp (u32, echoed back by the server's reply, opcode 146 on 7.58),
+    // +0x24 last round-trip ms, +0x2C X, +0x30 Y, +0x34 Z, +0x38 heading (radians) as floats. In a session that was the
+    // VIRTUAL map position (e.g. Z -146 on 1010 while the server had us in the inn at Z -2). So while the filter is
+    // active, the four floats are overwritten with the real position captured when the session engaged. Timestamp and
+    // round-trip are left alone. If the payload size is not 0x30 the layout is unknown: the heartbeat is still sent
+    // (it keeps the connection alive) but unpinned, and that is reported loudly once per session.
+    private const int HbPayloadSize = 0x30;
+    private const int HbPosOffset = 0x2C;
+    private bool hbPinSet;
+    private System.Numerics.Vector3 hbPinPos;
+    private float hbPinRot;
+    private bool hbLayoutWarned;
+    public Action<string>? NotifyChat;   // set by the plugin; used for the one loud layout warning
+
+    public void SetHeartbeatPin(System.Numerics.Vector3? pos, float rot)
+    {
+        hbPinSet = pos.HasValue;
+        if (pos.HasValue) { hbPinPos = pos.Value; hbPinRot = rot; }
+        hbLayoutWarned = false;
+        log.Information(pos.HasValue
+            ? $"[HMSync] [HB-PIN] heartbeat position pinned to ({hbPinPos.X:F2}, {hbPinPos.Y:F2}, {hbPinPos.Z:F2}) heading {hbPinRot:F2}."
+            : "[HMSync] [HB-PIN] no local player at session start; heartbeat position cannot be pinned.");
+    }
+
+    private unsafe void PinHeartbeatPosition(nint pkt)
+    {
+        if (!IsActive) return;
+        try
+        {
+            int size = *(int*)(pkt + 0x08);
+            if (size != HbPayloadSize || !hbPinSet)
+            {
+                if (!hbLayoutWarned)
+                {
+                    hbLayoutWarned = true;
+                    string why = size != HbPayloadSize ? $"its layout changed (payload 0x{size:X}, expected 0x{HbPayloadSize:X})" : "no start position was captured";
+                    log.Error("[HMSync] [HB-PIN] heartbeat NOT pinned: " + why + ". The server receives your on-map position this session.");
+                    NotifyChat?.Invoke("HMS: game structures moved after an update. Hiding your map position from the server has been disabled pending a fix.");
+                }
+                return;
+            }
+            *(float*)(pkt + HbPosOffset) = hbPinPos.X;
+            *(float*)(pkt + HbPosOffset + 4) = hbPinPos.Y;
+            *(float*)(pkt + HbPosOffset + 8) = hbPinPos.Z;
+            *(float*)(pkt + HbPosOffset + 12) = hbPinRot;
+        }
+        catch (Exception ex) { log.Error("[HMSync] [HB-PIN] pin failed: " + ex.Message); }
+    }
+
     public void Enable()
     {
         if (IsActive) return;
@@ -195,7 +247,10 @@ public unsafe class PacketFilterService : IDisposable
                 DumpChatPacket("OUTBOUND", a2, 0);
 
             if (opcode == heartbeatOpcode)
+            {
+                PinHeartbeatPosition(a2);   // b327: never report the virtual-map position to the server
                 return sendHook!.Original(a1, a2, a3, a4);
+            }
 
             // Say passthrough (outbound): let the sender's spatial-chat submission reach the server so it delivers /say
             // to co-located peers. Safe + on-model: "idle and chatting" is exactly the cover profile (only chat +

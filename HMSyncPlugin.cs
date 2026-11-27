@@ -202,6 +202,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // each frame, which DisguiseSyncService.OnLocalPuppetMoved reads + broadcasts (transform + resolved timeline)
         // to session peers. No HMS-side possession loop. (The b191 HMS-side PossessionService was rolled back.)
         packetFilter = new PacketFilterService(log, hooks, sigScanner);
+        packetFilter.NotifyChat = s => chat.Print(s);   // b327: loud heartbeat-pin layout warning
         opcodeMap = new OpcodeMapService(log);
         // Say filter: supplier returns the set of session-member character names (local + peers), lower-cased. Used to
         // decide whose /say to allow; everyone else's /say is hidden while the filter is enabled (session active + opt-in).
@@ -2174,6 +2175,13 @@ public sealed class HMSyncPlugin : IDalamudPlugin
             return false;
         }
         ClearTargetsOnStart();   // S327f: prevent focus-target interaction softlock behind the filter
+        // b327: the heartbeat carries the player's position + heading. Pin it to where the server last saw us (we are
+        // still at the real spot here: the virtual load moves us after this), so it never reports the virtual map.
+        {
+            var lp = objectTable.LocalPlayer;
+            if (lp != null) packetFilter.SetHeartbeatPin(lp.Position, lp.Rotation);
+            else packetFilter.SetHeartbeatPin(null, 0f);
+        }
         packetFilter.Enable();
         sayFilter.Active = true;   // S328v: hide non-session /say + range-cull members
         PrepareSayPassthrough();   // S328p: version-check + configure opcodes + arm (fail-closed if unverified/patched)
@@ -5389,7 +5397,7 @@ public sealed class HMSyncPlugin : IDalamudPlugin
         // Safety: revert zone if loaded to prevent character getting stuck
         if (zoneLoad.IsZoneLoaded)
         {
-            try { zoneLoad.Revert(); }
+            try { zoneLoad.Revert(unloading: true); }   // b328: write home now; the deferred restore cannot run after unload
             catch (Exception ex) { log.Error("[HMSync] Safety revert failed: " + ex.Message); }
         }
 

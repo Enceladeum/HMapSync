@@ -5,6 +5,16 @@ All notable changes to HMapSync (HMS) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0.8] - 2026-11-27
+
+### Security
+
+- **Your keep-alive no longer gives away where you are on the loaded map.** While you're in an HMS session, the game's regular keep-alive message to the server now reports the spot you started from, exactly as an idle player's would, instead of your position on the map HMS loaded.
+
+### Fixed
+
+- **Turning HMS off mid-session puts you back where you started.** Disabling or reloading HMS during a session used to leave you stranded out of bounds; it now returns you home straight away.
+
 ## [1.1.0.7] - 2026-11-26
 
 ### Fixed

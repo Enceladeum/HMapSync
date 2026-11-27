@@ -6222,7 +6222,14 @@ public unsafe class ZoneLoadService : IDisposable
             + " | " + sb);
     }
 
-    public void Revert()
+    public void Revert() => Revert(unloading: false);
+
+    // b328: unloading = HMS is being disposed mid-session. The normal return defers the home SetPosition to a framework
+    // poll (ArmHomeRestore) and keeps the packet filter up until it lands; on unload that poll never runs and the filter
+    // drops at once, so the client resumed sending movement with the VIRTUAL-map coordinates and the server put the
+    // player out of bounds in the real zone. So when unloading, write home immediately (before and right after the
+    // reload) and do not arm the poll (it would outlive the plugin).
+    public void Revert(bool unloading)
     {
         ActiveStageBg = null;   // v0.7.227: leaving any swap stage - spawns key by territoryId again
         if (!IsZoneLoaded || savedZoneId == null)
@@ -6421,9 +6428,11 @@ public unsafe class ZoneLoadService : IDisposable
                 ((GameObject*)obj.Address)->DisableDraw();
             }
 
+            if (unloading && restorePos.HasValue) WriteHomeNow(restorePos.Value, restoreRot, "pre-reload");   // b328
             loadZoneHook!.Original((nint)gameMain, restoreZone, 0, 0, 1, 1);
             var setupFunc = Marshal.GetDelegateForFunctionPointer<SetupTerritoryTypeDelegate>(setupTerritoryTypeAddr);
             setupFunc(EventFramework.Instance(), (ushort)restoreZone);
+            if (unloading && restorePos.HasValue) WriteHomeNow(restorePos.Value, restoreRot, "post-reload");  // b328
         }
         else
         {
@@ -6432,7 +6441,9 @@ public unsafe class ZoneLoadService : IDisposable
 
         // S288: arm the deferred restore - waits until the actor is settled in restoreZone, then writes
         // the home position and reasserts it for a short window to beat the load's late settle write.
-        if (restorePos.HasValue)
+        if (restorePos.HasValue && unloading)
+            ReportDebug("[HMSync] [RETURN] unloading: home position written immediately; deferred restore not armed (it would outlive the plugin).");
+        else if (restorePos.HasValue)
             ArmHomeRestore(restoreZone, restorePos.Value, restoreRot);
         else
             ReportDebug("[HMSync] [RETURN] restore SKIPPED: savedPosition NULL → actor left at reload's default spawn (the OOB symptom).");
@@ -6451,6 +6462,23 @@ public unsafe class ZoneLoadService : IDisposable
     // the home territory (ActiveLayout TT == target AND LocalPlayer present), then SetPositions home and
     // REASSERTS for a short window (the load's async settle can write one more time after we land). This
     // beats the clobber that made every synchronous restore fail.
+    // b328: immediate home write for the unload path (no later frame to wait for).
+    private void WriteHomeNow(Vector3 pos, float? rot, string when)
+    {
+        try
+        {
+            var lp = objectTable.LocalPlayer;
+            if (lp == null) { log.Warning("[HMSync] [RETURN] unload " + when + ": no local player, home not written."); return; }
+            var player = (GameObject*)lp.Address;
+            var before = player->Position;
+            player->SetPosition(pos.X, pos.Y, pos.Z);
+            if (rot.HasValue) player->SetRotation(rot.Value);
+            var after = player->Position;
+            log.Information($"[HMSync] [RETURN] unload {when}: home written ({before.X:F1},{before.Y:F1},{before.Z:F1}) -> ({after.X:F1},{after.Y:F1},{after.Z:F1}), target ({pos.X:F1},{pos.Y:F1},{pos.Z:F1}).");
+        }
+        catch (Exception ex) { log.Warning("[HMSync] [RETURN] unload " + when + " home write threw: " + ex.Message); }
+    }
+
     private void ArmHomeRestore(uint zone, Vector3 pos, float? rot)
     {
         homeRestoreZone = zone;
