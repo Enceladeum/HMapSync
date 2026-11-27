@@ -802,6 +802,8 @@ public sealed class HMSyncPlugin : IDalamudPlugin
 
     private void OnFrameworkUpdate(IFramework fw)
     {
+        // b329: cache the live position for the heartbeat layout check (send path never reads game state itself).
+        if (packetFilter.IsActive) packetFilter.UpdatePlayerPose(objectTable.LocalPlayer?.Position);
         mapSettings.NoteFrame();   // b312: music-browser stall instrument (heartbeat; logs only a stall while the browser is in use)
         while (mainThreadQueue.TryDequeue(out var action))
         {

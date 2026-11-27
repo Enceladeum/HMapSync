@@ -124,9 +124,40 @@ public unsafe class PacketFilterService : IDisposable
         hbPinSet = pos.HasValue;
         if (pos.HasValue) { hbPinPos = pos.Value; hbPinRot = rot; }
         hbLayoutWarned = false;
+        hbVerified = false; hbVerifyFails = 0; hbLayoutBroken = false;   // b329: verify afresh each session
+        UpdatePlayerPose(pos);
         log.Information(pos.HasValue
             ? $"[HMSync] [HB-PIN] heartbeat position pinned to ({hbPinPos.X:F2}, {hbPinPos.Y:F2}, {hbPinPos.Z:F2}) heading {hbPinRot:F2}."
             : "[HMSync] [HB-PIN] no local player at session start; heartbeat position cannot be pinned.");
+    }
+
+    // ── b329 (Q-0057): verify the layout, not just the size ──
+    // The size check alone would pass a patch that reordered fields at the same size, and the pin would then overwrite
+    // the wrong ones (e.g. the timestamp the server echoes). So before writing, the four floats are compared with the
+    // player's live pose (cached each frame by the plugin, so the send path never touches game state). Match = these are
+    // the position fields: pin this packet, and log the [DRIFT] confirmation once per session. Mismatch = leave the packet
+    // untouched; three in a row means the layout moved: stop pinning for the session and say so loudly.
+    private const float HbVerifyTolerance = 1.5f;   // units; covers a frame or two of running (~8 u/s) between cache and send
+    private const int HbVerifyFailLimit = 3;
+    private readonly object poseLock = new();
+    private System.Numerics.Vector3 livePos;
+    private bool livePosValid;
+    private bool hbVerified;
+    private int hbVerifyFails;
+    private bool hbLayoutBroken;
+
+    /// <summary>Called every frame by the plugin while the filter is active: the player's live position, for b329.</summary>
+    public void UpdatePlayerPose(System.Numerics.Vector3? pos)
+    {
+        lock (poseLock) { livePosValid = pos.HasValue; if (pos.HasValue) livePos = pos.Value; }
+    }
+
+    private void ReportHeartbeatLayoutBroken(string why)
+    {
+        if (hbLayoutWarned) return;
+        hbLayoutWarned = true;
+        log.Error("[HMSync] [DRIFT] heartbeat layout NOT verified: " + why + ". Not pinned: the server receives your on-map position this session.");
+        NotifyChat?.Invoke("HMS: game structures moved after an update. Hiding your map position from the server has been disabled pending a fix.");
     }
 
     private unsafe void PinHeartbeatPosition(nint pkt)
@@ -135,16 +166,39 @@ public unsafe class PacketFilterService : IDisposable
         try
         {
             int size = *(int*)(pkt + 0x08);
-            if (size != HbPayloadSize || !hbPinSet)
+            if (size != HbPayloadSize || !hbPinSet || hbLayoutBroken)
             {
-                if (!hbLayoutWarned)
+                if (size != HbPayloadSize) ReportHeartbeatLayoutBroken($"payload size 0x{size:X}, expected 0x{HbPayloadSize:X}");
+                else if (!hbPinSet) ReportHeartbeatLayoutBroken("no start position was captured");
+                return;
+            }
+
+            float fx = *(float*)(pkt + HbPosOffset), fy = *(float*)(pkt + HbPosOffset + 4), fz = *(float*)(pkt + HbPosOffset + 8);
+            // Already pinned (the senddiag log path pins first, then the pass pins again): nothing to do.
+            if (fx == hbPinPos.X && fy == hbPinPos.Y && fz == hbPinPos.Z) return;
+
+            System.Numerics.Vector3 live; bool haveLive;
+            lock (poseLock) { live = livePos; haveLive = livePosValid; }
+            if (!haveLive) return;   // no pose cached yet (first frames): leave this one, try the next
+            float dx = fx - live.X, dy = fy - live.Y, dz = fz - live.Z;
+            bool match = float.IsFinite(fx) && float.IsFinite(fy) && float.IsFinite(fz)
+                && dx * dx + dy * dy + dz * dz <= HbVerifyTolerance * HbVerifyTolerance;
+            if (!match)
+            {
+                hbVerifyFails++;
+                log.Warning($"[HMSync] [HB-PIN] heartbeat floats ({fx:F2}, {fy:F2}, {fz:F2}) do not match the live position ({live.X:F2}, {live.Y:F2}, {live.Z:F2}); not pinned ({hbVerifyFails}/{HbVerifyFailLimit}).");
+                if (hbVerifyFails >= HbVerifyFailLimit)
                 {
-                    hbLayoutWarned = true;
-                    string why = size != HbPayloadSize ? $"its layout changed (payload 0x{size:X}, expected 0x{HbPayloadSize:X})" : "no start position was captured";
-                    log.Error("[HMSync] [HB-PIN] heartbeat NOT pinned: " + why + ". The server receives your on-map position this session.");
-                    NotifyChat?.Invoke("HMS: game structures moved after an update. Hiding your map position from the server has been disabled pending a fix.");
+                    hbLayoutBroken = true;
+                    ReportHeartbeatLayoutBroken($"the position fields at +0x{HbPosOffset:X} did not match the live position {HbVerifyFailLimit} times");
                 }
                 return;
+            }
+            hbVerifyFails = 0;
+            if (!hbVerified)
+            {
+                hbVerified = true;
+                log.Information($"[HMSync] [DRIFT] heartbeat layout ok: position fields at +0x{HbPosOffset:X} verified against the live position this session.");
             }
             *(float*)(pkt + HbPosOffset) = hbPinPos.X;
             *(float*)(pkt + HbPosOffset + 4) = hbPinPos.Y;
